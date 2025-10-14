@@ -7,6 +7,10 @@ import { inlineTokens } from './inline-parser';
 import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD } from './constants';
 import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
 
+const ORDERED_MARKER_FONT = 'bold ' + FONT_SIZE.base + 'px sans-serif';
+const MARKER_GAP = 8;
+const BULLET_RADIUS = 3;
+
 /**
  * Code block info for proper rendering
  */
@@ -258,6 +262,7 @@ function renderCanvas(
   let paraOpen = false;
   let currentX = MARGIN;
   const listStack: CanvasListItem[] = [];
+  const orderedMarkerWidths: number[] = [];
   let inCode = false;
   let codeY = 0;
   let codeHeight = 0;
@@ -375,35 +380,51 @@ function renderCanvas(
         closePara();
         listStack.push({ kind: ev.kind, counter: 1 });
         indent += INDENT;
+        if (ev.kind === 'ol') {
+          ctx.font = ORDERED_MARKER_FONT;
+          orderedMarkerWidths[listStack.length - 1] = ctx.measureText('1.').width;
+        }
         break;
         
       case 'listItem': {
         closePara();
         const baseSize = FONT_SIZE.base;
+        const level = listStack.length - 1;
         const bqOffset = inBlockquote ? 20 : 0;
         const textStart = MARGIN + indent + bqOffset;
-        const availableWidth = maxWidth - indent - bqOffset;
-        const gapAfterMarker = 8;
 
-        let marker = '•';
         const top = listStack[listStack.length - 1];
         const isOrdered = !!(top && top.kind === 'ol');
+        let markerText = '';
         if (isOrdered) {
-          marker = (top.counter++).toString() + '.';
+          markerText = `${top.counter}.`;
+          ctx.font = ORDERED_MARKER_FONT;
+          const measured = ctx.measureText(markerText).width;
+          const currentMax = orderedMarkerWidths[level] || 0;
+          if (measured > currentMax) orderedMarkerWidths[level] = measured;
+          top.counter += 1;
         }
+
+        const markerWidth = isOrdered
+          ? orderedMarkerWidths[level] || ctx.measureText(markerText).width
+          : BULLET_RADIUS * 2;
+        const markerX = textStart - markerWidth - MARKER_GAP;
+        const availableWidth = maxWidth - (textStart - MARGIN);
 
         if (!isMeasure) {
           ctx.fillStyle = COLOR.listMarker;
           if (isOrdered) {
-            ctx.font = 'bold ' + baseSize + 'px sans-serif';
-            const markerW = ctx.measureText(marker).width;
-            ctx.fillText(marker, textStart - markerW - gapAfterMarker, y + baseSize);
+            ctx.font = ORDERED_MARKER_FONT;
+            const markerX = textStart - markerWidth - MARKER_GAP;
+            const markerY = y + baseSize * 0.5;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(markerText, markerX, markerY);
+            ctx.textBaseline = 'top';
           } else {
-            const radius = 3;
-            const bulletX = textStart - radius - gapAfterMarker;
+            const bulletX = textStart - MARKER_GAP - BULLET_RADIUS;
             const bulletY = y + baseSize * 0.5;
             ctx.beginPath();
-            ctx.arc(bulletX, bulletY, radius, 0, Math.PI * 2);
+            ctx.arc(bulletX, bulletY, BULLET_RADIUS, 0, Math.PI * 2);
             ctx.fill();
           }
           ctx.fillStyle = COLOR.text;
@@ -430,6 +451,7 @@ function renderCanvas(
         while (listStack.length) {
           const top = listStack.pop()!;
           indent -= INDENT;
+          orderedMarkerWidths.length = listStack.length;
           if (top.kind === ev.kind) break;
         }
         break;

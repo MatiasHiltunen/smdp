@@ -14,9 +14,25 @@ This is **bold** text and this is *italic* text.
 
 ## Features
 
+Some text content for an example paragraph.
+
+Some text content for an example paragraph.
+
+Some text content for an example paragraph.
+
+Some text content for an example paragraph.
+
+Some text content for an example paragraph.
+
 - Item 1
 - Item 2
 - Item 3
+
+### Ordered List
+
+1. Item 1
+2. Item 2
+3. Item 3
 
 ### Code Example
 
