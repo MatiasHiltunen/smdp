@@ -60,7 +60,7 @@ export const TAG = {
 export const FONT_SIZE = {
   base: 16,
   code: 14,
-  heading: [32, 28, 24, 20, 18, 16],
+  heading: [40, 32, 24, 20, 17.6, 16], // Matching CSS em sizes
 } as const;
 
 export const LINE_HEIGHT_MULTIPLIER = 1.2;
@@ -68,13 +68,21 @@ export const LINE_HEIGHT_MULTIPLIER = 1.2;
 export const MARGIN = 10;
 export const INDENT = 30;
 
+// Match CSS custom properties for consistent theming
 export const COLOR = {
-  text: 'black',
+  text: 'rgba(255, 255, 255, 0.87)',
+  textSecondary: 'rgba(255, 255, 255, 0.65)',
+  accent: '#58a6ff',
+  accentHover: '#79c0ff',
   code: '#333',
-  link: 'blue',
-  bg: 'white',
-  codeBg: '#f0f0f0',
-  hr: 'gray',
+  link: '#58a6ff',
+  bg: '#0d1117',
+  bgSecondary: '#161b22',
+  codeBg: '#161b22',
+  border: '#30363d',
+  blockquoteBorder: '#3b82f6',
+  hr: '#30363d',
+  listMarker: '#58a6ff',
 } as const;
 
 export const TD = new TextDecoder('utf-8');
