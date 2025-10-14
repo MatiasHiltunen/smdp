@@ -87,3 +87,23 @@ export interface CanvasListItem {
   counter: number;
 }
 
+export interface RenderSegment {
+  startY: number;
+  endY: number;
+  commands: CanvasCommand[];
+}
+
+export type CanvasCommand =
+  | { type: 'setFont'; value: string; fill: string; baseline: CanvasTextBaseline }
+  | { type: 'text'; text: string; x: number; y: number }
+  | { type: 'linkUnderline'; x1: number; y: number; x2: number }
+  | { type: 'fillRect'; x: number; y: number; w: number; h: number; color: string; radius?: number }
+  | { type: 'roundedRect'; x: number; y: number; w: number; h: number; radius: number; color: string }
+  | { type: 'strokeLine'; x1: number; y1: number; x2: number; y2: number; color: string; width: number }
+  | { type: 'bullet'; x: number; y: number; radius: number; color: string };
+
+export interface RenderChunkMetadata {
+  height: number;
+  segments: RenderSegment[];
+}
+

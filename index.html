@@ -9,7 +9,12 @@
     <body>
         <textarea id="editor"> </textarea>
         <div class="container">
-            <canvas id="canvas"></canvas>
+            <div class="canvas-pane">
+                <div class="canvas-scroll" id="canvas-scroll">
+                    <canvas id="canvas"></canvas>
+                    <div id="canvas-spacer"></div>
+                </div>
+            </div>
             <div id="app"></div>
         </div>
         <script type="module" src="/src/main.ts"></script>

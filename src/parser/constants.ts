@@ -76,6 +76,8 @@ export const COLOR = {
   accentHover: '#79c0ff',
   code: '#333',
   link: '#58a6ff',
+  inlineCodeBg: 'rgba(88, 166, 255, 0.18)',
+  inlineCodeText: '#58a6ff',
   bg: '#0d1117',
   bgSecondary: '#161b22',
   codeBg: '#161b22',

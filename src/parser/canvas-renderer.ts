@@ -170,19 +170,35 @@ function drawInline(
         
       case 'code': {
         const codeText = TD.decode(u8.subarray(tok.s, tok.e));
-        pushStyle({ code: true, color: COLOR.text, size: FONT_SIZE.code });
+        const surroundingSize = currentStyle.size || FONT_SIZE.base;
+        const paddingX = Math.max(6, surroundingSize * 0.35);
+        const paddingY = Math.max(4, surroundingSize * 0.3);
+        const radius = 5;
+
+        pushStyle({ code: true, color: COLOR.inlineCodeText, size: surroundingSize });
+        updateCtx();
+        const textWidth = ctx.measureText(codeText).width;
+        const bgX = currentX - paddingX;
+        const bgY = currentY - paddingY / 2;
+        const bgWidth = textWidth + paddingX * 2;
+        const bgHeight = surroundingSize + paddingY;
 
         if (!isMeasure) {
-          updateCtx();
-          const textWidth = ctx.measureText(codeText).width;
-          const paddingX = 4;
-          const paddingY = currentStyle.size! * 0.2;
-          const bgX = currentX - paddingX;
-          const bgY = currentY - currentStyle.size! * 0.8 - paddingY / 2;
-          const bgWidth = textWidth + paddingX * 2;
-          const bgHeight = currentStyle.size! * 1.1 + paddingY;
-          ctx.fillStyle = 'rgba(110, 118, 129, 0.15)';
-          ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
+          const previousFill = ctx.fillStyle;
+          ctx.fillStyle = COLOR.inlineCodeBg;
+          ctx.beginPath();
+          ctx.moveTo(bgX + radius, bgY);
+          ctx.lineTo(bgX + bgWidth - radius, bgY);
+          ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
+          ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
+          ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
+          ctx.lineTo(bgX + radius, bgY + bgHeight);
+          ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
+          ctx.lineTo(bgX, bgY + radius);
+          ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = previousFill;
         }
 
         addText(codeText);
@@ -271,7 +287,6 @@ function renderCanvas(
   const blockquotes: BlockquoteInfo[] = [];
   let inBlockquote = false;
   let blockquoteY = 0;
-  let blockquoteHeight = 0;
 
   const closePara = (): void => {
     if (paraOpen) {
@@ -294,23 +309,22 @@ function renderCanvas(
         closePara();
         closeListsAll();
         if (!isMeasure && !inBlockquote) {
-          blockquoteY = y - FONT_SIZE.base * 0.5; // Start a bit higher for padding
-          blockquoteHeight = 0;
+          blockquoteY = y - FONT_SIZE.base * 0.5;
           inBlockquote = true;
         }
         indent += INDENT;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75; // More top padding
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
         break;
         
       case 'bqClose':
         closePara();
         closeListsAll();
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75; // More bottom padding
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
         if (!isMeasure && inBlockquote) {
           blockquotes.push({
-            x: MARGIN + indent - INDENT - 5, // Extend slightly to the left
+            x: MARGIN + indent - INDENT - 5,
             y: blockquoteY,
-            width: maxWidth - (indent - INDENT) + 10, // Extend slightly
+            width: maxWidth - (indent - INDENT) + 10,
             height: y - blockquoteY,
             indent: indent - INDENT,
           });
@@ -408,7 +422,6 @@ function renderCanvas(
         const markerWidth = isOrdered
           ? orderedMarkerWidths[level] || ctx.measureText(markerText).width
           : BULLET_RADIUS * 2;
-        const markerX = textStart - markerWidth - MARKER_GAP;
         const availableWidth = maxWidth - (textStart - MARGIN);
 
         if (!isMeasure) {
@@ -417,9 +430,10 @@ function renderCanvas(
             ctx.font = ORDERED_MARKER_FONT;
             const markerX = textStart - markerWidth - MARKER_GAP;
             const markerY = y + baseSize * 0.5;
+            const prevBaseline = ctx.textBaseline;
             ctx.textBaseline = 'middle';
             ctx.fillText(markerText, markerX, markerY);
-            ctx.textBaseline = 'top';
+            ctx.textBaseline = prevBaseline;
           } else {
             const bulletX = textStart - MARKER_GAP - BULLET_RADIUS;
             const bulletY = y + baseSize * 0.5;
@@ -442,7 +456,6 @@ function renderCanvas(
           { size: baseSize },
         );
         y = liRes.y + baseSize * 0.8;
-        if (inBlockquote) blockquoteHeight = y - blockquoteY;
         break;
       }
         
@@ -497,7 +510,6 @@ function renderCanvas(
         );
         currentX = pRes.x;
         y = pRes.y;
-        if (inBlockquote) blockquoteHeight = y - blockquoteY;
         break;
       }
         
@@ -563,7 +575,6 @@ function renderCanvas(
   }
   
   if (inBlockquote && !isMeasure) {
-    // Store final blockquote if still open
     blockquotes.push({
       x: MARGIN + indent - INDENT - 5,
       y: blockquoteY,

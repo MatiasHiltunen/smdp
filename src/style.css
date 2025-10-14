@@ -439,13 +439,29 @@ input[type="text"]:focus {
   overflow: hidden;
 }
 
-canvas {
+.canvas-pane {
   width: 100%;
   max-width: 800px;
-  border: 1px solid var(--color-border);
   border-radius: var(--border-radius-md);
+  border: 1px solid var(--color-border);
   background-color: var(--color-bg-secondary);
   box-shadow: 0 4px 12px var(--color-shadow);
+  overflow: hidden;
+}
+
+.canvas-scroll {
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+  position: relative;
+}
+
+canvas {
+  width: 100%;
+  display: block;
+}
+
+#canvas-spacer {
+  height: 0;
 }
 
 /* Responsive layout */
