@@ -1,27 +1,55 @@
 import { MDParser, u8 } from "./parser";
+import "./style.css";
 
-function parseMarkdown(md: string) {
+function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
   const parser = new MDParser();
-  return parser.parse(u8(md));
+  const html = parser.parse(u8(md));
+  parser.renderToCanvas(u8(md), canvas);
+  return { html, canvas };
 }
 
-const md = `
-# Hello World
+const md = `# Hello World
 
-This is **bold** text.
+This is **bold** text and this is *italic* text.
+
+## Features
+
+- Item 1
+- Item 2
+- Item 3
+
+### Code Example
+
+\`\`\`
+const hello = "world";
+console.log(hello);
+\`\`\`
+
+> This is a blockquote
+> with multiple lines
+
+Visit [example.com](https://example.com) or www.github.com
+
+---
+
+**Strong text** and \`inline code\`.
 `;
 
 const app = document.getElementById("app");
 const editor = document.getElementById("editor") as HTMLTextAreaElement;
+const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 
+if (!app || !editor || !canvas) {
+  throw new Error("Required DOM elements not found");
+}
+
+// Initialize
 editor.value = md;
-app!.innerHTML = parseMarkdown(md);
+app.innerHTML = parseMarkdown(md, canvas).html;
 
-editor.addEventListener("input", (e) => {
+// Update on input
+editor.addEventListener("input", () => {
   const newMd = editor.value;
-
-  const appNew = document.getElementById("app")!;
-  const html = parseMarkdown(newMd);
-
-  appNew!.innerHTML = html;
+  const { html } = parseMarkdown(newMd, canvas);
+  app.innerHTML = html;
 });

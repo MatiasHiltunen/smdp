@@ -8,6 +8,16 @@ import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD } from './
 import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
 
 /**
+ * Code block info for proper rendering
+ */
+interface CodeBlockInfo {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
  * Renders inline tokens to canvas
  */
 function drawInline(
@@ -64,7 +74,7 @@ function drawInline(
       lineX += w;
     }
     line.length = 0;
-    currentY += currentStyle.size * LINE_HEIGHT_MULTIPLIER;
+    currentY += (currentStyle.size || FONT_SIZE.base) * LINE_HEIGHT_MULTIPLIER;
     currentX = x;
   };
 
@@ -149,9 +159,15 @@ function drawInline(
         popStyle();
         break;
         
-      case 'img':
-        addText(`[img: ${TD.decode(u8.subarray(tok.altS, tok.altE))}]`);
+      case 'img': {
+        const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
+        const src = TD.decode(u8.subarray(tok.srcS, tok.srcE));
+        // For now, render as placeholder text with link-style formatting
+        pushStyle({ code: true, color: COLOR.link });
+        addText(`[🖼️ ${altText || 'image'}: ${src}]`);
+        popStyle();
         break;
+      }
         
       case 'link': {
         pushStyle({ link: true, color: COLOR.link });
@@ -208,10 +224,16 @@ function renderCanvas(
   ctx: CanvasRenderingContext2D,
   isMeasure: boolean,
 ): number {
+  // Set optimal text rendering properties for crisp text
   if (!isMeasure) {
     ctx.fillStyle = COLOR.bg;
     ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     ctx.fillStyle = COLOR.text;
+    
+    // Enable high-quality text rendering
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.textBaseline = 'top';
   }
   
   let y = MARGIN;
@@ -224,6 +246,7 @@ function renderCanvas(
   let codeY = 0;
   let codeHeight = 0;
   let codeWidth = 0;
+  const codeBlocks: CodeBlockInfo[] = [];
 
   const closePara = (): void => {
     if (paraOpen) {
@@ -385,11 +408,14 @@ function renderCanvas(
           ctx.font = FONT_SIZE.code + 'px monospace';
           const w = ctx.measureText(text).width;
           if (w > codeWidth) codeWidth = w;
-          if (!isMeasure) {
-            ctx.fillStyle = COLOR.code;
-            ctx.fillText(text, MARGIN + indent, y);
-          }
           const codeLineH = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
+          
+          if (!isMeasure) {
+            // Store code block info for later background rendering
+            ctx.fillStyle = COLOR.code;
+            ctx.fillText(text, MARGIN + indent + 5, y);
+          }
+          
           y += codeLineH;
           codeHeight += codeLineH;
         }
@@ -399,13 +425,13 @@ function renderCanvas(
         if (inCode) {
           inCode = false;
           if (!isMeasure) {
-            ctx.fillStyle = COLOR.codeBg;
-            ctx.fillRect(
-              MARGIN + indent - 5,
-              codeY - FONT_SIZE.code + 5,
-              codeWidth + 10,
-              codeHeight + FONT_SIZE.code - 10,
-            );
+            // Store code block for background rendering
+            codeBlocks.push({
+              x: MARGIN + indent - 5,
+              y: codeY - 5,
+              width: codeWidth + 20,
+              height: codeHeight + 10,
+            });
           }
           y += 10;
         }
@@ -415,16 +441,14 @@ function renderCanvas(
   
   closePara();
   closeListsAll();
-  if (inCode) {
-    if (!isMeasure) {
-      ctx.fillStyle = COLOR.codeBg;
-      ctx.fillRect(
-        MARGIN + indent - 5,
-        codeY - FONT_SIZE.code + 5,
-        codeWidth + 10,
-        codeHeight + FONT_SIZE.code - 10,
-      );
-    }
+  if (inCode && !isMeasure) {
+    // Store final code block if still open
+    codeBlocks.push({
+      x: MARGIN + indent - 5,
+      y: codeY - 5,
+      width: codeWidth + 20,
+      height: codeHeight + 10,
+    });
     y += 10;
   }
   
@@ -432,24 +456,110 @@ function renderCanvas(
 }
 
 /**
- * Renders Markdown to canvas with proper height calculation
+ * Renders Markdown to canvas with proper height calculation and DPI scaling
  */
 export function renderToCanvasFromBlocks(
   u8: Uint8Array,
   canvas: HTMLCanvasElement,
 ): void {
+  // Get device pixel ratio for crisp rendering on high-DPI displays
+  const dpr = window.devicePixelRatio || 1;
+  
+  // Get the CSS display width (not the canvas bitmap width!)
+  // This prevents exponential growth on re-renders
+  const rect = canvas.getBoundingClientRect();
+  const styleWidth = rect.width || 800; // Default to 800 if not in DOM
+  
+  // Measure height with proper scaling
   const measureHeight = (): number => {
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas.width;
+    tempCanvas.width = styleWidth * dpr;
     const tempCtx = tempCanvas.getContext('2d');
     if (!tempCtx) return 0;
+    tempCtx.scale(dpr, dpr);
     return renderCanvas(u8, tempCtx, true);
   };
   
   const finalY = measureHeight();
-  canvas.height = finalY + MARGIN;
+  const finalHeight = finalY + MARGIN;
+  
+  // Set actual canvas size (accounting for DPI)
+  canvas.width = styleWidth * dpr;
+  canvas.height = finalHeight * dpr;
+  
+  // Set display size (CSS pixels) - preserve the original width
+  canvas.style.width = styleWidth + 'px';
+  canvas.style.height = finalHeight + 'px';
+  
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
+  
+  // Scale context to account for DPI
+  ctx.scale(dpr, dpr);
+  
+  // Enable high-quality text rendering
+  ctx.textRendering = 'optimizeLegibility' as any;
+  ctx.font = FONT_SIZE.base + 'px sans-serif';
+  
+  // First pass: render everything
+  const codeBlocksCollected: CodeBlockInfo[] = [];
+  renderCanvasWithCodeBlocks(u8, ctx, false, codeBlocksCollected);
+  
+  // Draw code block backgrounds FIRST (so text appears on top)
+  for (const block of codeBlocksCollected) {
+    ctx.fillStyle = COLOR.codeBg;
+    ctx.fillRect(block.x, block.y, block.width, block.height);
+  }
+  
+  // Second pass: render text on top
   renderCanvas(u8, ctx, false);
+}
+
+/**
+ * Helper to collect code blocks during rendering
+ */
+function renderCanvasWithCodeBlocks(
+  u8: Uint8Array,
+  ctx: CanvasRenderingContext2D,
+  isMeasure: boolean,
+  codeBlocksOut: CodeBlockInfo[],
+): number {
+  let y = MARGIN;
+  const indent = 0;
+  let inCode = false;
+  let codeY = 0;
+  let codeHeight = 0;
+  let codeWidth = 0;
+
+  for (const ev of blocks(u8)) {
+    if (ev.type === 'codeOpen') {
+      inCode = true;
+      y += 10;
+      codeY = y;
+      codeWidth = 0;
+      codeHeight = 0;
+    } else if (ev.type === 'codeText' && inCode) {
+      const text = TD.decode(u8.subarray(ev.s, ev.e));
+      ctx.font = FONT_SIZE.code + 'px monospace';
+      const w = ctx.measureText(text).width;
+      if (w > codeWidth) codeWidth = w;
+      const codeLineH = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
+      y += codeLineH;
+      codeHeight += codeLineH;
+    } else if (ev.type === 'codeClose' && inCode) {
+      inCode = false;
+      if (!isMeasure) {
+        codeBlocksOut.push({
+          x: MARGIN + indent - 5,
+          y: codeY - 5,
+          width: codeWidth + 20,
+          height: codeHeight + 10,
+        });
+      }
+      y += 10;
+    }
+  }
+  
+  return y;
 }
 
