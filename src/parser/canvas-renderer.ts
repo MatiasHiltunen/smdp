@@ -781,7 +781,11 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   };
 
   const renderViewport = () => {
-    const scrollTop = scrollEl.scrollTop;
+    const rawScrollTop = scrollEl.scrollTop;
+    // Clamp scroll to prevent showing empty space at the bottom
+    const maxScroll = Math.max(0, totalHeight - viewportHeight);
+    const scrollTop = Math.min(rawScrollTop, maxScroll);
+    
     // Reset transform and work in bitmap pixels
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
