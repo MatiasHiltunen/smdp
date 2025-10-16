@@ -123,21 +123,40 @@ function drawInline(
 
   const flushLine = (): void => {
     let lineX = x;
-    for (const span of line) {
-      currentStyle = span.style;
-      updateCtx();
-      const w = ctx.measureText(span.text).width;
-      if (!isMeasure) {
-        // Draw inline code background before text
+    
+    if (!isMeasure) {
+      // First pass: draw backgrounds for consecutive code spans
+      let tempX = x;
+      let i = 0;
+      const baseLineSize = line.length > 0 ? (line[0].style.size || FONT_SIZE.base) : FONT_SIZE.base;
+      
+      while (i < line.length) {
+        const span = line[i];
+        currentStyle = span.style;
+        updateCtx();
+        const w = ctx.measureText(span.text).width;
+        
         if (currentStyle.code) {
-          const surroundingSize = currentStyle.size || FONT_SIZE.base;
-          const paddingX = Math.max(6, surroundingSize * 0.35);
-          const paddingY = Math.max(4, surroundingSize * 0.3);
+          // Find consecutive code spans
+          let codeEndX = tempX + w;
+          let j = i + 1;
+          while (j < line.length && line[j].style.code) {
+            currentStyle = line[j].style;
+            updateCtx();
+            codeEndX += ctx.measureText(line[j].text).width;
+            j++;
+          }
+          
+          // Draw one background for all consecutive code spans
+          const fontSize = span.style.size || FONT_SIZE.base;
+          const baselineOffset = baseLineSize - fontSize;
+          const paddingX = Math.max(6, fontSize * 0.35);
+          const paddingY = Math.max(4, fontSize * 0.3);
           const radius = 5;
-          const bgX = lineX - paddingX;
-          const bgY = currentY - paddingY / 2;
-          const bgWidth = w + paddingX * 2;
-          const bgHeight = surroundingSize + paddingY;
+          const bgX = tempX - paddingX;
+          const bgY = currentY + baselineOffset - paddingY / 2;
+          const bgWidth = (codeEndX - tempX) + paddingX * 2;
+          const bgHeight = fontSize + paddingY;
           
           const previousFill = ctx.fillStyle;
           ctx.fillStyle = COLOR.inlineCodeBg;
@@ -154,13 +173,35 @@ function drawInline(
           ctx.closePath();
           ctx.fill();
           ctx.fillStyle = previousFill;
+          
+          // Skip to end of code sequence
+          i = j;
+          tempX = codeEndX;
+        } else {
+          tempX += w;
+          i++;
         }
+      }
+    }
+    
+    // Second pass: draw text and link underlines
+    lineX = x;
+    const baseLineSize = line.length > 0 ? (line[0].style.size || FONT_SIZE.base) : FONT_SIZE.base;
+    
+    for (const span of line) {
+      currentStyle = span.style;
+      updateCtx();
+      const w = ctx.measureText(span.text).width;
+      if (!isMeasure) {
+        // Adjust y position to maintain baseline alignment for different font sizes
+        const fontSize = currentStyle.size || FONT_SIZE.base;
+        const baselineOffset = baseLineSize - fontSize; // Shift smaller fonts down
         
-        ctx.fillText(span.text, lineX, currentY);
+        ctx.fillText(span.text, lineX, currentY + baselineOffset);
         
         if (currentStyle.link) {
           // Draw underline below the text baseline
-          const underlineY = currentY + (currentStyle.size || FONT_SIZE.base) + 1;
+          const underlineY = currentY + baselineOffset + fontSize + 1;
           ctx.beginPath();
           ctx.moveTo(lineX, underlineY);
           ctx.lineTo(lineX + w, underlineY);
@@ -171,6 +212,7 @@ function drawInline(
       }
       lineX += w;
     }
+    
     line.length = 0;
     currentY += (currentStyle.size || FONT_SIZE.base) * LINE_HEIGHT_MULTIPLIER;
     currentX = x;
@@ -253,9 +295,10 @@ function drawInline(
       case 'code': {
         const codeText = TD.decode(u8.subarray(tok.s, tok.e));
         const surroundingSize = currentStyle.size || FONT_SIZE.base;
+        const codeSize = Math.round(surroundingSize * 0.9); // Slightly smaller than surrounding text
         
         // Push style with code flag - background will be drawn during flush
-        pushStyle({ code: true, color: COLOR.inlineCodeText, size: surroundingSize });
+        pushStyle({ code: true, color: COLOR.inlineCodeText, size: codeSize });
         addText(codeText);
         popStyle();
         break;
