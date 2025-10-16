@@ -60,7 +60,7 @@ export function* inlineTokens(
     }
     
     if (inCode) {
-      yield { kind: 'text', s: i, e: i + 1 };
+      // Skip characters inside code spans - they'll be yielded as a single 'code' token
       i++;
       continue;
     }

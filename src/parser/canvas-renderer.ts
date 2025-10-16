@@ -128,7 +128,36 @@ function drawInline(
       updateCtx();
       const w = ctx.measureText(span.text).width;
       if (!isMeasure) {
+        // Draw inline code background before text
+        if (currentStyle.code) {
+          const surroundingSize = currentStyle.size || FONT_SIZE.base;
+          const paddingX = Math.max(6, surroundingSize * 0.35);
+          const paddingY = Math.max(4, surroundingSize * 0.3);
+          const radius = 5;
+          const bgX = lineX - paddingX;
+          const bgY = currentY - paddingY / 2;
+          const bgWidth = w + paddingX * 2;
+          const bgHeight = surroundingSize + paddingY;
+          
+          const previousFill = ctx.fillStyle;
+          ctx.fillStyle = COLOR.inlineCodeBg;
+          ctx.beginPath();
+          ctx.moveTo(bgX + radius, bgY);
+          ctx.lineTo(bgX + bgWidth - radius, bgY);
+          ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
+          ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
+          ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
+          ctx.lineTo(bgX + radius, bgY + bgHeight);
+          ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
+          ctx.lineTo(bgX, bgY + radius);
+          ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = previousFill;
+        }
+        
         ctx.fillText(span.text, lineX, currentY);
+        
         if (currentStyle.link) {
           // Draw underline below the text baseline
           const underlineY = currentY + (currentStyle.size || FONT_SIZE.base) + 1;
@@ -224,36 +253,9 @@ function drawInline(
       case 'code': {
         const codeText = TD.decode(u8.subarray(tok.s, tok.e));
         const surroundingSize = currentStyle.size || FONT_SIZE.base;
-        const paddingX = Math.max(6, surroundingSize * 0.35);
-        const paddingY = Math.max(4, surroundingSize * 0.3);
-        const radius = 5;
-
+        
+        // Push style with code flag - background will be drawn during flush
         pushStyle({ code: true, color: COLOR.inlineCodeText, size: surroundingSize });
-        updateCtx();
-        const textWidth = ctx.measureText(codeText).width;
-        const bgX = currentX - paddingX;
-        const bgY = currentY - paddingY / 2;
-        const bgWidth = textWidth + paddingX * 2;
-        const bgHeight = surroundingSize + paddingY;
-
-        if (!isMeasure) {
-          const previousFill = ctx.fillStyle;
-          ctx.fillStyle = COLOR.inlineCodeBg;
-          ctx.beginPath();
-          ctx.moveTo(bgX + radius, bgY);
-          ctx.lineTo(bgX + bgWidth - radius, bgY);
-          ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
-          ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
-          ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
-          ctx.lineTo(bgX + radius, bgY + bgHeight);
-          ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
-          ctx.lineTo(bgX, bgY + radius);
-          ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
-          ctx.closePath();
-          ctx.fill();
-          ctx.fillStyle = previousFill;
-        }
-
         addText(codeText);
         popStyle();
         break;
