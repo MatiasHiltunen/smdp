@@ -46,6 +46,10 @@ console.log(hello);
 
 Visit [example.com](https://example.com) or www.github.com
 
+### Images
+
+![Example Image](https://picsum.photos/600/400)
+
 ---
 
 **Strong text** and \`inline code\`.

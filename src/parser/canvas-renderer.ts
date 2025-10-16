@@ -11,6 +11,56 @@ const ORDERED_MARKER_FONT = 'bold ' + FONT_SIZE.base + 'px sans-serif';
 const MARKER_GAP = 8;
 const BULLET_RADIUS = 3;
 const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
+const MAX_IMAGE_WIDTH = 700; // max width for images in px
+
+// Image cache with loading state
+interface CachedImage {
+  img: HTMLImageElement;
+  width: number;
+  height: number;
+  status: 'loading' | 'loaded' | 'error';
+}
+
+const imageCache = new Map<string, CachedImage>();
+const pendingRerenders = new Set<() => void>();
+
+function loadImage(src: string, onLoad: () => void): CachedImage | undefined {
+  const cached = imageCache.get(src);
+  if (cached) return cached;
+
+  const img = new Image();
+  img.crossOrigin = 'anonymous'; // Try to enable CORS for external images
+  
+  const cacheEntry: CachedImage = {
+    img,
+    width: 0,
+    height: 0,
+    status: 'loading',
+  };
+  
+  imageCache.set(src, cacheEntry);
+  
+  img.onload = () => {
+    cacheEntry.width = img.naturalWidth;
+    cacheEntry.height = img.naturalHeight;
+    cacheEntry.status = 'loaded';
+    
+    // Trigger re-render
+    pendingRerenders.forEach(fn => fn());
+    pendingRerenders.clear();
+  };
+  
+  img.onerror = () => {
+    cacheEntry.status = 'error';
+    pendingRerenders.forEach(fn => fn());
+    pendingRerenders.clear();
+  };
+  
+  img.src = src;
+  pendingRerenders.add(onLoad);
+  
+  return cacheEntry;
+}
 
 interface CanvasRenderState {
   dpr: number;
@@ -35,6 +85,7 @@ function drawInline(
   maxWidth: number,
   isMeasure: boolean,
   baseStyle: Partial<TextStyle> = {},
+  onImageLoad?: () => void,
 ): DrawResult {
   let currentX = x;
   let currentY = y;
@@ -197,9 +248,67 @@ function drawInline(
       case 'img': {
         const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
         const src = TD.decode(u8.subarray(tok.srcS, tok.srcE));
-        pushStyle({ code: true, color: COLOR.link });
-        addText(`[🖼️ ${altText || 'image'}: ${src}]`);
-        popStyle();
+        
+        // Flush current line before image
+        if (line.length) flushLine();
+        
+        // Always try to load/get cached image to start loading
+        // Even during measure pass, we want to initiate the fetch
+        const cachedImg = loadImage(src, onImageLoad || (() => {}));
+        
+        if (cachedImg && cachedImg.status === 'loaded') {
+          // Calculate display dimensions maintaining aspect ratio
+          const naturalWidth = cachedImg.width;
+          const naturalHeight = cachedImg.height;
+          const displayWidth = Math.min(naturalWidth, maxWidth, MAX_IMAGE_WIDTH);
+          const displayHeight = (displayWidth / naturalWidth) * naturalHeight;
+          
+          if (!isMeasure) {
+            // Draw image with high quality
+            const prevSmoothing = ctx.imageSmoothingEnabled;
+            const prevQuality = ctx.imageSmoothingQuality;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            
+            try {
+              ctx.drawImage(cachedImg.img, x, currentY, displayWidth, displayHeight);
+            } catch (err) {
+              // If drawing fails (CORS, etc), show fallback
+              ctx.fillStyle = COLOR.border;
+              ctx.fillRect(x, currentY, displayWidth, displayHeight);
+              ctx.fillStyle = COLOR.textSecondary;
+              ctx.font = FONT_SIZE.base + 'px sans-serif';
+              ctx.fillText(`[Image: ${altText || src}]`, x + 10, currentY + 20);
+            }
+            
+            ctx.imageSmoothingEnabled = prevSmoothing;
+            ctx.imageSmoothingQuality = prevQuality;
+          }
+          
+          currentY += displayHeight + FONT_SIZE.base * 0.5; // Add spacing after image
+        } else if (cachedImg && cachedImg.status === 'error') {
+          // Show error message
+          pushStyle({ code: true, color: COLOR.textSecondary });
+          addText(`[Image failed to load: ${altText || src}]`);
+          popStyle();
+          if (line.length) flushLine();
+        } else {
+          // Loading... use consistent placeholder dimensions for both measure and draw
+          // Use a reasonable default based on typical image aspect ratios (4:3)
+          const placeholderWidth = Math.min(maxWidth, MAX_IMAGE_WIDTH);
+          const placeholderHeight = (placeholderWidth * 3) / 4; // 4:3 aspect ratio
+          
+          if (!isMeasure) {
+            ctx.fillStyle = COLOR.bgSecondary;
+            ctx.fillRect(x, currentY, placeholderWidth, placeholderHeight);
+            ctx.fillStyle = COLOR.textSecondary;
+            ctx.font = FONT_SIZE.base + 'px sans-serif';
+            ctx.fillText(`Loading: ${altText || src}`, x + 10, currentY + placeholderHeight / 2);
+          }
+          currentY += placeholderHeight + FONT_SIZE.base * 0.5;
+        }
+        
+        currentX = x; // Reset x after image
         break;
       }
 
@@ -243,7 +352,7 @@ function renderCanvas(
   u8: Uint8Array,
   ctx: CanvasRenderingContext2D,
   isMeasure: boolean,
-  opts: { skipClear?: boolean } = {},
+  opts: { skipClear?: boolean; onImageLoad?: () => void } = {},
 ): number {
   if (!isMeasure) {
     if (!opts.skipClear) {
@@ -353,6 +462,7 @@ function renderCanvas(
           maxWidth - indent,
           isMeasure,
           { bold: true, size: hSize },
+          opts.onImageLoad,
         );
         y = hRes.y;
         if (!isMeasure && (level === 0 || level === 1)) {
@@ -433,6 +543,7 @@ function renderCanvas(
           availableWidth,
           isMeasure,
           { size: baseSize },
+          opts.onImageLoad,
         );
         y = liRes.y + baseSize * 0.8;
         break;
@@ -475,6 +586,7 @@ function renderCanvas(
           maxWidth - indent - bqOffset,
           isMeasure,
           { size: baseSize, color: inBlockquote ? COLOR.textSecondary : COLOR.text, italic: inBlockquote },
+          opts.onImageLoad,
         );
         currentX = pRes.x;
         y = pRes.y;
@@ -588,13 +700,21 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
   const spacer = scrollEl?.querySelector<HTMLDivElement>('#canvas-spacer') ?? null;
 
+  // Set up re-render callback for when images load
+  const rerender = () => {
+    // Clear pending rerenders for this canvas
+    pendingRerenders.delete(rerender);
+    // Re-render the canvas
+    renderToCanvasFromBlocks(u8, canvas);
+  };
+
   const measureCanvas = document.createElement('canvas');
   measureCanvas.width = styleWidth * dpr;
   measureCanvas.height = 1;
   const measureCtx = measureCanvas.getContext('2d');
   if (!measureCtx) return;
   measureCtx.scale(dpr, dpr);
-  const totalHeight = renderCanvas(u8, measureCtx, true) + MARGIN;
+  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender }) + MARGIN;
 
   const viewportHeight = scrollEl ? scrollEl.clientHeight : totalHeight;
   const needsVirtualScroll = totalHeight > VIRTUAL_SCROLL_THRESHOLD;
@@ -604,10 +724,11 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     canvas.height = totalHeight * dpr;
     canvas.style.width = `${styleWidth}px`;
     canvas.style.height = `${totalHeight}px`;
+    canvas.style.position = 'static';
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.scale(dpr, dpr);
-    renderCanvas(u8, ctx, false);
+    renderCanvas(u8, ctx, false, { onImageLoad: rerender });
     if (spacer) spacer.style.height = '0px';
     const prev = canvasStates.get(canvas);
     if (prev?.scrollEl && prev.onScroll) {
@@ -625,15 +746,17 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const offscreenCtx = offscreen.getContext('2d');
   if (!offscreenCtx) return;
   offscreenCtx.scale(dpr, dpr);
-  renderCanvas(u8, offscreenCtx, false);
+  renderCanvas(u8, offscreenCtx, false, { onImageLoad: rerender });
 
   canvas.width = styleWidth * dpr;
   canvas.height = viewportHeight * dpr;
   canvas.style.width = `${styleWidth}px`;
   canvas.style.height = `${viewportHeight}px`;
+  canvas.style.position = 'sticky';
+  canvas.style.top = '0';
+  canvas.style.left = '0';
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
-  ctx.scale(dpr, dpr);
 
   const state: CanvasRenderState = {
     dpr,
@@ -647,19 +770,21 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
 
   const renderViewport = () => {
     const scrollTop = scrollEl.scrollTop;
+    // Reset transform and work in bitmap pixels
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, styleWidth, viewportHeight);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Copy the visible portion from offscreen canvas (all in bitmap pixels)
     ctx.drawImage(
       offscreen,
-      0,
-      scrollTop * dpr,
-      styleWidth * dpr,
-      viewportHeight * dpr,
-      0,
-      0,
-      styleWidth,
-      viewportHeight,
+      0,                    // source x (bitmap pixels)
+      scrollTop * dpr,      // source y (bitmap pixels)
+      styleWidth * dpr,     // source width (bitmap pixels)
+      viewportHeight * dpr, // source height (bitmap pixels)
+      0,                    // dest x (bitmap pixels)
+      0,                    // dest y (bitmap pixels)
+      styleWidth * dpr,     // dest width (bitmap pixels)
+      viewportHeight * dpr, // dest height (bitmap pixels)
     );
   };
 

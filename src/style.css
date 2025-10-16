@@ -456,12 +456,20 @@ input[type="text"]:focus {
 }
 
 canvas {
+  position: sticky;
+  top: 0;
+  left: 0;
   width: 100%;
   display: block;
+  pointer-events: auto;
+  z-index: 1;
 }
 
 #canvas-spacer {
-  height: 0;
+  height: 0; /* Set dynamically by JS */
+  width: 1px;
+  pointer-events: none;
+  position: relative;
 }
 
 /* Responsive layout */
