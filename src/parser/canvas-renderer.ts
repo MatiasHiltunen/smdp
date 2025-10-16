@@ -130,9 +130,11 @@ function drawInline(
       if (!isMeasure) {
         ctx.fillText(span.text, lineX, currentY);
         if (currentStyle.link) {
+          // Draw underline below the text baseline
+          const underlineY = currentY + (currentStyle.size || FONT_SIZE.base) + 1;
           ctx.beginPath();
-          ctx.moveTo(lineX, currentY + 1);
-          ctx.lineTo(lineX + w, currentY + 1);
+          ctx.moveTo(lineX, underlineY);
+          ctx.lineTo(lineX + w, underlineY);
           ctx.strokeStyle = COLOR.inlineCodeText;
           ctx.lineWidth = 1;
           ctx.stroke();
@@ -724,7 +726,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const measureCtx = measureCanvas.getContext('2d');
   if (!measureCtx) return;
   measureCtx.scale(dpr, dpr);
-  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender }) + MARGIN;
+  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender }) + MARGIN * 2;
 
   const viewportHeight = scrollEl ? scrollEl.clientHeight : totalHeight;
   const needsVirtualScroll = totalHeight > VIRTUAL_SCROLL_THRESHOLD;
