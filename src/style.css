@@ -472,6 +472,74 @@ canvas {
   position: relative;
 }
 
+/* Tables */
+table {
+  border-collapse: collapse;
+  margin: 1rem 0;
+  width: 100%;
+  background-color: var(--color-bg-secondary);
+  border-radius: var(--border-radius-sm);
+  overflow: hidden;
+}
+
+th, td {
+  border: 1px solid var(--color-border);
+  padding: 0.75rem 1rem;
+  text-align: left;
+}
+
+th {
+  background-color: var(--color-bg);
+  font-weight: 600;
+  color: var(--color-text);
+  border-bottom: 2px solid var(--color-accent);
+}
+
+td {
+  color: var(--color-text-secondary);
+}
+
+tr:hover {
+  background-color: rgba(88, 166, 255, 0.05);
+}
+
+/* Info blocks */
+.info-block {
+  padding: 1rem 1.5rem;
+  margin: 1rem 0;
+  border-left: 4px solid;
+  border-radius: var(--border-radius-sm);
+  background-clip: padding-box;
+}
+
+.info-block.info {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+.info-block.warning {
+  border-color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.1);
+}
+
+.info-block.error {
+  border-color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+.info-block.success {
+  border-color: #10b981;
+  background-color: rgba(16, 185, 129, 0.1);
+}
+
+.info-block p:first-child {
+  margin-top: 0;
+}
+
+.info-block p:last-child {
+  margin-bottom: 0;
+}
+
 /* Responsive layout */
 @media (max-width: 1200px) {
   .container {

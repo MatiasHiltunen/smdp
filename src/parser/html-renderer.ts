@@ -196,6 +196,63 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
           inCode = false;
         }
         break;
+
+      case 'tableOpen':
+        closePara();
+        closeListsAll();
+        out.writeBytes(TAG.tableOpen);
+        break;
+
+      case 'tableHeader':
+        out.writeBytes(TAG.theadOpen);
+        for (const cell of ev.cells) {
+          const thTag = cell.align === 'center' ? TAG.thCenter : 
+                        cell.align === 'right' ? TAG.thRight : TAG.thLeft;
+          out.writeBytes(thTag);
+          renderInline(u8, cell.s, cell.e, out);
+          out.writeBytes(TAG.thClose);
+        }
+        out.writeBytes(TAG.theadClose);
+        break;
+
+      case 'tableRow':
+        out.writeBytes(TAG.trOpen);
+        for (const cell of ev.cells) {
+          out.writeBytes(TAG.tdOpen);
+          renderInline(u8, cell.s, cell.e, out);
+          out.writeBytes(TAG.tdClose);
+        }
+        out.writeBytes(TAG.trClose);
+        break;
+
+      case 'tableClose':
+        out.writeBytes(TAG.tbodyClose);
+        out.writeBytes(TAG.tableClose);
+        break;
+
+      case 'infoOpen':
+        closePara();
+        closeListsAll();
+        switch (ev.infoType) {
+          case 'info':
+            out.writeBytes(TAG.infoBlockInfo);
+            break;
+          case 'warning':
+            out.writeBytes(TAG.infoBlockWarning);
+            break;
+          case 'error':
+            out.writeBytes(TAG.infoBlockError);
+            break;
+          case 'success':
+            out.writeBytes(TAG.infoBlockSuccess);
+            break;
+        }
+        break;
+
+      case 'infoClose':
+        closePara();
+        out.writeBytes(TAG.infoBlockClose);
+        break;
     }
   }
 

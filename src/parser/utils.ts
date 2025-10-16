@@ -191,3 +191,157 @@ export function scanUrl(u8: Uint8Array, i: number, e: number): UrlScan {
   return { hrefStart: i, hrefEnd: j };
 }
 
+/**
+ * Detect if line is a table separator: |---|:---:|---:|
+ * Returns alignments for each column
+ */
+export function isTableSeparator(
+  u8: Uint8Array,
+  start: number,
+  end: number,
+): { isTable: boolean; alignments: Array<'left' | 'center' | 'right'> } {
+  let i = skipSpaces(u8, start, end);
+  const alignments: Array<'left' | 'center' | 'right'> = [];
+  
+  // Must start with |
+  if (i >= end || u8[i] !== 0x7c) { // |
+    return { isTable: false, alignments: [] };
+  }
+  i++;
+  
+  while (i < end) {
+    i = skipSpaces(u8, i, end);
+    if (i >= end) break;
+    
+    // Check for alignment markers
+    let leftColon = false;
+    let rightColon = false;
+    
+    if (u8[i] === 0x3a) { // :
+      leftColon = true;
+      i++;
+    }
+    
+    // Must have at least one dash
+    let hasDash = false;
+    while (i < end && u8[i] === 0x2d) { // -
+      hasDash = true;
+      i++;
+    }
+    
+    if (!hasDash) {
+      return { isTable: false, alignments: [] };
+    }
+    
+    if (i < end && u8[i] === 0x3a) { // :
+      rightColon = true;
+      i++;
+    }
+    
+    // Determine alignment
+    if (leftColon && rightColon) {
+      alignments.push('center');
+    } else if (rightColon) {
+      alignments.push('right');
+    } else {
+      alignments.push('left');
+    }
+    
+    i = skipSpaces(u8, i, end);
+    
+    // Should have | or end
+    if (i < end && u8[i] === 0x7c) { // |
+      i++;
+    } else if (i < end) {
+      return { isTable: false, alignments: [] };
+    }
+  }
+  
+  return { isTable: alignments.length > 0, alignments };
+}
+
+/**
+ * Parse table row into cells
+ */
+export function parseTableRow(
+  u8: Uint8Array,
+  start: number,
+  end: number,
+): Array<{ s: number; e: number }> {
+  const cells: Array<{ s: number; e: number }> = [];
+  let i = skipSpaces(u8, start, end);
+  
+  // Skip leading |
+  if (i < end && u8[i] === 0x7c) { // |
+    i++;
+  }
+  
+  while (i < end) {
+    i = skipSpaces(u8, i, end);
+    const cellStart = i;
+    
+    // Find next | or end
+    while (i < end && u8[i] !== 0x7c) { // |
+      i++;
+    }
+    
+    // Trim trailing spaces from cell content
+    let cellEnd = i;
+    while (cellEnd > cellStart && isSpace(u8[cellEnd - 1])) {
+      cellEnd--;
+    }
+    
+    if (cellEnd > cellStart) {
+      cells.push({ s: cellStart, e: cellEnd });
+    } else {
+      cells.push({ s: cellStart, e: cellStart }); // Empty cell
+    }
+    
+    // Skip |
+    if (i < end && u8[i] === 0x7c) { // |
+      i++;
+    }
+  }
+  
+  return cells;
+}
+
+/**
+ * Detect info block start: ::: info, ::: warning, etc.
+ */
+export function detectInfoBlock(
+  u8: Uint8Array,
+  start: number,
+  end: number,
+): { isInfo: boolean; type?: string; isClose?: boolean } {
+  let i = skipSpaces(u8, start, end);
+  
+  // Check for :::
+  if (i + 3 > end || u8[i] !== 0x3a || u8[i + 1] !== 0x3a || u8[i + 2] !== 0x3a) { // :::
+    return { isInfo: false };
+  }
+  i += 3;
+  
+  i = skipSpaces(u8, i, end);
+  
+  // If nothing after :::, it's a closing tag
+  if (i >= end) {
+    return { isInfo: true, isClose: true };
+  }
+  
+  // Extract type
+  const typeStart = i;
+  while (i < end && !isSpace(u8[i])) {
+    i++;
+  }
+  
+  const typeBytes = u8.slice(typeStart, i);
+  const type = new TextDecoder().decode(typeBytes).toLowerCase();
+  
+  if (type === 'info' || type === 'warning' || type === 'error' || type === 'success') {
+    return { isInfo: true, type };
+  }
+  
+  return { isInfo: false };
+}
+

@@ -49,6 +49,26 @@ export const TAG = {
     enc('</h6>\n'),
   ],
   lf: enc('\n'),
+  // Table tags
+  tableOpen: enc('<table>\n'),
+  tableClose: enc('</table>\n'),
+  theadOpen: enc('<thead>\n<tr>'),
+  theadClose: enc('</tr>\n</thead>\n<tbody>\n'),
+  tbodyClose: enc('</tbody>\n'),
+  trOpen: enc('<tr>'),
+  trClose: enc('</tr>\n'),
+  thLeft: enc('<th style="text-align:left">'),
+  thCenter: enc('<th style="text-align:center">'),
+  thRight: enc('<th style="text-align:right">'),
+  thClose: enc('</th>'),
+  tdOpen: enc('<td>'),
+  tdClose: enc('</td>'),
+  // Info block tags
+  infoBlockInfo: enc('<div class="info-block info">'),
+  infoBlockWarning: enc('<div class="info-block warning">'),
+  infoBlockError: enc('<div class="info-block error">'),
+  infoBlockSuccess: enc('<div class="info-block success">'),
+  infoBlockClose: enc('</div>\n'),
   // HTML escapes
   amp: enc('&amp;'),
   lt: enc('&lt;'),
@@ -85,6 +105,13 @@ export const COLOR = {
   blockquoteBorder: '#3b82f6',
   hr: '#30363d',
   listMarker: '#58a6ff',
+} as const;
+
+export const INFO_COLORS = {
+  info: { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)' },
+  warning: { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' },
+  error: { border: '#ef4444', bg: 'rgba(239, 68, 68, 0.1)' },
+  success: { border: '#10b981', bg: 'rgba(16, 185, 129, 0.1)' },
 } as const;
 
 export const TD = new TextDecoder('utf-8');

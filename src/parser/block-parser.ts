@@ -13,6 +13,9 @@ import {
   skipSpaces,
   hasRepeat,
   isSpace,
+  isTableSeparator,
+  parseTableRow,
+  detectInfoBlock,
 } from './utils';
 
 /**
@@ -31,9 +34,34 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
     inFence: false,
     fenceCh: 0,
     fenceLen: 0,
+    inTable: false,
+    tableAlignments: [],
+    inInfo: false,
   };
+  
+  const lines = Array.from(lineSpans(u8));
 
-  for (const { start, end } of lineSpans(u8)) {
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const { start, end } = lines[lineIdx];
+    
+    // Handle info blocks
+    const infoCheck = detectInfoBlock(u8, start, end);
+    if (infoCheck.isInfo) {
+      if (infoCheck.isClose) {
+        if (st.inInfo) {
+          st.inInfo = false;
+          delete st.infoType;
+          yield { type: 'infoClose' };
+        }
+        continue;
+      } else if (infoCheck.type) {
+        st.inInfo = true;
+        st.infoType = infoCheck.type;
+        yield { type: 'infoOpen', infoType: infoCheck.type as 'info' | 'warning' | 'error' | 'success' };
+        continue;
+      }
+    }
+    
     if (st.inFence) {
       let i = skipSpaces(u8, start, end);
       if (hasRepeat(u8, i, end, st.fenceCh, st.fenceLen)) {
@@ -98,6 +126,45 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
       }
     }
 
+    // Tables - check if current line starts with | and next line is separator
+    if (!st.inTable && i < end && u8[i] === 0x7c && lineIdx + 1 < lines.length) { // |
+      const nextLine = lines[lineIdx + 1];
+      const sepCheck = isTableSeparator(u8, nextLine.start, nextLine.end);
+      
+      if (sepCheck.isTable) {
+        st.inTable = true;
+        st.tableAlignments = sepCheck.alignments;
+        yield { type: 'tableOpen' };
+        
+        // Parse header row
+        const headerCells = parseTableRow(u8, start, end);
+        const headerWithAlign = headerCells.map((cell, idx) => ({
+          ...cell,
+          align: st.tableAlignments[idx] || 'left',
+        }));
+        yield { type: 'tableHeader', cells: headerWithAlign };
+        
+        lineIdx++; // Skip separator line
+        continue;
+      }
+    }
+    
+    // Continue parsing table rows
+    if (st.inTable) {
+      // Check if line is a table row
+      if (i < end && u8[i] === 0x7c) { // |
+        const cells = parseTableRow(u8, start, end);
+        yield { type: 'tableRow', cells };
+        continue;
+      } else {
+        // End of table
+        st.inTable = false;
+        st.tableAlignments = [];
+        yield { type: 'tableClose' };
+        // Don't continue, process this line normally
+      }
+    }
+
     // HR
     if (isHr(u8, i, end)) {
       yield { type: 'hr' };
@@ -139,8 +206,12 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
       continue;
     }
 
-    // Paragraph line
-    yield { type: 'paraLine', s: i, e: end };
+    // Paragraph line (ensure we don't split inside a multibyte codepoint)
+    let lineEnd = end;
+    while (lineEnd > i && (u8[lineEnd - 1] & 0b11000000) === 0b10000000) {
+      lineEnd--;
+    }
+    yield { type: 'paraLine', s: i, e: lineEnd };
   }
 
   // EOF flush

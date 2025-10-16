@@ -10,6 +10,10 @@ function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
 
 const md = `# Hello World
 
+Tämä teksti on suomeksi.
+
+Ä Ö å etc. do not work and thus the emojis are not working either.
+
 This is **bold** text and this is *italic* text.
 
 ## Features
@@ -51,6 +55,32 @@ Visit [example.com](https://example.com) or www.github.com
 ![Example Image 1](https://picsum.photos/600/400)
 
 ![Example Image 2](https://picsum.photos/500/350)
+
+### Tables
+
+| Feature | Description | Status |
+|---------|:-----------:|-------:|
+| Tables  | Markdown tables with alignment | ✅ |
+| Info Blocks | Colored notification blocks | ✅ |
+| Virtual Scroll | Canvas performance optimization | ✅ |
+
+### Info Blocks
+
+::: info
+This is an informational message. It can contain **bold text**, *italic text*, and \`inline code\`.
+:::
+
+::: warning
+This is a warning message. Pay attention to this important notice!
+:::
+
+::: error
+This is an error message. Something went wrong and needs your attention.
+:::
+
+::: success
+This is a success message. Everything completed successfully!
+:::
 
 ---
 

@@ -1,23 +1,11 @@
 /**
- * Ultra-fast Markdown → HTML (Uint8Array → String) or Canvas
+ * A pretty fast, experimental Markdown parser + sample renderers to HTML and Canvas
  * ------------------------------------------------
- * - Modern TypeScript module
- * - Zero RegExp
- * - Single pass over lines, byte-span parsing (no substrings)
- * - Arena-style HTML buffer (Uint8Array that grows geometrically)
- * - Generator-based scanners for clarity without allocations
- * - Features: headings, blockquotes, ul/ol lists, hr, fenced code, paragraphs
- *             inline code, emphasis (_/* simplified, now with bold), links, images, autolinks
- *             (http/https/www → https), minimal URL escaping
- *
- * Usage:
- *   import { MDParser, u8 } from './parser';
- *   const parser = new MDParser();
- *   const html = parser.parse(u8('# Hi\nSee www.example.com and ![alt](x.png)'));
- *   // or
- *   const canvas = document.createElement('canvas');
- *   canvas.width = 800;
- *   parser.renderToCanvas(u8('# Hi\nSee www.example.com and ![alt](x.png)'), canvas);
+ * - No RegExp or external dependencies
+ * - Overall goal is to have a single pass over md lines, byte-span parsing (no substrings)
+ * - Lower level arena-inspired HTML buffer (Uint8Array that grows geometrically) to minimize heap allocations
+ * - Features: headings, blockquotes, ul/ol lists, hr, fenced code, paragraphs, inline code, emphasis (_/* simplified, now with bold), links, images, autolinks (http/https/www → https), minimal URL escaping
+ * - Renderers: HTML (Uint8Array → String) and Canvas (Uint8Array → Canvas)
  */
 
 import { TE } from './constants';

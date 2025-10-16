@@ -141,9 +141,19 @@ export function* inlineTokens(
       continue;
     }
 
-    // Text byte
-    yield { kind: 'text', s: i, e: i + 1 };
-    i++;
+    // Text byte (may be part of a multibyte UTF-8 sequence)
+    const byte = u8[i];
+    let advance = 1;
+    if ((byte & 0b11100000) === 0b11000000) {
+      advance = 2;
+    } else if ((byte & 0b11110000) === 0b11100000) {
+      advance = 3;
+    } else if ((byte & 0b11111000) === 0b11110000) {
+      advance = 4;
+    }
+    const end = Math.min(i + advance, e);
+    yield { kind: 'text', s: i, e: end };
+    i = end;
   }
 
   // Unbalanced emphasis → literal marker(s): cheap no-op (already text)

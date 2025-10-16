@@ -4,14 +4,175 @@
 
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
-import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD } from './constants';
+import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD, INFO_COLORS } from './constants';
 import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
 
-const ORDERED_MARKER_FONT = 'bold ' + FONT_SIZE.base + 'px sans-serif';
+// Font stacks with comprehensive Unicode support
+const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
+const FONT_STACK_MONO = 'ui-monospace, "SF Mono", Monaco, Consolas, "Liberation Mono", "Courier New", monospace, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
+
+const ORDERED_MARKER_FONT = 'bold ' + FONT_SIZE.base + 'px ' + FONT_STACK;
 const MARKER_GAP = 8;
 const BULLET_RADIUS = 3;
 const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
 const MAX_IMAGE_WIDTH = 700; // max width for images in px
+
+/**
+ * Measure the width of inline content
+ */
+function measureInlineContent(
+  u8: Uint8Array,
+  s: number,
+  e: number,
+  ctx: CanvasRenderingContext2D,
+  baseSize: number,
+): number {
+  let width = 0;
+  ctx.font = baseSize + 'px ' + FONT_STACK;
+  
+  for (const tok of inlineTokens(u8, s, e)) {
+    switch (tok.kind) {
+      case 'text': {
+        const text = TD.decode(u8.subarray(tok.s, tok.e));
+        width += ctx.measureText(text).width;
+        break;
+      }
+      case 'code': {
+        const text = TD.decode(u8.subarray(tok.s, tok.e));
+        const codeSize = Math.round(baseSize * 0.9);
+        const prevFont = ctx.font;
+        ctx.font = codeSize + 'px ' + FONT_STACK_MONO;
+        width += ctx.measureText(text).width + 12; // padding
+        ctx.font = prevFont;
+        break;
+      }
+      case 'strongOpen':
+      case 'strongClose':
+        ctx.font = ctx.font.includes('bold') ? baseSize + 'px ' + FONT_STACK : 'bold ' + baseSize + 'px ' + FONT_STACK;
+        break;
+      case 'link': {
+        const text = TD.decode(u8.subarray(tok.textS, tok.textE));
+        width += ctx.measureText(text).width;
+        break;
+      }
+      case 'autolink': {
+        const text = TD.decode(u8.subarray(tok.s, tok.e));
+        width += ctx.measureText(text).width;
+        break;
+      }
+    }
+  }
+  
+  return width;
+}
+
+/**
+ * Render inline content within a cell with clipping
+ */
+function renderCellContent(
+  u8: Uint8Array,
+  s: number,
+  e: number,
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  maxWidth: number,
+  baseSize: number,
+  align: 'left' | 'center' | 'right',
+  color: string,
+): void {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y - baseSize, maxWidth, baseSize * 2);
+  ctx.clip();
+  
+  // Measure total width for alignment
+  const totalWidth = measureInlineContent(u8, s, e, ctx, baseSize);
+  
+  let offsetX = x;
+  if (align === 'center') {
+    offsetX = x + (maxWidth - totalWidth) / 2;
+  } else if (align === 'right') {
+    offsetX = x + maxWidth - totalWidth;
+  }
+  
+  let currentX = offsetX;
+  let isBold = false;
+  let isItalic = false;
+  
+  ctx.fillStyle = color;
+  ctx.font = baseSize + 'px ' + FONT_STACK;
+  
+  for (const tok of inlineTokens(u8, s, e)) {
+    switch (tok.kind) {
+      case 'text': {
+        const text = TD.decode(u8.subarray(tok.s, tok.e));
+        ctx.fillText(text, currentX, y);
+        currentX += ctx.measureText(text).width;
+        break;
+      }
+      case 'code': {
+        const text = TD.decode(u8.subarray(tok.s, tok.e));
+        const codeSize = Math.round(baseSize * 0.9);
+        const paddingX = 6;
+        const paddingY = 4;
+        
+        // Background
+        const prevFont = ctx.font;
+        ctx.font = codeSize + 'px ' + FONT_STACK_MONO;
+        const textWidth = ctx.measureText(text).width;
+        
+        ctx.fillStyle = COLOR.inlineCodeBg;
+        ctx.fillRect(currentX - paddingX, y - codeSize - paddingY / 2, textWidth + paddingX * 2, codeSize + paddingY);
+        
+        // Text
+        ctx.fillStyle = COLOR.inlineCodeText;
+        ctx.fillText(text, currentX, y);
+        currentX += textWidth + paddingX * 2;
+        
+        ctx.font = prevFont;
+        ctx.fillStyle = color;
+        break;
+      }
+      case 'strongOpen':
+        isBold = true;
+        ctx.font = (isItalic ? 'italic ' : '') + 'bold ' + baseSize + 'px ' + FONT_STACK;
+        break;
+      case 'strongClose':
+        isBold = false;
+        ctx.font = (isItalic ? 'italic ' : '') + baseSize + 'px ' + FONT_STACK;
+        break;
+      case 'emOpen':
+        isItalic = true;
+        ctx.font = 'italic ' + (isBold ? 'bold ' : '') + baseSize + 'px ' + FONT_STACK;
+        break;
+      case 'emClose':
+        isItalic = false;
+        ctx.font = (isBold ? 'bold ' : '') + baseSize + 'px ' + FONT_STACK;
+        break;
+      case 'link': {
+        const text = TD.decode(u8.subarray(tok.textS, tok.textE));
+        const prevStyle = ctx.fillStyle as string | CanvasGradient | CanvasPattern;
+        ctx.fillStyle = COLOR.link;
+        ctx.fillText(text, currentX, y);
+        currentX += ctx.measureText(text).width;
+        ctx.fillStyle = prevStyle;
+        break;
+      }
+      case 'autolink': {
+        const text = TD.decode(u8.subarray(tok.s, tok.e));
+        const prevStyle = ctx.fillStyle as string | CanvasGradient | CanvasPattern;
+        ctx.fillStyle = COLOR.link;
+        ctx.fillText(text, currentX, y);
+        currentX += ctx.measureText(text).width;
+        ctx.fillStyle = prevStyle;
+        break;
+      }
+    }
+  }
+  
+  ctx.restore();
+}
 
 // Image cache with loading state
 interface CachedImage {
@@ -116,7 +277,7 @@ function drawInline(
     let font = '';
     if (currentStyle.bold) font += 'bold ';
     if (currentStyle.italic) font += 'italic ';
-    font += currentStyle.size + 'px ' + (currentStyle.code ? 'monospace' : 'sans-serif');
+    font += currentStyle.size + 'px ' + (currentStyle.code ? FONT_STACK_MONO : FONT_STACK);
     ctx.font = font;
     ctx.fillStyle = currentStyle.color || COLOR.text;
   };
@@ -336,7 +497,7 @@ function drawInline(
               ctx.fillStyle = COLOR.border;
               ctx.fillRect(x, currentY, displayWidth, displayHeight);
               ctx.fillStyle = COLOR.textSecondary;
-              ctx.font = FONT_SIZE.base + 'px sans-serif';
+          ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
               ctx.fillText(`[Image: ${altText || src}]`, x + 10, currentY + 20);
             }
             
@@ -361,7 +522,7 @@ function drawInline(
             ctx.fillStyle = COLOR.bgSecondary;
             ctx.fillRect(x, currentY, placeholderWidth, placeholderHeight);
             ctx.fillStyle = COLOR.textSecondary;
-            ctx.font = FONT_SIZE.base + 'px sans-serif';
+        ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
             ctx.fillText(`Loading: ${altText || src}`, x + 10, currentY + placeholderHeight / 2);
           }
           currentY += placeholderHeight + FONT_SIZE.base * 0.5;
@@ -440,6 +601,14 @@ function renderCanvas(
   const blockquotes: { x: number; y: number; width: number; height: number }[] = [];
   let inBlockquote = false;
   let blockquoteY = 0;
+  let tableColWidths: number[] = [];
+  let tableAlignments: Array<'left' | 'center' | 'right'> = [];
+  const infoBlocks: { x: number; y: number; width: number; height: number; type: string }[] = [];
+  let inInfo = false;
+  let infoY = 0;
+  let infoType = 'info';
+  let pendingTableHeader: { cells: Array<{ s: number; e: number; align: 'left' | 'center' | 'right' }> } | null = null;
+  let pendingTableRows: Array<{ cells: Array<{ s: number; e: number }> }> = [];
 
   const closePara = (): void => {
     if (paraOpen) {
@@ -620,7 +789,7 @@ function renderCanvas(
 
       case 'paraLine': {
         const baseSize = FONT_SIZE.base;
-        ctx.font = baseSize + 'px sans-serif';
+        ctx.font = baseSize + 'px ' + FONT_STACK;
         const bqOffset = inBlockquote ? 20 : 0;
         const textStart = MARGIN + indent + bqOffset;
 
@@ -665,7 +834,7 @@ function renderCanvas(
       case 'codeText':
         if (inCode) {
           const text = TD.decode(u8.subarray(ev.s, ev.e));
-          ctx.font = FONT_SIZE.code + 'px monospace';
+          ctx.font = FONT_SIZE.code + 'px ' + FONT_STACK_MONO;
           const w = ctx.measureText(text).width;
           if (w > codeWidth) codeWidth = w;
           const codeLineH = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
@@ -694,6 +863,161 @@ function renderCanvas(
           }
           y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
         }
+        break;
+
+      case 'tableOpen':
+        closePara();
+        closeListsAll();
+        pendingTableHeader = null;
+        pendingTableRows = [];
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
+        break;
+
+      case 'tableHeader':
+        // Store header for later processing
+        pendingTableHeader = ev;
+        break;
+
+      case 'tableRow':
+        // Store row for later processing
+        pendingTableRows.push(ev);
+        break;
+
+      case 'tableClose': {
+        if (pendingTableHeader) {
+          const cellPadding = 10;
+          const headerRowHeight = FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 2;
+          const dataRowHeight = FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.8;
+          
+          // Calculate column widths from all rows (header + data)
+          const numCols = pendingTableHeader.cells.length;
+          tableColWidths = new Array(numCols).fill(80); // minimum width
+          tableAlignments = pendingTableHeader.cells.map(c => c.align);
+          
+          // Measure header cells
+          for (let i = 0; i < pendingTableHeader.cells.length; i++) {
+            const cell = pendingTableHeader.cells[i];
+            ctx.font = 'bold ' + FONT_SIZE.base + 'px ' + FONT_STACK;
+            const width = measureInlineContent(u8, cell.s, cell.e, ctx, FONT_SIZE.base);
+            tableColWidths[i] = Math.max(tableColWidths[i], width + cellPadding * 2);
+          }
+          
+          // Measure data row cells
+          for (const row of pendingTableRows) {
+            for (let i = 0; i < Math.min(row.cells.length, numCols); i++) {
+              const cell = row.cells[i];
+              ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
+              const width = measureInlineContent(u8, cell.s, cell.e, ctx, FONT_SIZE.base);
+              tableColWidths[i] = Math.max(tableColWidths[i], width + cellPadding * 2);
+            }
+          }
+          
+          // Render header row
+          if (!isMeasure) {
+            let x = MARGIN + indent;
+            for (let i = 0; i < pendingTableHeader.cells.length; i++) {
+              const cell = pendingTableHeader.cells[i];
+              const cellWidth = tableColWidths[i];
+              
+              // Header background
+              ctx.fillStyle = COLOR.bgSecondary;
+              ctx.fillRect(x, y, cellWidth, headerRowHeight);
+              
+              // Header border
+              ctx.strokeStyle = COLOR.border;
+              ctx.lineWidth = 1;
+              ctx.strokeRect(x, y, cellWidth, headerRowHeight);
+              
+              // Header text with inline rendering
+              const textY = y + (headerRowHeight - FONT_SIZE.base) / 2;
+              renderCellContent(
+                u8,
+                cell.s,
+                cell.e,
+                ctx,
+                x + cellPadding,
+                textY,
+                cellWidth - cellPadding * 2,
+                FONT_SIZE.base,
+                cell.align,
+                COLOR.text,
+              );
+              
+              x += cellWidth;
+            }
+          }
+          y += headerRowHeight;
+          
+          // Render data rows
+          for (const row of pendingTableRows) {
+            let x = MARGIN + indent;
+            for (let i = 0; i < Math.min(row.cells.length, numCols); i++) {
+              const cell = row.cells[i];
+              const cellWidth = tableColWidths[i];
+              const align = tableAlignments[i] || 'left';
+              
+              if (!isMeasure) {
+                // Cell border
+                ctx.strokeStyle = COLOR.border;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, cellWidth, dataRowHeight);
+                
+                // Cell text with inline rendering
+                const textY = y + (dataRowHeight - FONT_SIZE.base) / 2;
+                renderCellContent(
+                  u8,
+                  cell.s,
+                  cell.e,
+                  ctx,
+                  x + cellPadding,
+                  textY,
+                  cellWidth - cellPadding * 2,
+                  FONT_SIZE.base,
+                  align,
+                  COLOR.textSecondary,
+                );
+              }
+              
+              x += cellWidth;
+            }
+            y += dataRowHeight;
+          }
+          
+          // Reset table state
+          pendingTableHeader = null;
+          pendingTableRows = [];
+          tableColWidths = [];
+          tableAlignments = [];
+          y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
+        }
+        break;
+      }
+
+      case 'infoOpen':
+        closePara();
+        closeListsAll();
+        inInfo = true;
+        infoY = y;
+        infoType = ev.infoType;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
+        break;
+
+      case 'infoClose':
+        closePara();
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
+        
+        if (!isMeasure && inInfo) {
+          infoBlocks.push({
+            x: MARGIN + indent - 5,
+            y: infoY,
+            width: maxWidth + 10,
+            height: y - infoY,
+            type: infoType,
+          });
+        }
+        
+        inInfo = false;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.5;
         break;
     }
   }
@@ -746,6 +1070,13 @@ function renderCanvas(
       ctx.fillStyle = COLOR.blockquoteBorder;
       ctx.fillRect(bq.x + 5, bq.y, 4, bq.height);
     }
+    for (const info of infoBlocks) {
+      const colors = INFO_COLORS[info.type as keyof typeof INFO_COLORS];
+      ctx.fillStyle = colors.bg;
+      ctx.fillRect(info.x, info.y, info.width, info.height);
+      ctx.fillStyle = colors.border;
+      ctx.fillRect(info.x + 5, info.y, 4, info.height);
+    }
     ctx.restore();
   }
 
@@ -768,8 +1099,19 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const measureCanvas = document.createElement('canvas');
   measureCanvas.width = styleWidth * dpr;
   measureCanvas.height = 1;
-  const measureCtx = measureCanvas.getContext('2d');
+  const measureCtx = measureCanvas.getContext('2d', { 
+    willReadFrequently: false 
+  });
   if (!measureCtx) return;
+  
+  // Enable emoji rendering support
+  if ('fontKerning' in measureCtx) {
+    (measureCtx as any).fontKerning = 'normal';
+  }
+  if ('textRendering' in measureCtx) {
+    (measureCtx as any).textRendering = 'optimizeLegibility';
+  }
+  
   measureCtx.scale(dpr, dpr);
   const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender }) + MARGIN * 2;
 
@@ -782,8 +1124,20 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     canvas.style.width = `${styleWidth}px`;
     canvas.style.height = `${totalHeight}px`;
     canvas.style.position = 'static';
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { 
+      willReadFrequently: false,
+      alpha: true
+    });
     if (!ctx) return;
+    
+    // Enable emoji rendering support
+    if ('fontKerning' in ctx) {
+      (ctx as any).fontKerning = 'normal';
+    }
+    if ('textRendering' in ctx) {
+      (ctx as any).textRendering = 'optimizeLegibility';
+    }
+    
     ctx.scale(dpr, dpr);
     renderCanvas(u8, ctx, false, { onImageLoad: rerender });
     if (spacer) spacer.style.height = '0px';
@@ -800,8 +1154,20 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const offscreen = document.createElement('canvas');
   offscreen.width = styleWidth * dpr;
   offscreen.height = Math.ceil(totalHeight) * dpr;
-  const offscreenCtx = offscreen.getContext('2d');
+  const offscreenCtx = offscreen.getContext('2d', {
+    willReadFrequently: false,
+    alpha: true
+  });
   if (!offscreenCtx) return;
+  
+  // Enable emoji rendering support
+  if ('fontKerning' in offscreenCtx) {
+    (offscreenCtx as any).fontKerning = 'normal';
+  }
+  if ('textRendering' in offscreenCtx) {
+    (offscreenCtx as any).textRendering = 'optimizeLegibility';
+  }
+  
   offscreenCtx.scale(dpr, dpr);
   renderCanvas(u8, offscreenCtx, false, { onImageLoad: rerender });
 
@@ -812,8 +1178,19 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   canvas.style.position = 'sticky';
   canvas.style.top = '0';
   canvas.style.left = '0';
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', {
+    willReadFrequently: false,
+    alpha: true
+  });
   if (!ctx) return;
+  
+  // Enable emoji rendering support
+  if ('fontKerning' in ctx) {
+    (ctx as any).fontKerning = 'normal';
+  }
+  if ('textRendering' in ctx) {
+    (ctx as any).textRendering = 'optimizeLegibility';
+  }
 
   const state: CanvasRenderState = {
     dpr,

@@ -48,7 +48,13 @@ export type BlockEvent =
   | { type: 'paraLine'; s: number; e: number }
   | { type: 'codeOpen' }
   | { type: 'codeText'; s: number; e: number }
-  | { type: 'codeClose' };
+  | { type: 'codeClose' }
+  | { type: 'tableOpen' }
+  | { type: 'tableHeader'; cells: Array<{ s: number; e: number; align: 'left' | 'center' | 'right' }> }
+  | { type: 'tableRow'; cells: Array<{ s: number; e: number }> }
+  | { type: 'tableClose' }
+  | { type: 'infoOpen'; infoType: 'info' | 'warning' | 'error' | 'success' }
+  | { type: 'infoClose' };
 
 export interface BlockState {
   bqLevel: number;
@@ -56,6 +62,10 @@ export interface BlockState {
   inFence: boolean;
   fenceCh: number;
   fenceLen: number;
+  inTable: boolean;
+  tableAlignments: Array<'left' | 'center' | 'right'>;
+  inInfo: boolean;
+  infoType?: string;
 }
 
 export interface TextStyle {
