@@ -10,31 +10,21 @@ import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
 const ORDERED_MARKER_FONT = 'bold ' + FONT_SIZE.base + 'px sans-serif';
 const MARKER_GAP = 8;
 const BULLET_RADIUS = 3;
+const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
 
-/**
- * Code block info for proper rendering
- */
-interface CodeBlockInfo {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+interface CanvasRenderState {
+  dpr: number;
+  styleWidth: number;
+  totalHeight: number;
+  offscreen: HTMLCanvasElement | null;
+  ctx: CanvasRenderingContext2D;
+  scrollEl: HTMLElement;
+  spacer?: HTMLElement | null;
+  onScroll?: () => void;
 }
 
-/**
- * Blockquote info for background rendering
- */
-interface BlockquoteInfo {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  indent: number;
-}
+const canvasStates = new WeakMap<HTMLCanvasElement, CanvasRenderState>();
 
-/**
- * Renders inline tokens to canvas
- */
 function drawInline(
   u8: Uint8Array,
   s: number,
@@ -63,10 +53,7 @@ function drawInline(
     let font = '';
     if (currentStyle.bold) font += 'bold ';
     if (currentStyle.italic) font += 'italic ';
-    font +=
-      currentStyle.size +
-      'px ' +
-      (currentStyle.code ? 'monospace' : 'sans-serif');
+    font += currentStyle.size + 'px ' + (currentStyle.code ? 'monospace' : 'sans-serif');
     ctx.font = font;
     ctx.fillStyle = currentStyle.color || COLOR.text;
   };
@@ -83,6 +70,8 @@ function drawInline(
           ctx.beginPath();
           ctx.moveTo(lineX, currentY + 1);
           ctx.lineTo(lineX + w, currentY + 1);
+          ctx.strokeStyle = COLOR.inlineCodeText;
+          ctx.lineWidth = 1;
           ctx.stroke();
         }
       }
@@ -127,7 +116,7 @@ function drawInline(
       const isSpacePart = /\s/.test(part[0]);
       const partW = ctx.measureText(part).width;
       let remaining = maxWidth - (currentX - x);
-      
+
       if (partW <= remaining) {
         line.push({ text: part, style: { ...currentStyle } });
         currentX += partW;
@@ -148,7 +137,6 @@ function drawInline(
               if (line.length) {
                 flushLine();
               } else {
-                // Force add at least one char
                 const char = part[pStart];
                 line.push({ text: char, style: { ...currentStyle } });
                 currentX += ctx.measureText(char).width;
@@ -167,7 +155,7 @@ function drawInline(
       case 'text':
         addText(TD.decode(u8.subarray(tok.s, tok.e)));
         break;
-        
+
       case 'code': {
         const codeText = TD.decode(u8.subarray(tok.s, tok.e));
         const surroundingSize = currentStyle.size || FONT_SIZE.base;
@@ -205,17 +193,16 @@ function drawInline(
         popStyle();
         break;
       }
-        
+
       case 'img': {
         const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
         const src = TD.decode(u8.subarray(tok.srcS, tok.srcE));
-        // For now, render as placeholder text with link-style formatting
         pushStyle({ code: true, color: COLOR.link });
         addText(`[🖼️ ${altText || 'image'}: ${src}]`);
         popStyle();
         break;
       }
-        
+
       case 'link': {
         pushStyle({ link: true, color: COLOR.link });
         const linkText = TD.decode(u8.subarray(tok.textS, tok.textE));
@@ -223,58 +210,56 @@ function drawInline(
         popStyle();
         break;
       }
-        
+
       case 'autolink':
         pushStyle({ link: true, color: COLOR.link });
         addText(TD.decode(u8.subarray(tok.s, tok.e)));
         popStyle();
         break;
-        
+
       case 'emOpen':
         pushStyle({ italic: true });
         break;
-        
+
       case 'emClose':
         popStyle();
         break;
-        
+
       case 'strongOpen':
         pushStyle({ bold: true });
         break;
-        
+
       case 'strongClose':
         popStyle();
         break;
     }
   }
-  
+
   if (line.length) flushLine();
   return { x: currentX, y: currentY };
 }
 
-/**
- * Internal canvas rendering function
- */
 function renderCanvas(
   u8: Uint8Array,
   ctx: CanvasRenderingContext2D,
   isMeasure: boolean,
+  opts: { skipClear?: boolean } = {},
 ): number {
-  // Set optimal text rendering properties for crisp text
   if (!isMeasure) {
-    ctx.fillStyle = COLOR.bg;
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    if (!opts.skipClear) {
+      ctx.fillStyle = COLOR.bg;
+      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
     ctx.fillStyle = COLOR.text;
-    
-    // Enable high-quality text rendering
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.textBaseline = 'top';
   }
-  
+
+  ctx.textBaseline = 'top';
+
   let y = MARGIN;
   let indent = 0;
-  const maxWidth = ctx.canvas.width - 2 * MARGIN;
+  const maxWidth = ctx.canvas.width / (window.devicePixelRatio || 1) - 2 * MARGIN;
   let paraOpen = false;
   let currentX = MARGIN;
   const listStack: CanvasListItem[] = [];
@@ -283,8 +268,8 @@ function renderCanvas(
   let codeY = 0;
   let codeHeight = 0;
   let codeWidth = 0;
-  const codeBlocks: CodeBlockInfo[] = [];
-  const blockquotes: BlockquoteInfo[] = [];
+  const codeBlocks: { x: number; y: number; width: number; height: number }[] = [];
+  const blockquotes: { x: number; y: number; width: number; height: number }[] = [];
   let inBlockquote = false;
   let blockquoteY = 0;
 
@@ -315,7 +300,7 @@ function renderCanvas(
         indent += INDENT;
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
         break;
-        
+
       case 'bqClose':
         closePara();
         closeListsAll();
@@ -326,41 +311,38 @@ function renderCanvas(
             y: blockquoteY,
             width: maxWidth - (indent - INDENT) + 10,
             height: y - blockquoteY,
-            indent: indent - INDENT,
           });
           inBlockquote = false;
         }
         indent -= INDENT;
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.5;
         break;
-        
+
       case 'hr':
         closePara();
         closeListsAll();
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
         if (!isMeasure) {
-          // Main horizontal line
           ctx.strokeStyle = COLOR.hr;
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.moveTo(MARGIN + indent, y);
           ctx.lineTo(maxWidth + MARGIN - indent, y);
           ctx.stroke();
-          
-          // Accent dot in center
           const centerX = (MARGIN + indent + maxWidth + MARGIN - indent) / 2;
           ctx.fillStyle = COLOR.accent;
           ctx.fillRect(centerX - 30, y - 1, 60, 2);
+          ctx.fillStyle = COLOR.text;
         }
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
         break;
-        
+
       case 'heading': {
         closePara();
         closeListsAll();
         const level = ev.level - 1;
         const hSize = FONT_SIZE.heading[level];
-        y += hSize * LINE_HEIGHT_MULTIPLIER * 0.5; // More space before heading
+        y += hSize * LINE_HEIGHT_MULTIPLIER * 0.5;
         const hRes = drawInline(
           u8,
           ev.s,
@@ -373,8 +355,6 @@ function renderCanvas(
           { bold: true, size: hSize },
         );
         y = hRes.y;
-        
-        // Add border for h1 and h2
         if (!isMeasure && (level === 0 || level === 1)) {
           const borderY = y + hSize * 0.2;
           ctx.strokeStyle = COLOR.border;
@@ -385,11 +365,10 @@ function renderCanvas(
           ctx.stroke();
           y += hSize * 0.4;
         }
-        
-        y += hSize * LINE_HEIGHT_MULTIPLIER * 0.5; // More space after heading
+        y += hSize * LINE_HEIGHT_MULTIPLIER * 0.5;
         break;
       }
-        
+
       case 'listOpen':
         closePara();
         listStack.push({ kind: ev.kind, counter: 1 });
@@ -399,7 +378,7 @@ function renderCanvas(
           orderedMarkerWidths[listStack.length - 1] = ctx.measureText('1.').width;
         }
         break;
-        
+
       case 'listItem': {
         closePara();
         const baseSize = FONT_SIZE.base;
@@ -430,7 +409,7 @@ function renderCanvas(
             ctx.font = ORDERED_MARKER_FONT;
             const markerX = textStart - markerWidth - MARKER_GAP;
             const markerY = y + baseSize * 0.5;
-            const prevBaseline = ctx.textBaseline;
+            const prevBaseline: CanvasTextBaseline = ctx.textBaseline;
             ctx.textBaseline = 'middle';
             ctx.fillText(markerText, markerX, markerY);
             ctx.textBaseline = prevBaseline;
@@ -458,7 +437,7 @@ function renderCanvas(
         y = liRes.y + baseSize * 0.8;
         break;
       }
-        
+
       case 'listClose':
         closePara();
         while (listStack.length) {
@@ -468,34 +447,23 @@ function renderCanvas(
           if (top.kind === ev.kind) break;
         }
         break;
-        
+
       case 'paraLine': {
         const baseSize = FONT_SIZE.base;
         ctx.font = baseSize + 'px sans-serif';
         const bqOffset = inBlockquote ? 20 : 0;
+        const textStart = MARGIN + indent + bqOffset;
 
         if (!paraOpen) {
           closeListsAll();
           paraOpen = true;
-          currentX = MARGIN + indent + bqOffset;
           y += baseSize * LINE_HEIGHT_MULTIPLIER * (inBlockquote ? 0.25 : 0.3);
         } else {
-          const spaceW = ctx.measureText(' ').width;
-          const availableWidth = maxWidth - indent - bqOffset;
-          const usedWidth = currentX - (MARGIN + indent + bqOffset);
-          const remaining = availableWidth - usedWidth;
-
-          if (spaceW > remaining) {
-            y += baseSize * LINE_HEIGHT_MULTIPLIER;
-            currentX = MARGIN + indent + bqOffset;
-          } else {
-            if (!isMeasure) {
-              ctx.fillStyle = inBlockquote ? COLOR.textSecondary : COLOR.text;
-              ctx.fillText(' ', currentX, y);
-            }
-            currentX += spaceW;
-          }
+          // Each paraLine is a new line in the source, start fresh
+          y += baseSize * LINE_HEIGHT_MULTIPLIER;
         }
+        
+        currentX = textStart;
 
         const pRes = drawInline(
           u8,
@@ -504,7 +472,7 @@ function renderCanvas(
           ctx,
           currentX,
           y,
-          maxWidth - indent - bqOffset - (currentX - (MARGIN + indent + bqOffset)),
+          maxWidth - indent - bqOffset,
           isMeasure,
           { size: baseSize, color: inBlockquote ? COLOR.textSecondary : COLOR.text, italic: inBlockquote },
         );
@@ -512,17 +480,17 @@ function renderCanvas(
         y = pRes.y;
         break;
       }
-        
+
       case 'codeOpen':
         closePara();
         closeListsAll();
         inCode = true;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2; // More space before code
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
         codeY = y;
         codeWidth = 0;
         codeHeight = 0;
         break;
-        
+
       case 'codeText':
         if (inCode) {
           const text = TD.decode(u8.subarray(ev.s, ev.e));
@@ -530,23 +498,22 @@ function renderCanvas(
           const w = ctx.measureText(text).width;
           if (w > codeWidth) codeWidth = w;
           const codeLineH = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
-          
+
           if (!isMeasure) {
-            // Use proper text color for code blocks (not too dark)
             ctx.fillStyle = COLOR.text;
             ctx.fillText(text, MARGIN + indent + 10, y);
+            ctx.fillStyle = COLOR.text;
           }
-          
+
           y += codeLineH;
           codeHeight += codeLineH;
         }
         break;
-        
+
       case 'codeClose':
         if (inCode) {
           inCode = false;
           if (!isMeasure) {
-            // Store code block for background rendering with better padding
             codeBlocks.push({
               x: MARGIN + indent - 12,
               y: codeY - 12,
@@ -554,17 +521,16 @@ function renderCanvas(
               height: codeHeight + 24,
             });
           }
-          y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2; // More space after code
+          y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
         }
         break;
     }
   }
-  
+
   closePara();
   closeListsAll();
-  
+
   if (inCode && !isMeasure) {
-    // Store final code block if still open
     codeBlocks.push({
       x: MARGIN + indent - 5,
       y: codeY - 5,
@@ -573,234 +539,141 @@ function renderCanvas(
     });
     y += 10;
   }
-  
+
   if (inBlockquote && !isMeasure) {
     blockquotes.push({
       x: MARGIN + indent - INDENT - 5,
       y: blockquoteY,
       width: maxWidth - (indent - INDENT) + 10,
       height: y - blockquoteY,
-      indent,
     });
   }
-  
+
+  // Draw collected backgrounds after content
+  if (!isMeasure) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-over';
+    for (const block of codeBlocks) {
+      ctx.fillStyle = COLOR.codeBg;
+      ctx.beginPath();
+      const radius = 8;
+      ctx.moveTo(block.x + radius, block.y);
+      ctx.lineTo(block.x + block.width - radius, block.y);
+      ctx.quadraticCurveTo(block.x + block.width, block.y, block.x + block.width, block.y + radius);
+      ctx.lineTo(block.x + block.width, block.y + block.height - radius);
+      ctx.quadraticCurveTo(block.x + block.width, block.y + block.height, block.x + block.width - radius, block.y + block.height);
+      ctx.lineTo(block.x + radius, block.y + block.height);
+      ctx.quadraticCurveTo(block.x, block.y + block.height, block.x, block.y + block.height - radius);
+      ctx.lineTo(block.x, block.y + radius);
+      ctx.quadraticCurveTo(block.x, block.y, block.x + radius, block.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    for (const bq of blockquotes) {
+      ctx.fillStyle = COLOR.bgSecondary;
+      ctx.fillRect(bq.x, bq.y, bq.width, bq.height);
+      ctx.fillStyle = COLOR.blockquoteBorder;
+      ctx.fillRect(bq.x + 5, bq.y, 4, bq.height);
+    }
+    ctx.restore();
+  }
+
   return y;
 }
 
-/**
- * Renders Markdown to canvas with proper height calculation and DPI scaling
- */
-export function renderToCanvasFromBlocks(
-  u8: Uint8Array,
-  canvas: HTMLCanvasElement,
-): void {
-  // Get device pixel ratio for crisp rendering on high-DPI displays
+export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement): void {
   const dpr = window.devicePixelRatio || 1;
-  
-  // Get the CSS display width (not the canvas bitmap width!)
-  // This prevents exponential growth on re-renders
   const rect = canvas.getBoundingClientRect();
-  const styleWidth = rect.width || 800; // Default to 800 if not in DOM
-  
-  // Measure height with proper scaling
-  const measureHeight = (): number => {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = styleWidth * dpr;
-    const tempCtx = tempCanvas.getContext('2d');
-    if (!tempCtx) return 0;
-    tempCtx.scale(dpr, dpr);
-    return renderCanvas(u8, tempCtx, true);
-  };
-  
-  const finalY = measureHeight();
-  const finalHeight = finalY + MARGIN;
-  
-  // Set actual canvas size (accounting for DPI)
+  const styleWidth = rect.width || 800;
+  const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
+  const spacer = scrollEl?.querySelector<HTMLDivElement>('#canvas-spacer') ?? null;
+
+  const measureCanvas = document.createElement('canvas');
+  measureCanvas.width = styleWidth * dpr;
+  measureCanvas.height = 1;
+  const measureCtx = measureCanvas.getContext('2d');
+  if (!measureCtx) return;
+  measureCtx.scale(dpr, dpr);
+  const totalHeight = renderCanvas(u8, measureCtx, true) + MARGIN;
+
+  const viewportHeight = scrollEl ? scrollEl.clientHeight : totalHeight;
+  const needsVirtualScroll = totalHeight > VIRTUAL_SCROLL_THRESHOLD;
+
+  if (!needsVirtualScroll || !scrollEl) {
+    canvas.width = styleWidth * dpr;
+    canvas.height = totalHeight * dpr;
+    canvas.style.width = `${styleWidth}px`;
+    canvas.style.height = `${totalHeight}px`;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    renderCanvas(u8, ctx, false);
+    if (spacer) spacer.style.height = '0px';
+    const prev = canvasStates.get(canvas);
+    if (prev?.scrollEl && prev.onScroll) {
+      prev.scrollEl.removeEventListener('scroll', prev.onScroll);
+      canvasStates.delete(canvas);
+    }
+    return;
+  }
+
+  if (spacer) spacer.style.height = `${totalHeight}px`;
+
+  const offscreen = document.createElement('canvas');
+  offscreen.width = styleWidth * dpr;
+  offscreen.height = Math.ceil(totalHeight) * dpr;
+  const offscreenCtx = offscreen.getContext('2d');
+  if (!offscreenCtx) return;
+  offscreenCtx.scale(dpr, dpr);
+  renderCanvas(u8, offscreenCtx, false);
+
   canvas.width = styleWidth * dpr;
-  canvas.height = finalHeight * dpr;
-  
-  // Set display size (CSS pixels) - preserve the original width
-  canvas.style.width = styleWidth + 'px';
-  canvas.style.height = finalHeight + 'px';
-  
+  canvas.height = viewportHeight * dpr;
+  canvas.style.width = `${styleWidth}px`;
+  canvas.style.height = `${viewportHeight}px`;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
-  
-  // Scale context to account for DPI
   ctx.scale(dpr, dpr);
-  
-  // Enable high-quality text rendering
-  ctx.textRendering = 'optimizeLegibility' as any;
-  ctx.font = FONT_SIZE.base + 'px sans-serif';
-  
-  // First pass: collect all background elements and measure
-  const decorativeElements = collectDecorativeElements(u8, ctx, styleWidth);
-  
-  // Draw backgrounds FIRST (layering order: backgrounds → borders → text)
-  
-  // 1. Blockquote backgrounds
-  for (const bq of decorativeElements.blockquotes) {
-    // Background with rounded corners
-    ctx.fillStyle = COLOR.bgSecondary;
-    const radius = 8;
-    ctx.beginPath();
-    ctx.moveTo(bq.x + radius, bq.y);
-    ctx.lineTo(bq.x + bq.width, bq.y);
-    ctx.lineTo(bq.x + bq.width, bq.y + bq.height);
-    ctx.lineTo(bq.x + radius, bq.y + bq.height);
-    ctx.quadraticCurveTo(bq.x, bq.y + bq.height, bq.x, bq.y + bq.height - radius);
-    ctx.lineTo(bq.x, bq.y + radius);
-    ctx.quadraticCurveTo(bq.x, bq.y, bq.x + radius, bq.y);
-    ctx.closePath();
-    ctx.fill();
-    
-    // Left border (4px wide, solid color at top fading down)
-    const gradient = ctx.createLinearGradient(bq.x, bq.y, bq.x, bq.y + bq.height);
-    gradient.addColorStop(0, COLOR.blockquoteBorder);
-    gradient.addColorStop(1, 'rgba(59, 130, 246, 0.3)');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(bq.x + 5, bq.y, 4, bq.height); // Offset from left edge for padding
-  }
-  
-  // 2. Code block backgrounds
-  for (const block of decorativeElements.codeBlocks) {
-    // Background
-    ctx.fillStyle = COLOR.codeBg;
-    const radius = 8;
-    ctx.beginPath();
-    ctx.moveTo(block.x + radius, block.y);
-    ctx.lineTo(block.x + block.width - radius, block.y);
-    ctx.quadraticCurveTo(block.x + block.width, block.y, block.x + block.width, block.y + radius);
-    ctx.lineTo(block.x + block.width, block.y + block.height - radius);
-    ctx.quadraticCurveTo(block.x + block.width, block.y + block.height, block.x + block.width - radius, block.y + block.height);
-    ctx.lineTo(block.x + radius, block.y + block.height);
-    ctx.quadraticCurveTo(block.x, block.y + block.height, block.x, block.y + block.height - radius);
-    ctx.lineTo(block.x, block.y + radius);
-    ctx.quadraticCurveTo(block.x, block.y, block.x + radius, block.y);
-    ctx.closePath();
-    ctx.fill();
-    
-    // Border
-    ctx.strokeStyle = COLOR.border;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    
-    // Add subtle inner shadow effect
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
-  }
-  
-  // Second pass: render text on top
-  renderCanvas(u8, ctx, false);
-}
 
-/**
- * Collect all decorative elements (backgrounds, borders) before rendering text
- */
-function collectDecorativeElements(
-  u8: Uint8Array,
-  ctx: CanvasRenderingContext2D,
-  width: number,
-): { codeBlocks: CodeBlockInfo[]; blockquotes: BlockquoteInfo[] } {
-  const codeBlocks: CodeBlockInfo[] = [];
-  const blockquotes: BlockquoteInfo[] = [];
-  
-  let y = MARGIN;
-  let indent = 0;
-  const maxWidth = width - 2 * MARGIN;
-  let inCode = false;
-  let codeY = 0;
-  let codeHeight = 0;
-  let codeWidth = 0;
-  let inBlockquote = false;
-  let blockquoteY = 0;
+  const state: CanvasRenderState = {
+    dpr,
+    styleWidth,
+    totalHeight,
+    offscreen,
+    ctx,
+    scrollEl,
+    spacer,
+  };
 
-  for (const ev of blocks(u8)) {
-    switch (ev.type) {
-      case 'bqOpen':
-        if (!inBlockquote) {
-          blockquoteY = y - FONT_SIZE.base * 0.5;
-          inBlockquote = true;
-        }
-        indent += INDENT;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
-        break;
-        
-      case 'bqClose':
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
-        if (inBlockquote) {
-          blockquotes.push({
-            x: MARGIN + indent - INDENT - 5,
-            y: blockquoteY,
-            width: maxWidth - (indent - INDENT) + 10,
-            height: y - blockquoteY,
-            indent: indent - INDENT,
-          });
-          inBlockquote = false;
-        }
-        indent -= INDENT;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.5;
-        break;
-        
-      case 'codeOpen':
-        inCode = true;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
-        codeY = y;
-        codeWidth = 0;
-        codeHeight = 0;
-        break;
-        
-      case 'codeText':
-        if (inCode) {
-          const text = TD.decode(u8.subarray(ev.s, ev.e));
-          ctx.font = FONT_SIZE.code + 'px monospace';
-          const w = ctx.measureText(text).width;
-          if (w > codeWidth) codeWidth = w;
-          const codeLineH = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
-          y += codeLineH;
-          codeHeight += codeLineH;
-        }
-        break;
-        
-      case 'codeClose':
-        if (inCode) {
-          inCode = false;
-          codeBlocks.push({
-            x: MARGIN + indent - 10,
-            y: codeY - 10,
-            width: codeWidth + 30,
-            height: codeHeight + 20,
-          });
-          y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
-        }
-        break;
-        
-      case 'heading':
-        y += FONT_SIZE.heading[ev.level - 1] * LINE_HEIGHT_MULTIPLIER * 1.1;
-        break;
-        
-      case 'hr':
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 2;
-        break;
-        
-      case 'listOpen':
-        indent += INDENT;
-        break;
-        
-      case 'listClose':
-        indent -= INDENT;
-        break;
-        
-      case 'listItem':
-      case 'paraLine': {
-        const lineHeight = FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
-        y += lineHeight;
-        break;
-      }
-    }
+  const renderViewport = () => {
+    const scrollTop = scrollEl.scrollTop;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, styleWidth, viewportHeight);
+    ctx.drawImage(
+      offscreen,
+      0,
+      scrollTop * dpr,
+      styleWidth * dpr,
+      viewportHeight * dpr,
+      0,
+      0,
+      styleWidth,
+      viewportHeight,
+    );
+  };
+
+  const prevState = canvasStates.get(canvas);
+  if (prevState?.onScroll) {
+    prevState.scrollEl.removeEventListener('scroll', prevState.onScroll);
   }
-  
-  return { codeBlocks, blockquotes };
+
+  const scrollHandler = () => requestAnimationFrame(renderViewport);
+  state.onScroll = scrollHandler;
+  canvasStates.set(canvas, state);
+
+  scrollEl.addEventListener('scroll', scrollHandler, { passive: true });
+
+  renderViewport();
 }
 

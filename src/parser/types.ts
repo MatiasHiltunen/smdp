@@ -87,6 +87,21 @@ export interface CanvasListItem {
   counter: number;
 }
 
+export interface CodeBlockInfo {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BlockquoteInfo {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  indent: number;
+}
+
 export interface RenderSegment {
   startY: number;
   endY: number;
@@ -94,16 +109,16 @@ export interface RenderSegment {
 }
 
 export type CanvasCommand =
-  | { type: 'setFont'; value: string; fill: string; baseline: CanvasTextBaseline }
-  | { type: 'text'; text: string; x: number; y: number }
-  | { type: 'linkUnderline'; x1: number; y: number; x2: number }
-  | { type: 'fillRect'; x: number; y: number; w: number; h: number; color: string; radius?: number }
+  | { type: 'text'; text: string; x: number; y: number; font: string; fill: string; baseline: CanvasTextBaseline }
+  | { type: 'linkUnderline'; x1: number; y: number; x2: number; stroke: string; width: number }
+  | { type: 'fillRect'; x: number; y: number; w: number; h: number; color: string }
   | { type: 'roundedRect'; x: number; y: number; w: number; h: number; radius: number; color: string }
-  | { type: 'strokeLine'; x1: number; y1: number; x2: number; y2: number; color: string; width: number }
   | { type: 'bullet'; x: number; y: number; radius: number; color: string };
 
 export interface RenderChunkMetadata {
-  height: number;
+  totalHeight: number;
+  codeBlocks: CodeBlockInfo[];
+  blockquotes: BlockquoteInfo[];
   segments: RenderSegment[];
 }
 
