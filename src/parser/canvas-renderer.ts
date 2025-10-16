@@ -19,14 +19,20 @@ interface CachedImage {
   width: number;
   height: number;
   status: 'loading' | 'loaded' | 'error';
+  callbacks: Set<() => void>;
 }
 
 const imageCache = new Map<string, CachedImage>();
-const pendingRerenders = new Set<() => void>();
 
 function loadImage(src: string, onLoad: () => void): CachedImage | undefined {
   const cached = imageCache.get(src);
-  if (cached) return cached;
+  if (cached) {
+    // Add callback for this render if image is still loading
+    if (cached.status === 'loading' && onLoad) {
+      cached.callbacks.add(onLoad);
+    }
+    return cached;
+  }
 
   const img = new Image();
   img.crossOrigin = 'anonymous'; // Try to enable CORS for external images
@@ -36,7 +42,12 @@ function loadImage(src: string, onLoad: () => void): CachedImage | undefined {
     width: 0,
     height: 0,
     status: 'loading',
+    callbacks: new Set<() => void>(),
   };
+  
+  if (onLoad) {
+    cacheEntry.callbacks.add(onLoad);
+  }
   
   imageCache.set(src, cacheEntry);
   
@@ -45,19 +56,20 @@ function loadImage(src: string, onLoad: () => void): CachedImage | undefined {
     cacheEntry.height = img.naturalHeight;
     cacheEntry.status = 'loaded';
     
-    // Trigger re-render
-    pendingRerenders.forEach(fn => fn());
-    pendingRerenders.clear();
+    // Trigger re-render for all callbacks registered for this image
+    cacheEntry.callbacks.forEach(fn => fn());
+    cacheEntry.callbacks.clear();
   };
   
   img.onerror = () => {
     cacheEntry.status = 'error';
-    pendingRerenders.forEach(fn => fn());
-    pendingRerenders.clear();
+    
+    // Trigger re-render for all callbacks registered for this image
+    cacheEntry.callbacks.forEach(fn => fn());
+    cacheEntry.callbacks.clear();
   };
   
   img.src = src;
-  pendingRerenders.add(onLoad);
   
   return cacheEntry;
 }
@@ -702,9 +714,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
 
   // Set up re-render callback for when images load
   const rerender = () => {
-    // Clear pending rerenders for this canvas
-    pendingRerenders.delete(rerender);
-    // Re-render the canvas
+    // Re-render the canvas when an image finishes loading
     renderToCanvasFromBlocks(u8, canvas);
   };
 

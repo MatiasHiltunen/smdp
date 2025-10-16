@@ -48,7 +48,9 @@ Visit [example.com](https://example.com) or www.github.com
 
 ### Images
 
-![Example Image](https://picsum.photos/600/400)
+![Example Image 1](https://picsum.photos/600/400)
+
+![Example Image 2](https://picsum.photos/500/350)
 
 ---
 
