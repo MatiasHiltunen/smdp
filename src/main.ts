@@ -31,16 +31,13 @@ async function fetchMarkdown(url: URL) {
   }
 
 
-  const text = await response.text();
+  const bytes = await response.bytes()
 
 
-  console.log(text);
+  //console.log(text);
 
-  if (text.length === 0) {
-    throw new Error("No markdown found in the response");
-  }
 
-  return text;
+  return bytes;
 }
 
 
@@ -102,7 +99,7 @@ function getUrlFromSearchParams() {
   const url = new URL(window.location.href);
 
 
-  console.log("url", url);
+  //console.log("url", url);
   
   const externalUrl = url.searchParams.get("url")
 
@@ -131,15 +128,16 @@ async function init() {
 
   const url = getUrlFromSearchParams();
 
-  let md = mdData
+  let u8Md: Uint8Array
 
   if (!!url && url?.protocol === "https:") {
-    md = await fetchMarkdown(url);
+    u8Md = await fetchMarkdown(url);
   
-    console.log("downloadedMarkdown", md);
+    //console.log("downloadedMarkdown", md);
+  } else {
+    u8Md = u8(mdData)
   }
 
-  const u8Md = u8(md)
 
   const container = el("div");
   container.className = "container";
@@ -153,7 +151,7 @@ async function init() {
 
     container.append(canvasPane, app);
     // Initialize
-    editor.value = md;
+    editor.value = new TextDecoder().decode(u8Md);
     app.innerHTML = parseMarkdownToHtml(u8Md, parser);
 
     parseMarkdownToCanvas(u8Md, canvas, parser);
