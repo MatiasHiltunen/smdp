@@ -11,13 +11,13 @@ function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
   return { html, canvas };
 }
 
-function parseMarkdownToHtml(md: string, parser: MDParser) {
-  return parser.parse(u8(md));
+function parseMarkdownToHtml(md: Uint8Array, parser: MDParser) {
+  return parser.parse(md);
 }
 
-function parseMarkdownToCanvas(md: string, canvas: HTMLCanvasElement, parser: MDParser) {
-  parser.renderToCanvas(u8(md), canvas);
-  return canvas;
+function parseMarkdownToCanvas(md: Uint8Array, canvas: HTMLCanvasElement, parser: MDParser) {
+  parser.renderToCanvas(md, canvas);
+  //return canvas;
 }
 
 const el = <T extends keyof HTMLElementTagNameMap>(tag: T) => document.createElement(tag) as HTMLElementTagNameMap[T];
@@ -139,6 +139,7 @@ async function init() {
     console.log("downloadedMarkdown", md);
   }
 
+  const u8Md = u8(md)
 
   const container = el("div");
   container.className = "container";
@@ -153,24 +154,28 @@ async function init() {
     container.append(canvasPane, app);
     // Initialize
     editor.value = md;
-    app.innerHTML = parseMarkdownToHtml(md, parser);
+    app.innerHTML = parseMarkdownToHtml(u8Md, parser);
 
-    parseMarkdownToCanvas(md, canvas, parser);
+    parseMarkdownToCanvas(u8Md, canvas, parser);
 
     // Update on input
     editor.addEventListener("input", (e) => {
       const newMd = (e.target as HTMLTextAreaElement).value;
-      const { html } = parseMarkdown(newMd, canvas);
-      (app as HTMLElement).innerHTML = html;
+      const u8MdNew = u8(newMd)
+
+      app.innerHTMl = parseMarkdownToHtml(u8MdNew, parser);
+      parseMarkdownToCanvas(u8MdNew, canvas, parser)
+
     });
   } else if (route === "canvas") {
     const { canvasPane, canvas } = createCanvasContainer();
     container.append(canvasPane);
-    parseMarkdownToCanvas(md, canvas, parser);
+    parser.parse(u8Md)
+    parseMarkdownToCanvas(u8Md, canvas, parser);
   } else if (route === "html") {
     const app = createApp();
-
-    app.innerHTML = parseMarkdownToHtml(md, parser);
+    
+    app.innerHTML = parseMarkdownToHtml(u8Md, parser);
     container.append(app);
   }
 
