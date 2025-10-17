@@ -1,6 +1,6 @@
 import { MDParser, u8 } from "./parser";
 import "./style.css";
-import mdData from "/public/test.md?raw";
+import mdData from "/public/test.md";
 
 //let md: string = mdData;
 
@@ -103,12 +103,16 @@ function getUrlFromSearchParams() {
 
 
   console.log("url", url);
+  
+  const externalUrl = url.searchParams.get("url")
 
-  const urlParam = new URL(url.searchParams.get("url") ?? "");
+  if(!externalUrl) return null
+
+  const urlParam = URL.parse(externalUrl)
 
   
 
-  if (!urlParam || !urlParam.pathname.endsWith(".md")) {
+  if (!urlParam.pathname.endsWith(".md")) {
     return null;
   }
 
