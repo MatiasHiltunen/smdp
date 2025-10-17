@@ -163,15 +163,21 @@ async function init() {
       const newMd = (e.target as HTMLTextAreaElement).value;
       const u8MdNew = u8(newMd)
 
-      app.innerHTML = parseMarkdownToHtml(u8MdNew, parser);
-      parseMarkdownToCanvas(u8MdNew, canvas, parser)
+      app.innerHTML = parser.parse(u8MdNew)//parseMarkdownToHtml(u8MdNew, parser);
+      parser.renderToCanvas(u8MdNew, canvas)
+      //parseMarkdownToCanvas(u8MdNew, canvas, parser)
 
     });
   } else if (route === "canvas") {
     const { canvasPane, canvas } = createCanvasContainer();
+
+    parser.renderToCanvas(u8Md, canvas)
     container.append(canvasPane);
-    parser.parse(u8Md)
-    parseMarkdownToCanvas(u8Md, canvas, parser);
+
+  
+
+   // parser.parse(u8Md)
+    //parseMarkdownToCanvas(u8Md, canvas, parser);
   } else if (route === "html") {
     const app = createApp();
     
