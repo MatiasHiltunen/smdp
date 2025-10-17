@@ -127,7 +127,7 @@ async function init() {
 
   const url = getUrlFromSearchParams();
 
-  if (url) {
+  if (url?.protocol === "https:") {
     md = await fetchMarkdown(url);
   
     console.log("downloadedMarkdown", md);
