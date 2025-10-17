@@ -4,12 +4,12 @@ import mdData from "../public/test.md?raw";
 
 //let md: string = mdData;
 
-function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
+/*function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
   const parser = new MDParser();
   const html = parser.parse(u8(md));
   parser.renderToCanvas(u8(md), canvas);
   return { html, canvas };
-}
+}*/
 
 function parseMarkdownToHtml(md: Uint8Array, parser: MDParser) {
   return parser.parse(md);
@@ -163,7 +163,7 @@ async function init() {
       const newMd = (e.target as HTMLTextAreaElement).value;
       const u8MdNew = u8(newMd)
 
-      app.innerHTMl = parseMarkdownToHtml(u8MdNew, parser);
+      app.innerHTML = parseMarkdownToHtml(u8MdNew, parser);
       parseMarkdownToCanvas(u8MdNew, canvas, parser)
 
     });
