@@ -1,5 +1,8 @@
 import { MDParser, u8 } from "./parser";
 import "./style.css";
+import mdData from "/public/test.md?raw" with { type: "text" };
+
+let md: string = mdData;
 
 function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
   const parser = new MDParser();
@@ -8,100 +11,166 @@ function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
   return { html, canvas };
 }
 
-const md = `# Hello World
-
-Tämä teksti on suomeksi.
-
-Ä Ö å etc. do not work and thus the emojis are not working either.
-
-This is **bold** text and this is *italic* text.
-
-## Features
-
-Some text content for an example paragraph.
-
-Some text content for an example paragraph.
-
-Some text content for an example paragraph.
-
-Some text content for an example paragraph.
-
-Some text content for an example paragraph.
-
-- Item 1
-- Item 2
-- Item 3
-
-### Ordered List
-
-1. Item 1
-2. Item 2
-3. Item 3
-
-### Code Example
-
-\`\`\`
-const hello = "world";
-console.log(hello);
-\`\`\`
-
-> This is a blockquote
-> with multiple lines
-
-Visit [example.com](https://example.com) or www.github.com
-
-### Images
-
-![Example Image 1](https://picsum.photos/600/400)
-
-![Example Image 2](https://picsum.photos/500/350)
-
-### Tables
-
-| Feature | Description | Status |
-|---------|:-----------:|-------:|
-| Tables  | Markdown tables with alignment | ✅ |
-| Info Blocks | Colored notification blocks | ✅ |
-| Virtual Scroll | Canvas performance optimization | ✅ |
-
-### Info Blocks
-
-::: info
-This is an informational message. It can contain **bold text**, *italic text*, and \`inline code\`.
-:::
-
-::: warning
-This is a warning message. Pay attention to this important notice!
-:::
-
-::: error
-This is an error message. Something went wrong and needs your attention.
-:::
-
-::: success
-This is a success message. Everything completed successfully!
-:::
-
----
-
-**Strong text** and \`inline code\`.
-`;
-
-const app = document.getElementById("app");
-const editor = document.getElementById("editor") as HTMLTextAreaElement;
-const canvas = document.getElementById("canvas") as HTMLCanvasElement;
-
-if (!app || !editor || !canvas) {
-  throw new Error("Required DOM elements not found");
+function parseMarkdownToHtml(md: string, parser: MDParser) {
+  return parser.parse(u8(md));
 }
 
-// Initialize
-editor.value = md;
-app.innerHTML = parseMarkdown(md, canvas).html;
+function parseMarkdownToCanvas(md: string, canvas: HTMLCanvasElement, parser: MDParser) {
+  parser.renderToCanvas(u8(md), canvas);
+  return canvas;
+}
 
-// Update on input
-editor.addEventListener("input", () => {
-  const newMd = editor.value;
-  const { html } = parseMarkdown(newMd, canvas);
-  app.innerHTML = html;
-});
+const el = <T extends keyof HTMLElementTagNameMap>(tag: T) => document.createElement(tag) as HTMLElementTagNameMap[T];
+
+
+async function fetchMarkdown(url: URL) {
+  const response = await fetch(url);
+  
+  if (!response.ok) {
+    throw new Error(`Failed to fetch markdown: ${response.statusText}`);
+  }
+
+
+  const text = await response.text();
+
+
+  console.log(text);
+
+  if (text.length === 0) {
+    throw new Error("No markdown found in the response");
+  }
+
+  return text;
+}
+
+
+function createCanvasContainer() {
+
+
+  const canvasPane = el("div");
+  canvasPane.className = "canvas-pane";
+
+  const canvasScroll = el("div");
+  canvasScroll.id = "canvas-scroll";
+  canvasScroll.className = "canvas-scroll";
+
+  const canvasSpacer = el("div");
+  canvasSpacer.id = "canvas-spacer";
+
+
+  const canvas = el("canvas");
+  canvas.id = "canvas";
+
+
+  canvasPane.appendChild(canvasScroll);
+  canvasScroll.append(canvas, canvasSpacer);
+
+  return { canvasPane, canvas };
+}
+
+function createEditor() {
+  const editor = el("textarea");
+  editor.id = "editor";
+  editor.className = "editor";
+  return editor;
+}
+
+function createApp() {
+  const app = el("div");
+  app.id = "app";
+  app.className = "app";
+  return app;
+}
+
+function getRoute() {
+
+  const url = new URL(window.location.href);
+
+
+  if (url.pathname.startsWith("/canvas/")) {
+    return "canvas";
+  }
+
+  if (url.pathname.startsWith("/html/")) {
+    return "html";
+  }
+
+  return "editor";
+}
+
+function getUrlFromSearchParams() {
+  const url = new URL(window.location.href);
+
+
+  console.log("url", url);
+
+  const urlParam = new URL(url.searchParams.get("url") ?? "");
+
+  
+
+  if (!urlParam || !urlParam.pathname.endsWith(".md")) {
+    return null;
+  }
+
+
+
+  return urlParam;
+}
+
+async function init() {
+
+
+
+  const parser = new MDParser();
+
+  const route = getRoute();
+
+  const url = getUrlFromSearchParams();
+
+  if (url) {
+    md = await fetchMarkdown(url);
+  
+    console.log("downloadedMarkdown", md);
+  }
+
+
+  const container = el("div");
+  container.className = "container";
+  container.id = "canvas-container";
+
+  if (route === "editor") {
+    const editor = createEditor();
+    document.body.appendChild(editor);
+    const { canvasPane, canvas } = createCanvasContainer();
+    const app = createApp();
+
+    container.append(canvasPane, app);
+    // Initialize
+    editor.value = md;
+    app.innerHTML = parseMarkdownToHtml(md, parser);
+
+    parseMarkdownToCanvas(md, canvas, parser);
+
+    // Update on input
+    editor.addEventListener("input", (e) => {
+      const newMd = (e.target as HTMLTextAreaElement).value;
+      const { html } = parseMarkdown(newMd, canvas);
+      (app as HTMLElement).innerHTML = html;
+    });
+  } else if (route === "canvas") {
+    const { canvasPane, canvas } = createCanvasContainer();
+    container.append(canvasPane);
+    parseMarkdownToCanvas(md, canvas, parser);
+  } else if (route === "html") {
+    const app = createApp();
+
+    app.innerHTML = parseMarkdownToHtml(md, parser);
+    container.append(app);
+  }
+
+  document.body.append(container);
+
+
+}
+
+init();

@@ -1,310 +1,250 @@
-# Markdown: Syntax
-
-*   [Overview](#overview)
-    *   [Philosophy](#philosophy)
-    *   [Inline HTML](#html)
-    *   [Automatic Escaping for Special Characters](#autoescape)
-*   [Block Elements](#block)
-    *   [Paragraphs and Line Breaks](#p)
-    *   [Headers](#header)
-    *   [Blockquotes](#blockquote)
-    *   [Lists](#list)
-    *   [Code Blocks](#precode)
-    *   [Horizontal Rules](#hr)
-*   [Span Elements](#span)
-    *   [Links](#link)
-    *   [Emphasis](#em)
-    *   [Code](#code)
-    *   [Images](#img)
-*   [Miscellaneous](#misc)
-    *   [Backslash Escapes](#backslash)
-    *   [Automatic Links](#autolink)
-
-
-**Note:** This document is itself written using Markdown; you
-can [see the source for it by adding '.text' to the URL](/projects/markdown/syntax.text).
+# Hello World
 
-----
 
-## Overview
+## Paragraph sample
 
-### Philosophy
+Kului aikoa vähäisen, pirahteli pikkaraisen.
+Tuli sotka, suora lintu; lenteä lekuttelevi
+etsien pesän sijoa, asuinmaata arvaellen.
 
-Markdown is intended to be as easy-to-read and easy-to-write as is feasible.
+Liitelevi, laatelevi; arvelee, ajattelevi:
+"Teenkö tuulehen tupani, aalloillen asuinsijani?
+Tuuli kaatavi tupasen, aalto vie asuinsijani."
 
-Readability, however, is emphasized above all else. A Markdown-formatted
-document should be publishable as-is, as plain text, without looking
-like it's been marked up with tags or formatting instructions. While
-Markdown's syntax has been influenced by several existing text-to-HTML
-filters -- including [Setext](http://docutils.sourceforge.net/mirror/setext.html), [atx](http://www.aaronsw.com/2002/atx/), [Textile](http://textism.com/tools/textile/), [reStructuredText](http://docutils.sourceforge.net/rst.html),
-[Grutatext](http://www.triptico.com/software/grutatxt.html), and [EtText](http://ettext.taint.org/doc/) -- the single biggest source of
-inspiration for Markdown's syntax is the format of plain text email.
+Niin silloin ve'en emonen, veen emonen, ilman impi,
+nosti polvea merestä, lapaluuta lainehesta
+sotkalle pesän sijaksi, asuinmaaksi armahaksi.
 
-## Block Elements
+Tuo sotka, sorea lintu, liiteleikse, laateleikse.
+Keksi polven veen emosen sinerväisellä selällä;
+luuli heinämättähäksi, tuoreheksi turpeheksi.
 
-### Paragraphs and Line Breaks
+Lentelevi, liitelevi, päähän polven laskeuvi.
+Siihen laativi pesänsä, muni kultaiset munansa:
+kuusi kultaista munoa, rautamunan seitsemännen.
 
-A paragraph is simply one or more consecutive lines of text, separated
-by one or more blank lines. (A blank line is any line that looks like a
-blank line -- a line containing nothing but spaces or tabs is considered
-blank.) Normal paragraphs should not be indented with spaces or tabs.
+Alkoi hautoa munia, päätä polven lämmitellä.
+Hautoi päivän, hautoi toisen, hautoi kohta kolmannenki.
 
-The implication of the "one or more consecutive lines of text" rule is
-that Markdown supports "hard-wrapped" text paragraphs. This differs
-significantly from most other text-to-HTML formatters (including Movable
-Type's "Convert Line Breaks" option) which translate every line break
-character in a paragraph into a `<br />` tag.
+Jopa tuosta veen emonen, veen emonen, ilman impi,
+tuntevi tulistuvaksi, hipiänsä hiiltyväksi;
+luuli polvensa palavan, kaikki suonensa sulavan.
 
-When you *do* want to insert a `<br />` break tag using Markdown, you
-end a line with two or more spaces, then type return.
+Vavahutti polveansa, järkytti jäseniänsä:
+munat vierähti vetehen, meren aaltohon ajaikse;
+karskahti munat muruiksi, katkieli kappaleiksi.
 
-### Headers
+Ei munat mutahan joua, siepalehet veen sekahan.
+Muuttuivat murut hyviksi, kappalehet kaunoisiksi:
+munasen alainen puoli alaiseksi maaemäksi,
+munasen yläinen puoli yläiseksi taivahaksi;
+yläpuoli ruskeaista päivöseksi paistamahan,
+yläpuoli valkeaista, se kuuksi kumottamahan;
+mi munassa kirjavaista, ne tähiksi taivahalle,
+mi munassa mustukaista, nepä ilman pilvilöiksi.
 
-Markdown supports two styles of headers, [Setext] [1] and [atx] [2].
 
-Optionally, you may "close" atx-style headers. This is purely
-cosmetic -- you can use this if you think it looks better. The
-closing hashes don't even need to match the number of hashes
-used to open the header. (The number of opening hashes
-determines the header level.)
 
+This is **bold** text and this is *italic* text.
 
-### Blockquotes
+## Features
 
-Markdown uses email-style `>` characters for blockquoting. If you're
-familiar with quoting passages of text in an email message, then you
-know how to create a blockquote in Markdown. It looks best if you hard
-wrap the text and put a `>` before every line:
+Some text content for an example paragraph.
 
-> This is a blockquote with two paragraphs. Lorem ipsum dolor sit amet,
-> consectetuer adipiscing elit. Aliquam hendrerit mi posuere lectus.
-> Vestibulum enim wisi, viverra nec, fringilla in, laoreet vitae, risus.
-> 
-> Donec sit amet nisl. Aliquam semper ipsum sit amet velit. Suspendisse
-> id sem consectetuer libero luctus adipiscing.
+Some text content for an example paragraph.
 
-Markdown allows you to be lazy and only put the `>` before the first
-line of a hard-wrapped paragraph:
+Some text content for an example paragraph.
 
-> This is a blockquote with two paragraphs. Lorem ipsum dolor sit amet,
-consectetuer adipiscing elit. Aliquam hendrerit mi posuere lectus.
-Vestibulum enim wisi, viverra nec, fringilla in, laoreet vitae, risus.
+Some text content for an example paragraph.
 
-> Donec sit amet nisl. Aliquam semper ipsum sit amet velit. Suspendisse
-id sem consectetuer libero luctus adipiscing.
+Some text content for an example paragraph.
 
-Blockquotes can be nested (i.e. a blockquote-in-a-blockquote) by
-adding additional levels of `>`:
+- Item 1
+- Item 2
+- Item 3
 
-> This is the first level of quoting.
->
-> > This is nested blockquote.
->
-> Back to the first level.
+### Ordered List
 
-Blockquotes can contain other Markdown elements, including headers, lists,
-and code blocks:
+1. Item 1
+2. Item 2
+3. Item 3
 
-> ## This is a header.
-> 
-> 1.   This is the first list item.
-> 2.   This is the second list item.
-> 
-> Here's some example code:
-> 
->     return shell_exec("echo $input | $markdown_script");
+### Code Example
 
-Any decent text editor should make email-style quoting easy. For
-example, with BBEdit, you can make a selection and choose Increase
-Quote Level from the Text menu.
+\`\`\`
+const hello = "world";
+console.log(hello);
+\`\`\`
 
+> This is a blockquote
+> with multiple lines
 
-### Lists
+Visit [example.com](https://example.com) or www.github.com
 
-Markdown supports ordered (numbered) and unordered (bulleted) lists.
+### Images
 
-Unordered lists use asterisks, pluses, and hyphens -- interchangably
--- as list markers:
+![Example Image 1](https://picsum.photos/600/400)
 
-*   Red
-*   Green
-*   Blue
+![Example Image 2](https://picsum.photos/500/350)
 
-is equivalent to:
+### Tables
 
-+   Red
-+   Green
-+   Blue
+| Feature | Description | Status |
+|---------|:-----------:|-------:|
+| Tables  | Markdown tables with alignment | ✅ |
+| Info Blocks | Colored notification blocks | ✅ |
+| Virtual Scroll | Canvas performance optimization | ✅ |
 
-and:
+### Info Blocks
 
--   Red
--   Green
--   Blue
+::: info
+This is an informational message. It can contain **bold text**, *italic text*, and \`inline code\`.
+:::
 
-Ordered lists use numbers followed by periods:
+::: warning
+This is a warning message. Pay attention to this important notice!
+:::
 
-1.  Bird
-2.  McHale
-3.  Parish
+::: error
+This is an error message. Something went wrong and needs your attention.
+:::
 
-It's important to note that the actual numbers you use to mark the
-list have no effect on the HTML output Markdown produces. The HTML
-Markdown produces from the above list is:
+::: success
+This is a success message. Everything completed successfully!
+:::
 
-If you instead wrote the list in Markdown like this:
+---
 
-1.  Bird
-1.  McHale
-1.  Parish
+**Strong text** and \`inline code\`.
 
-or even:
 
-3. Bird
-1. McHale
-8. Parish
+---
 
-you'd get the exact same HTML output. The point is, if you want to,
-you can use ordinal numbers in your ordered Markdown lists, so that
-the numbers in your source match the numbers in your published HTML.
-But if you want to be lazy, you don't have to.
 
-To make lists look nice, you can wrap items with hanging indents:
 
-*   Lorem ipsum dolor sit amet, consectetuer adipiscing elit.
-    Aliquam hendrerit mi posuere lectus. Vestibulum enim wisi,
-    viverra nec, fringilla in, laoreet vitae, risus.
-*   Donec sit amet nisl. Aliquam semper ipsum sit amet velit.
-    Suspendisse id sem consectetuer libero luctus adipiscing.
+### Unicode support with Canvas renderer partially complete
 
-But if you want to be lazy, you don't have to:
+inline emojis:
 
-*   Lorem ipsum dolor sit amet, consectetuer adipiscing elit.
-Aliquam hendrerit mi posuere lectus. Vestibulum enim wisi,
-viverra nec, fringilla in, laoreet vitae, risus.
-*   Donec sit amet nisl. Aliquam semper ipsum sit amet velit.
-Suspendisse id sem consectetuer libero luctus adipiscing.
+- hearts `❤️❤️❤️`
 
-List items may consist of multiple paragraphs. Each subsequent
-paragraph in a list item must be indented by either 4 spaces
-or one tab:
+### 🌀 **Combining Marks & Normalization**
 
-1.  This is a list item with two paragraphs. Lorem ipsum dolor
-    sit amet, consectetuer adipiscing elit. Aliquam hendrerit
-    mi posuere lectus.
+| Sample | Name                                   | Code Points          | Notes                    |
+| ------ | -------------------------------------- | -------------------- | ------------------------ |
+| é     | e + COMBINING ACUTE ACCENT             | U+0065 U+0301        | NFD form of “é”          |
+| é      | LATIN SMALL LETTER E WITH ACUTE        | U+00E9               | NFC form                 |
+| Ã̄    | A + COMBINING TILDE + COMBINING MACRON | U+0041 U+0303 U+0304 | Multiple combining marks |
+| 가      | HANGUL SYLLABLE GA                     | U+AC00               | Precomposed Hangul       |
+| 가     | HANGUL CHOSEONG KIYEOK + JUNGSEONG A   | U+1100 U+1161        | Decomposed Hangul        |
 
-    Vestibulum enim wisi, viverra nec, fringilla in, laoreet
-    vitae, risus. Donec sit amet nisl. Aliquam semper ipsum
-    sit amet velit.
+---
 
-2.  Suspendisse id sem consectetuer libero luctus adipiscing.
+### ⚪ **Whitespace & Invisibles**
 
-It looks nice if you indent every line of the subsequent
-paragraphs, but here again, Markdown will allow you to be
-lazy:
+| Sample | Name                  | Code Points | Notes                      |
+| ------ | --------------------- | ----------- | -------------------------- |
+| ␣      | SPACE                 | U+0020      | Standard space             |
+|        | NO-BREAK SPACE        | U+00A0      | Non-breaking               |
+|        | EM SPACE              | U+2003      | Wide space                 |
+|        | THIN SPACE            | U+2009      | Narrow space               |
+|        | ZERO WIDTH SPACE      | U+200B      | Invisible joiner           |
+| ‌      | ZERO WIDTH NON-JOINER | U+200C      | Affects ligatures          |
+| ‍      | ZERO WIDTH JOINER     | U+200D      | ZWJ sequence joiner        |
+|        | LINE SEPARATOR        | U+2028      | Line-breaking              |
+|        | PARAGRAPH SEPARATOR   | U+2029      | Line-breaking              |
+|        | NARROW NO-BREAK SPACE | U+202F      | Used in French punctuation |
+| 　      | IDEOGRAPHIC SPACE     | U+3000      | Full-width space (CJK)     |
 
-*   This is a list item with two paragraphs.
+---
 
-    This is the second paragraph in the list item. You're
-only required to indent the first line. Lorem ipsum dolor
-sit amet, consectetuer adipiscing elit.
+### 🧭 **Bidirectional Text**
 
-*   Another item in the same list.
+| Sample         | Description             | Code Points                         | Notes                        |
+| -------------- | ----------------------- | ----------------------------------- | ---------------------------- |
+| Hello سلام 123 | Mixed English/Arabic    | U+0048…U+0633 U+0644 U+0627 U+0645… | Direction changes mid-string |
+| שלום!          | Hebrew with punctuation | U+05E9 U+05DC U+05D5 U+05DD U+0021  | RTL with LTR punctuation     |
 
-To put a blockquote within a list item, the blockquote's `>`
-delimiters need to be indented:
+---
 
-*   A list item with a blockquote:
+### 🔀 **Bidi Control Characters**
 
-    > This is a blockquote
-    > inside a list item.
+| Sample | Name               | Code Points                        | Notes                    |
+| ------ | ------------------ | ---------------------------------- | ------------------------ |
+| ‎      | LEFT-TO-RIGHT MARK | U+200E                             | Invisible, forces LTR    |
+| ‏      | RIGHT-TO-LEFT MARK | U+200F                             | Invisible, forces RTL    |
+| ‪ABC‬  | LRE…PDF            | U+202A U+0041 U+0042 U+0043 U+202C | Explicit direction block |
+| ‫ABC‬  | RLE…PDF            | U+202B U+0041 U+0042 U+0043 U+202C | Explicit RTL block       |
+| ⁦ABC⁩  | LRI…PDI            | U+2066…U+2069                      | Modern isolates          |
+| ⁧ABC⁩  | RLI…PDI            | U+2067…U+2069                      | RTL isolate              |
+| ⁨ABC⁩  | FSI…PDI            | U+2068…U+2069                      | Contextual isolate       |
 
-To put a code block within a list item, the code block needs
-to be indented *twice* -- 8 spaces or two tabs:
+---
 
-*   A list item with a code block:
+### 😃 **Emoji Edge Cases**
 
-        <code goes here>
+| Sample      | Description                  | Code Points                                  | Notes                |
+| ----------- | ---------------------------- | -------------------------------------------- | -------------------- |
+| ❤︎          | Heart (text)                 | U+2764 U+FE0E                                | Text presentation    |
+| ❤️          | Heart (emoji)                | U+2764 U+FE0F                                | Emoji presentation   |
+| 👍🏽        | Thumbs Up + Medium Skin Tone | U+1F44D U+1F3FD                              | Skin tone modifier   |
+| 👨‍👩‍👧‍👦 | Family (ZWJ sequence)        | U+1F468 200D 1F469 200D 1F467 200D 1F466     | ZWJ sequence         |
+| 🇫🇮        | Flag: Finland                | U+1F1EB U+1F1EE                              | Regional indicators  |
+| 5️⃣         | Keycap 5                     | U+0035 U+FE0F U+20E3                         | Keycap sequence      |
+| 👩‍💻       | Woman Technologist           | U+1F469 200D 1F4BB                           | ZWJ profession       |
+| 👩‍❤️‍💋‍👨 | Kiss: woman, man             | U+1F469 200D 2764 FE0F 200D 1F48B 200D 1F468 | Complex ZWJ sequence |
 
-### Code Blocks
+---
 
-Pre-formatted code blocks are used for writing about programming or
-markup source code. Rather than forming normal paragraphs, the lines
-of a code block are interpreted literally. Markdown wraps a code block
-in both `<pre>` and `<code>` tags.
+### 🔣 **Symbols & Math**
 
-To produce a code block in Markdown, simply indent every line of the
-block by at least 4 spaces or 1 tab.
+| Sample | Name                    | Code Points          | Notes          |
+| ------ | ----------------------- | -------------------- | -------------- |
+| →      | RIGHTWARDS ARROW        | U+2192               | Basic arrow    |
+| ⇔      | LEFT RIGHT DOUBLE ARROW | U+21D4               | Bidirectional  |
+| ∫      | INTEGRAL                | U+222B               | Math symbol    |
+| ∑      | N-ARY SUMMATION         | U+2211               | Math operator  |
+| ─│┌┐└┘ | Box Drawing             | U+2500…U+2518        | Terminal boxes |
+| ▁▄█    | Block Elements          | U+2581 U+2584 U+2588 | Density levels |
 
-This is a normal paragraph:
+---
 
-    This is a code block.
+### 🀄 **CJK and Others**
 
-Here is an example of AppleScript:
+| Sample | Name                | Code Points           | Notes                 |
+| ------ | ------------------- | --------------------- | --------------------- |
+| 汉字     | Chinese             | U+6C49 U+5B57         | Common CJK ideographs |
+| かなカナ   | Japanese Kana       | U+304B 306A 30AB 30CA | Hiragana + Katakana   |
+| 日本語    | Japanese Kanji word | U+65E5 672C 8A9E      | Mixed script          |
+| 한글     | Korean Hangul       | U+D55C U+AE00         | Precomposed syllables |
 
-    tell application "Foo"
-        beep
-    end tell
+---
 
-A code block continues until it reaches a line that is not indented
-(or the end of the article).
+### 🎵 **Supplementary Plane Characters**
 
-Within a code block, ampersands (`&`) and angle brackets (`<` and `>`)
-are automatically converted into HTML entities. This makes it very
-easy to include example HTML source code using Markdown -- just paste
-it and indent it, and Markdown will handle the hassle of encoding the
-ampersands and angle brackets. For example, this:
+| Sample | Name                          | Code Points | Notes                              |
+| ------ | ----------------------------- | ----------- | ---------------------------------- |
+| 𐍆     | Gothic Letter Faihu           | U+10346     | Plane 1 character                  |
+| 𐍐     | Old Permic Letter An          | U+10350     | Plane 1                            |
+| 𐐀     | Deseret Capital Letter Long I | U+10400     | Plane 1                            |
+| 𝄞     | Musical Symbol G Clef         | U+1D11E     | Plane 1 (surrogate pair in UTF-16) |
 
-    <div class="footer">
-        &copy; 2004 Foo Corporation
-    </div>
+---
 
-Regular Markdown syntax is not processed within code blocks. E.g.,
-asterisks are just literal asterisks within a code block. This means
-it's also easy to use Markdown to write about Markdown's own syntax.
+### 🔡 **Ligatures & Typography**
 
-```
-tell application "Foo"
-    beep
-end tell
-```
+| Sample | Name                 | Code Points | Notes                 |
+| ------ | -------------------- | ----------- | --------------------- |
+| ﬁ      | Latin ligature fi    | U+FB01      | May normalize to “fi” |
+| Ⅻ      | Roman numeral twelve | U+216B      | Special number form   |
 
-## Span Elements
+---
 
-### Links
+### 🧩 **Private Use Area**
 
-Markdown supports two style of links: *inline* and *reference*.
+| Sample | Name          | Code Points | Notes                            |
+| ------ | ------------- | ----------- | -------------------------------- |
+|       | PUA character | U+E000      | Undefined glyph (font-dependent) |
 
-In both styles, the link text is delimited by [square brackets].
+---
 
-To create an inline link, use a set of regular parentheses immediately
-after the link text's closing square bracket. Inside the parentheses,
-put the URL where you want the link to point, along with an *optional*
-title for the link, surrounded in quotes. For example:
-
-This is [an example](http://example.com/) inline link.
-
-[This link](http://example.net/) has no title attribute.
-
-### Emphasis
-
-Markdown treats asterisks (`*`) and underscores (`_`) as indicators of
-emphasis. Text wrapped with one `*` or `_` will be wrapped with an
-HTML `<em>` tag; double `*`'s or `_`'s will be wrapped with an HTML
-`<strong>` tag. E.g., this input:
-
-*single asterisks*
-
-_single underscores_
-
-**double asterisks**
-
-__double underscores__
-
-### Code
-
-To indicate a span of code, wrap it with backtick quotes (`` ` ``).
-Unlike a pre-formatted code block, a code span indicates code within a
-normal paragraph. For example:
-
-Use the `printf()` function.
