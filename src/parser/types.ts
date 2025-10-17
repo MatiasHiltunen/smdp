@@ -12,6 +12,13 @@ export interface FenceInfo {
   len: number;
 }
 
+export interface FenceMeta {
+  infoString: string;
+  lang?: string;
+  rawLang?: string;
+  meta?: string;
+}
+
 export interface ListMarker {
   type: 'ul' | 'ol';
   indent: number;
@@ -46,7 +53,7 @@ export type BlockEvent =
   | { type: 'listItem'; s: number; e: number }
   | { type: 'listClose'; kind: 'ul' | 'ol' }
   | { type: 'paraLine'; s: number; e: number }
-  | { type: 'codeOpen' }
+  | { type: 'codeOpen'; info?: FenceMeta }
   | { type: 'codeText'; s: number; e: number }
   | { type: 'codeClose' }
   | { type: 'tableOpen' }
@@ -62,6 +69,7 @@ export interface BlockState {
   inFence: boolean;
   fenceCh: number;
   fenceLen: number;
+  fenceInfo: FenceMeta | undefined;
   inTable: boolean;
   tableAlignments: Array<'left' | 'center' | 'right'>;
   inInfo: boolean;

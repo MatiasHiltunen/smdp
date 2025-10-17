@@ -1,6 +1,6 @@
 import { MDParser, u8 } from "./parser";
 import "./style.css";
-import mdData from "../public/test.md?raw";
+import mdData from "./assets/test.md?raw";
 
 //let md: string = mdData;
 

@@ -26,6 +26,43 @@ A lightweight performance focused Markdown parser with zero dependencies.
 - **Images**: `![alt](src)`
 - **Autolinks**: Automatic linking of `http://`, `https://`, and `www.` URLs
 
+## Syntax Highlighting
+
+Built-in syntax highlighters cover a range of common languages:
+
+- JavaScript / TypeScript
+- Python
+- Java
+- C / C++
+- C#
+- Go
+- Rust
+- Swift
+- Kotlin
+- Scala
+- Dart
+- Ruby
+- PHP
+- Shell scripts (bash/sh/zsh)
+- PowerShell
+- Lua
+- Perl
+- Haskell
+- Elixir
+- Erlang
+- Clojure
+- R
+- SQL
+- JSON
+- YAML
+- TOML
+- INI / config files
+- Dockerfile
+- Make / Makefile
+- F#
+
+Additional languages can be registered at runtime with `registerHighlightLanguage`.
+
 ## Usage
 
 ### HTML Rendering

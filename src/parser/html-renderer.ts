@@ -7,6 +7,7 @@ import { TAG } from './constants';
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import type { ListStackItem } from './types';
+import { highlightCodeBlock } from '../highlight';
 
 /**
  * Renders inline tokens to HTML
@@ -84,12 +85,42 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
   let paraOpen = false;
   let bqDepth = 0;
   let inCode = false;
+  let codeBuffer: Array<{ s: number; e: number }> | null = null;
+  let codeLang: string | undefined;
 
   const closePara = (): void => {
     if (paraOpen) {
       out.writeBytes(TAG.pClose);
       paraOpen = false;
     }
+  };
+
+  const flushCodeBlock = (): void => {
+    if (!codeBuffer) return;
+
+    let totalLen = 0;
+    for (const span of codeBuffer) {
+      totalLen += span.e - span.s;
+      totalLen += 1;
+    }
+
+    const codeBytes = totalLen > 0 ? new Uint8Array(totalLen) : new Uint8Array(0);
+
+    if (totalLen > 0) {
+      let offset = 0;
+      for (const span of codeBuffer) {
+        const slice = u8.subarray(span.s, span.e);
+        codeBytes.set(slice, offset);
+        offset += slice.length;
+        codeBytes[offset++] = 0x0a;
+      }
+    }
+
+    const highlighted = highlightCodeBlock(codeBytes, codeLang);
+    out.writeBytes(highlighted);
+
+    codeBuffer = null;
+    codeLang = undefined;
   };
   
   const closeListsAll = (): void => {
@@ -179,20 +210,20 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
       case 'codeOpen':
         closePara();
         closeListsAll();
-        out.writeBytes(TAG.preCodeOpen);
         inCode = true;
+        codeBuffer = [];
+        codeLang = ev.info?.lang ?? ev.info?.rawLang;
         break;
 
       case 'codeText':
-        if (inCode) {
-          out.writeEscaped(u8, ev.s, ev.e);
-          out.writeBytes(TAG.lf);
+        if (inCode && codeBuffer) {
+          codeBuffer.push({ s: ev.s, e: ev.e });
         }
         break;
 
       case 'codeClose':
         if (inCode) {
-          out.writeBytes(TAG.preCodeClose);
+          flushCodeBlock();
           inCode = false;
         }
         break;
@@ -258,7 +289,10 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
 
   closePara();
   closeListsAll();
-  if (inCode) out.writeBytes(TAG.preCodeClose);
+  if (inCode) {
+    flushCodeBlock();
+    inCode = false;
+  }
 
   return out.toString();
 }

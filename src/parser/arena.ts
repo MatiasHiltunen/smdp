@@ -88,5 +88,9 @@ export class HtmlArena {
   toString(): string {
     return TD.decode(this.buf.subarray(0, this.len));
   }
+
+  toUint8Array(): Uint8Array {
+    return this.buf.slice(0, this.len);
+  }
 }
 

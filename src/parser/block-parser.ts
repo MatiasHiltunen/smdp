@@ -16,6 +16,7 @@ import {
   isTableSeparator,
   parseTableRow,
   detectInfoBlock,
+  parseFenceMeta,
 } from './utils';
 
 /**
@@ -34,6 +35,7 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
     inFence: false,
     fenceCh: 0,
     fenceLen: 0,
+    fenceInfo: undefined,
     inTable: false,
     tableAlignments: [],
     inInfo: false,
@@ -68,6 +70,7 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
         st.inFence = false;
         st.fenceCh = 0;
         st.fenceLen = 0;
+        st.fenceInfo = undefined;
         yield { type: 'codeClose' };
         continue;
       }
@@ -178,7 +181,13 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
         st.inFence = true;
         st.fenceCh = f.ch;
         st.fenceLen = f.len;
-        yield { type: 'codeOpen' };
+        const info = parseFenceMeta(u8, i + f.len, end);
+        st.fenceInfo = info;
+        if (info) {
+          yield { type: 'codeOpen', info };
+        } else {
+          yield { type: 'codeOpen' };
+        }
         continue;
       }
     }
@@ -218,6 +227,7 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
   if (st.inFence) {
     yield { type: 'codeClose' };
     st.inFence = false;
+    st.fenceInfo = undefined;
   }
   
   while (st.bqLevel > 0) {

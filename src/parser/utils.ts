@@ -2,7 +2,8 @@
  * Byte-level utility functions for parsing
  */
 
-import type { FenceInfo, ListMarker, UrlScan } from './types';
+import type { FenceInfo, FenceMeta, ListMarker, UrlScan } from './types';
+import { TD } from './constants';
 
 export const isSpace = (c: number): boolean => c === 0x20 || c === 0x09;
 
@@ -85,6 +86,60 @@ export function detectFence(
   }
   
   return len >= 3 ? { ch: c, len } : null;
+}
+
+export function parseFenceMeta(
+  u8: Uint8Array,
+  s: number,
+  e: number,
+): FenceMeta | undefined {
+  let start = skipSpaces(u8, s, e);
+  let end = e;
+
+  while (end > start && isSpace(u8[end - 1])) {
+    end--;
+  }
+
+  if (end <= start) {
+    return undefined;
+  }
+
+  const infoString = TD.decode(u8.subarray(start, end)).trim();
+
+  if (!infoString) {
+    return undefined;
+  }
+
+  const parts = infoString.split(/\s+/);
+  let rawLang = parts.shift();
+  const metaParts: string[] = [];
+
+  if (rawLang && rawLang.includes(':')) {
+    const [langPart, ...rest] = rawLang.split(':');
+    rawLang = langPart;
+    if (rest.length) {
+      metaParts.push(rest.join(':'));
+    }
+  }
+
+  if (parts.length) {
+    metaParts.push(parts.join(' '));
+  }
+
+  const meta = metaParts.join(' ').trim();
+
+  const result: FenceMeta = { infoString };
+
+  if (rawLang && rawLang.length) {
+    result.rawLang = rawLang;
+    result.lang = rawLang.toLowerCase();
+  }
+
+  if (meta) {
+    result.meta = meta;
+  }
+
+  return result;
 }
 
 export function parseListMarker(

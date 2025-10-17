@@ -71,10 +71,29 @@ Some text content for an example paragraph.
 
 ### Code Example
 
-\`\`\`
+``` javascript
 const hello = "world";
 console.log(hello);
-\`\`\`
+
+function someFn({param, param2}){
+
+  const data = {
+    count: 0,
+    value: param + param2
+  }
+
+  return (addedValue) => {
+    data.count++
+    data.value += addedValue
+
+    return data
+  }
+}
+
+const fn = someFn(1,2)
+
+console.log(fn(3))
+```
 
 > This is a blockquote
 > with multiple lines

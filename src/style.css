@@ -179,6 +179,47 @@ pre code {
   border-radius: 0;
 }
 
+.code-block {
+  position: relative;
+}
+
+.code-block code {
+  display: block;
+  white-space: pre;
+}
+
+.code-block .tok-kw {
+  color: #ff7b72;
+  font-weight: 600;
+}
+
+.code-block .tok-id {
+  color: #d2a8ff;
+}
+
+.code-block .tok-num {
+  color: #a5d6ff;
+}
+
+.code-block .tok-str,
+.code-block .tok-tpl {
+  color: #7ee787;
+}
+
+.code-block .tok-com {
+  color: #6e7681;
+  font-style: italic;
+}
+
+.code-block .tok-rx {
+  color: #56d4dd;
+}
+
+.code-block .tok-op,
+.code-block .tok-p {
+  color: #ffa657;
+}
+
 /* Lists */
 ul, ol {
   margin-top: 0;
