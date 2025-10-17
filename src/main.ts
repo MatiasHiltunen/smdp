@@ -112,7 +112,7 @@ function getUrlFromSearchParams() {
 
   
 
-  if (!urlParam.pathname.endsWith(".md")) {
+  if (!urlParam?.pathname?.endsWith(".md")) {
     return null;
   }
 
