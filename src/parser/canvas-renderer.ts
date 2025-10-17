@@ -722,7 +722,8 @@ function renderCanvas(
         const baseSize = FONT_SIZE.base;
         const level = listStack.length - 1;
         const bqOffset = inBlockquote ? 20 : 0;
-        const textStart = MARGIN + indent + bqOffset;
+        const infoOffset = inInfo ? 24 : 0;
+        const textStart = MARGIN + indent + bqOffset + infoOffset;
 
         const top = listStack[listStack.length - 1];
         const isOrdered = !!(top && top.kind === 'ol');
@@ -739,7 +740,7 @@ function renderCanvas(
         const markerWidth = isOrdered
           ? orderedMarkerWidths[level] || ctx.measureText(markerText).width
           : BULLET_RADIUS * 2;
-        const availableWidth = maxWidth - (textStart - MARGIN);
+        const availableWidth = maxWidth - (textStart - MARGIN) - infoOffset;
 
         if (!isMeasure) {
           ctx.fillStyle = COLOR.listMarker;
@@ -791,7 +792,8 @@ function renderCanvas(
         const baseSize = FONT_SIZE.base;
         ctx.font = baseSize + 'px ' + FONT_STACK;
         const bqOffset = inBlockquote ? 20 : 0;
-        const textStart = MARGIN + indent + bqOffset;
+        const infoOffset = inInfo ? 24 : 0;
+        const textStart = MARGIN + indent + bqOffset + infoOffset;
 
         if (!paraOpen) {
           closeListsAll();
@@ -811,7 +813,7 @@ function renderCanvas(
           ctx,
           currentX,
           y,
-          maxWidth - indent - bqOffset,
+          maxWidth - indent - bqOffset - infoOffset,
           isMeasure,
           { size: baseSize, color: inBlockquote ? COLOR.textSecondary : COLOR.text, italic: inBlockquote },
           opts.onImageLoad,
@@ -912,16 +914,38 @@ function renderCanvas(
             }
           }
           
+          // Calculate table dimensions
+          const tableWidth = tableColWidths.reduce((sum, w) => sum + w, 0);
+          const tableHeight = headerRowHeight + pendingTableRows.length * dataRowHeight;
+          const tableX = MARGIN + indent;
+          const tableY = y;
+          const tableRadius = 6;
+          
+          // Draw table background with rounded corners
+          if (!isMeasure) {
+            ctx.save();
+            ctx.fillStyle = COLOR.bgSecondary;
+            ctx.beginPath();
+            ctx.moveTo(tableX + tableRadius, tableY);
+            ctx.lineTo(tableX + tableWidth - tableRadius, tableY);
+            ctx.quadraticCurveTo(tableX + tableWidth, tableY, tableX + tableWidth, tableY + tableRadius);
+            ctx.lineTo(tableX + tableWidth, tableY + tableHeight - tableRadius);
+            ctx.quadraticCurveTo(tableX + tableWidth, tableY + tableHeight, tableX + tableWidth - tableRadius, tableY + tableHeight);
+            ctx.lineTo(tableX + tableRadius, tableY + tableHeight);
+            ctx.quadraticCurveTo(tableX, tableY + tableHeight, tableX, tableY + tableHeight - tableRadius);
+            ctx.lineTo(tableX, tableY + tableRadius);
+            ctx.quadraticCurveTo(tableX, tableY, tableX + tableRadius, tableY);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+          
           // Render header row
           if (!isMeasure) {
             let x = MARGIN + indent;
             for (let i = 0; i < pendingTableHeader.cells.length; i++) {
               const cell = pendingTableHeader.cells[i];
               const cellWidth = tableColWidths[i];
-              
-              // Header background
-              ctx.fillStyle = COLOR.bgSecondary;
-              ctx.fillRect(x, y, cellWidth, headerRowHeight);
               
               // Header border
               ctx.strokeStyle = COLOR.border;
@@ -949,8 +973,16 @@ function renderCanvas(
           y += headerRowHeight;
           
           // Render data rows
-          for (const row of pendingTableRows) {
+          for (let rowIdx = 0; rowIdx < pendingTableRows.length; rowIdx++) {
+            const row = pendingTableRows[rowIdx];
             let x = MARGIN + indent;
+            
+            // Add subtle alternating row background
+            if (!isMeasure && rowIdx % 2 === 1) {
+              ctx.fillStyle = 'rgba(0, 0, 0, 0.02)';
+              ctx.fillRect(tableX, y, tableWidth, dataRowHeight);
+            }
+            
             for (let i = 0; i < Math.min(row.cells.length, numCols); i++) {
               const cell = row.cells[i];
               const cellWidth = tableColWidths[i];
@@ -999,19 +1031,23 @@ function renderCanvas(
         inInfo = true;
         infoY = y;
         infoType = ev.infoType;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.6;
         break;
 
       case 'infoClose':
         closePara();
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.6;
         
         if (!isMeasure && inInfo) {
+          // Record info block background with padding (matching CSS: 1rem vertical, 1.5rem horizontal)
+          const verticalPadding = 16;
+          const horizontalPadding = 24;
+          const infoHeight = y - infoY + verticalPadding;
           infoBlocks.push({
-            x: MARGIN + indent - 5,
-            y: infoY,
-            width: maxWidth + 10,
-            height: y - infoY,
+            x: MARGIN + indent - horizontalPadding / 2,
+            y: infoY - verticalPadding / 2,
+            width: maxWidth + horizontalPadding,
+            height: infoHeight,
             type: infoType,
           });
         }
@@ -1072,10 +1108,43 @@ function renderCanvas(
     }
     for (const info of infoBlocks) {
       const colors = INFO_COLORS[info.type as keyof typeof INFO_COLORS];
+      const radius = 6;
+      
+      // Draw rounded background
       ctx.fillStyle = colors.bg;
-      ctx.fillRect(info.x, info.y, info.width, info.height);
+      ctx.beginPath();
+      ctx.moveTo(info.x + radius, info.y);
+      ctx.lineTo(info.x + info.width - radius, info.y);
+      ctx.quadraticCurveTo(info.x + info.width, info.y, info.x + info.width, info.y + radius);
+      ctx.lineTo(info.x + info.width, info.y + info.height - radius);
+      ctx.quadraticCurveTo(info.x + info.width, info.y + info.height, info.x + info.width - radius, info.y + info.height);
+      ctx.lineTo(info.x + radius, info.y + info.height);
+      ctx.quadraticCurveTo(info.x, info.y + info.height, info.x, info.y + info.height - radius);
+      ctx.lineTo(info.x, info.y + radius);
+      ctx.quadraticCurveTo(info.x, info.y, info.x + radius, info.y);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Draw left border (4px wide)
       ctx.fillStyle = colors.border;
-      ctx.fillRect(info.x + 5, info.y, 4, info.height);
+      ctx.fillRect(info.x, info.y + radius, 4, info.height - radius * 2);
+      // Top rounded part of border
+      ctx.beginPath();
+      ctx.moveTo(info.x, info.y + radius);
+      ctx.lineTo(info.x, info.y + 4);
+      ctx.quadraticCurveTo(info.x, info.y, info.x + 4, info.y);
+      ctx.lineTo(info.x + 4, info.y + radius);
+      ctx.closePath();
+      ctx.fill();
+      // Bottom rounded part of border
+      ctx.beginPath();
+      ctx.moveTo(info.x, info.y + info.height - radius);
+      ctx.lineTo(info.x + 4, info.y + info.height - radius);
+      ctx.lineTo(info.x + 4, info.y + info.height - 4);
+      ctx.quadraticCurveTo(info.x + 4, info.y + info.height, info.x, info.y + info.height);
+      ctx.lineTo(info.x, info.y + info.height - radius);
+      ctx.closePath();
+      ctx.fill();
     }
     ctx.restore();
   }
