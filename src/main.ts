@@ -2,7 +2,7 @@ import { MDParser, u8 } from "./parser";
 import "./style.css";
 import mdData from "/public/test.md?raw" with { type: "text" };
 
-let md: string = mdData;
+//let md: string = mdData;
 
 function parseMarkdown(md: string, canvas: HTMLCanvasElement) {
   const parser = new MDParser();
@@ -127,7 +127,9 @@ async function init() {
 
   const url = getUrlFromSearchParams();
 
-  if (url?.protocol === "https:") {
+  let md = mdData
+
+  if (!!url && url?.protocol === "https:") {
     md = await fetchMarkdown(url);
   
     console.log("downloadedMarkdown", md);
