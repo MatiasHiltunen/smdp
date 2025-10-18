@@ -20,8 +20,8 @@ export function* inlineTokens(
   s: number,
   e: number,
 ): Generator<InlineToken> {
-  const emStack: number[] = [];
-  const strongStack: number[] = [];
+  const emStack: Array<{ char: number; pos: number }> = [];
+  const strongStack: Array<{ char: number; pos: number }> = [];
   let i = s;
   let inCode = false;
   let codeTicks = 0;
@@ -125,11 +125,15 @@ export function* inlineTokens(
         const isStrong = runLen === 2;
         const stk = isStrong ? strongStack : emStack;
         
-        if (stk.length && stk[stk.length - 1] === c) {
-          stk.pop();
+        // Check if this closes an existing emphasis
+        const matchIdx = stk.findIndex(item => item.char === c);
+        if (matchIdx !== -1) {
+          // Close the emphasis
+          stk.splice(matchIdx, 1);
           yield { kind: isStrong ? 'strongClose' : 'emClose' };
         } else {
-          stk.push(c);
+          // Open new emphasis
+          stk.push({ char: c, pos: i });
           yield { kind: isStrong ? 'strongOpen' : 'emOpen' };
         }
       } else {
@@ -156,8 +160,15 @@ export function* inlineTokens(
     i = end;
   }
 
-  // Unbalanced emphasis → literal marker(s): cheap no-op (already text)
-  emStack.length = 0;
-  strongStack.length = 0;
+  // Close any unclosed emphasis markers at the end of the span
+  // This prevents deeply nested tags from cascading through the document
+  while (strongStack.length > 0) {
+    strongStack.pop();
+    yield { kind: 'strongClose' };
+  }
+  while (emStack.length > 0) {
+    emStack.pop();
+    yield { kind: 'emClose' };
+  }
 }
 
