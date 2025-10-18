@@ -12,10 +12,24 @@ export const LANGUAGE_BINARY = "HwAAAAoAAABqYXZhc2NyaXB0CQAAAAIAAABqcwoAAABqYXZh
 // Span HTML bytes for syntax highlighting
 export const SPAN_BINARY = "CgAAABUAAAA8c3BhbiBjbGFzcz0idG9rLWt3Ij4VAAAAPHNwYW4gY2xhc3M9InRvay1pZCI+FgAAADxzcGFuIGNsYXNzPSJ0b2stbnVtIj4WAAAAPHNwYW4gY2xhc3M9InRvay1zdHIiPhYAAAA8c3BhbiBjbGFzcz0idG9rLXRwbCI+FgAAADxzcGFuIGNsYXNzPSJ0b2stY29tIj4VAAAAPHNwYW4gY2xhc3M9InRvay1yeCI+FQAAADxzcGFuIGNsYXNzPSJ0b2stb3AiPhQAAAA8c3BhbiBjbGFzcz0idG9rLXAiPgcAAAA8L3NwYW4+";
 
-
+/**
+ * Decode base64 string to Uint8Array
+ * Uses atob() as fallback
+ */
 export function fromBase64(base64: string): Uint8Array {
 
   // @ts-ignore
-  return Uint8Array.fromBase64(base64)
-
+  if(typeof window !== 'undefined' && window?.Uint8Array?.fromBase64) {
+    console.log('Using browser Uint8Array.fromBase64');
+    // @ts-ignore   
+    return window.Uint8Array.fromBase64(base64);
+  } else {
+    
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  }
 }

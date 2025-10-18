@@ -295,15 +295,24 @@ export const SPAN_BINARY = "${spanBase64}";
 
 /**
  * Decode base64 string to Uint8Array
- * Uses atob() for browser compatibility
+ * Uses atob() as fallback
  */
 export function fromBase64(base64: string): Uint8Array {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+
+  // @ts-ignore
+  if(typeof window !== 'undefined' && window?.Uint8Array?.fromBase64) {
+    console.log('Using browser Uint8Array.fromBase64');
+    // @ts-ignore   
+    return window.Uint8Array.fromBase64(base64);
+  } else {
+    
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
   }
-  return bytes;
 }
 `;
 
