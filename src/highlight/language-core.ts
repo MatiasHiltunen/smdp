@@ -1,6 +1,7 @@
 import { HtmlArena } from '../parser/arena';
 
 const TE = new TextEncoder();
+const TD = new TextDecoder();
 
 export const TokenType = {
   Whitespace: 0,
@@ -129,20 +130,79 @@ function toLowerAscii(b: number): number {
   return b;
 }
 
-export class CompiledLanguageSpec {
-  readonly name: string;
-  readonly aliases: readonly string[];
-  private readonly identStartBits: Uint8Array;
-  private readonly identPartBits: Uint8Array;
-  private readonly keywords: KeywordEntry[];
-  private readonly numbersFlags: number;
-  private readonly regexEnabled: boolean;
-  private readonly template?: TemplateConfig;
-  private readonly lineLookup: Map<number, LineCommentDef[]>;
-  private readonly blockLookup: Map<number, BlockCommentDef[]>;
-  private readonly stringLookup: Map<number, StringDelimiter[]>;
+/**
+ * Binary reader for language specs
+ * Uses subarray() for zero-copy reads from a single binary blob
+ */
+export class BinaryReader {
+  private view: DataView;
+  private buf: Uint8Array;
+  private offset = 0;
 
-  constructor(author: AuthorLanguageSpec) {
+  constructor(buf: Uint8Array) {
+    this.buf = buf;
+    this.view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
+
+  readU32(): number {
+    const val = this.view.getUint32(this.offset, true);
+    this.offset += 4;
+    return val;
+  }
+
+  readI32(): number {
+    const val = this.view.getInt32(this.offset, true);
+    this.offset += 4;
+    return val;
+  }
+
+  readU8(): number {
+    const val = this.buf[this.offset];
+    this.offset += 1;
+    return val;
+  }
+
+  readBytes(len: number): Uint8Array {
+    const slice = this.buf.subarray(this.offset, this.offset + len);
+    this.offset += len;
+    return slice;
+  }
+
+  readString(): string {
+    const len = this.readU32();
+    const bytes = this.readBytes(len);
+    return TD.decode(bytes);
+  }
+
+  getOffset(): number {
+    return this.offset;
+  }
+}
+
+export class CompiledLanguageSpec {
+  readonly name!: string;
+  readonly aliases!: readonly string[];
+  private readonly identStartBits!: Uint8Array;
+  private readonly identPartBits!: Uint8Array;
+  private readonly keywords!: KeywordEntry[];
+  private readonly numbersFlags!: number;
+  private readonly regexEnabled!: boolean;
+  private readonly template?: TemplateConfig;
+  private readonly lineLookup!: Map<number, LineCommentDef[]>;
+  private readonly blockLookup!: Map<number, BlockCommentDef[]>;
+  private readonly stringLookup!: Map<number, StringDelimiter[]>;
+
+  constructor(author: AuthorLanguageSpec);
+  constructor(reader: BinaryReader);
+  constructor(data: AuthorLanguageSpec | BinaryReader) {
+    // Check if this is a binary reader
+    if (data instanceof BinaryReader) {
+      this.initFromBinary(data);
+      return;
+    }
+
+    // Otherwise, initialize from AuthorLanguageSpec
+    const author = data as AuthorLanguageSpec;
     this.name = author.name;
     this.aliases = author.aliases ?? [author.name];
 
@@ -223,6 +283,114 @@ export class CompiledLanguageSpec {
       const arr = this.stringLookup.get(first) ?? [];
       arr.push(entry);
       this.stringLookup.set(first, arr);
+    }
+  }
+
+  private initFromBinary(reader: BinaryReader) {
+    // Read name
+    (this as any).name = reader.readString();
+
+    // Read aliases
+    const aliasCount = reader.readU32();
+    const aliases: string[] = [];
+    for (let i = 0; i < aliasCount; i++) {
+      aliases.push(reader.readString());
+    }
+    (this as any).aliases = aliases;
+
+    // Use default identifier ranges
+    const defaultIdentStart: Array<[number, number]> = [
+      [0x24, 0x24],
+      [0x5f, 0x5f],
+      [0x41, 0x5a],
+      [0x61, 0x7a],
+    ];
+    const defaultIdentPart = defaultIdentStart.concat([[0x30, 0x39]]);
+
+    (this as any).identStartBits = createBitset(undefined, defaultIdentStart);
+    (this as any).identPartBits = createBitset(undefined, defaultIdentPart);
+
+    // Read keywords
+    const keywordCount = reader.readU32();
+    const keywords: KeywordEntry[] = [];
+    for (let i = 0; i < keywordCount; i++) {
+      const len = reader.readU32();
+      const bytes = reader.readBytes(len); // zero-copy subarray
+      const code = reader.readU32();
+      keywords.push({ bytes, code });
+    }
+    (this as any).keywords = keywords;
+
+    // Read line comments
+    (this as any).lineLookup = new Map();
+    const lineCommentCount = reader.readU32();
+    for (let i = 0; i < lineCommentCount; i++) {
+      const len = reader.readU32();
+      const seq = reader.readBytes(len); // zero-copy subarray
+      if (!seq.length) continue;
+      const first = seq[0];
+      const arr = this.lineLookup.get(first) ?? [];
+      arr.push(seq);
+      this.lineLookup.set(first, arr);
+    }
+
+    // Read block comments
+    (this as any).blockLookup = new Map();
+    const blockCommentCount = reader.readU32();
+    for (let i = 0; i < blockCommentCount; i++) {
+      const openLen = reader.readU32();
+      const openBytes = reader.readBytes(openLen); // zero-copy subarray
+      const closeLen = reader.readU32();
+      const closeBytes = reader.readBytes(closeLen); // zero-copy subarray
+      if (!openBytes.length || !closeBytes.length) continue;
+      const first = openBytes[0];
+      const arr = this.blockLookup.get(first) ?? [];
+      arr.push({ open: openBytes, close: closeBytes });
+      this.blockLookup.set(first, arr);
+    }
+
+    // Read strings
+    (this as any).stringLookup = new Map();
+    const stringCount = reader.readU32();
+    for (let i = 0; i < stringCount; i++) {
+      const startLen = reader.readU32();
+      const start = reader.readBytes(startLen); // zero-copy subarray
+      const endLen = reader.readU32();
+      const end = reader.readBytes(endLen); // zero-copy subarray
+      const escape = reader.readI32();
+      const allowMultiline = reader.readU8() !== 0;
+
+      if (!start.length) continue;
+      const entry: StringDelimiter = {
+        start,
+        end,
+        escape: escape === -1 ? null : escape,
+        allowMultiline,
+      };
+      const first = start[0];
+      const arr = this.stringLookup.get(first) ?? [];
+      arr.push(entry);
+      this.stringLookup.set(first, arr);
+    }
+
+    // Read numbers flags
+    (this as any).numbersFlags = reader.readU32();
+
+    // Read regex enabled
+    (this as any).regexEnabled = reader.readU8() !== 0;
+
+    // Read template
+    const hasTemplate = reader.readU8() !== 0;
+    if (hasTemplate) {
+      const start = reader.readU8();
+      const interpOpenLen = reader.readU32();
+      const interpOpen = reader.readBytes(interpOpenLen); // zero-copy subarray
+      const interpClose = reader.readU8();
+      (this as any).template = {
+        start,
+        interpOpen,
+        interpClose,
+      };
     }
   }
 
@@ -662,17 +830,29 @@ export class GenericTokenizer {
   }
 }
 
+import { SPAN_BINARY, fromBase64 as fromBase64Span } from './precompiled';
+
+// Read span bytes from binary using arena-style reading
+const spanBuf = fromBase64Span(SPAN_BINARY);
+const spanReader = new BinaryReader(spanBuf);
+const spanCount = spanReader.readU32();
+const spanArray: Uint8Array[] = [];
+for (let i = 0; i < spanCount; i++) {
+  const len = spanReader.readU32();
+  spanArray.push(spanReader.readBytes(len)); // zero-copy subarray
+}
+
 const SPAN_BYTES = {
-  kw: TE.encode('<span class="tok-kw">'),
-  id: TE.encode('<span class="tok-id">'),
-  num: TE.encode('<span class="tok-num">'),
-  str: TE.encode('<span class="tok-str">'),
-  tpl: TE.encode('<span class="tok-tpl">'),
-  com: TE.encode('<span class="tok-com">'),
-  rx: TE.encode('<span class="tok-rx">'),
-  op: TE.encode('<span class="tok-op">'),
-  p: TE.encode('<span class="tok-p">'),
-  close: TE.encode('</span>'),
+  kw: spanArray[0],
+  id: spanArray[1],
+  num: spanArray[2],
+  str: spanArray[3],
+  tpl: spanArray[4],
+  com: spanArray[5],
+  rx: spanArray[6],
+  op: spanArray[7],
+  p: spanArray[8],
+  close: spanArray[9],
 };
 
 export class GenericHighlighter {

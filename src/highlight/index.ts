@@ -1,8 +1,7 @@
 import { HtmlArena } from '../parser/arena';
-import { builtinLanguageSpecs } from './builtins';
 import type { AuthorLanguageSpec } from './language-core';
-import { CompiledLanguageSpec, GenericHighlighter, compileLanguage } from './language-core';
-import { JS_ALIASES, getJavaScriptSpec } from './js-highlighter';
+import { CompiledLanguageSpec, GenericHighlighter, compileLanguage, BinaryReader } from './language-core';
+import { LANGUAGE_BINARY, fromBase64 } from './precompiled';
 
 const NON_CLASS_RE = /[^a-z0-9+#-]+/g;
 
@@ -71,17 +70,18 @@ export function registerHighlightLanguage(options: RegisterLanguageOptions): Com
   return compiled;
 }
 
-const jsSpec = getJavaScriptSpec();
-registerEntry(
-  {
-    spec: jsSpec,
-    highlighter: new GenericHighlighter(jsSpec),
-  },
-  JS_ALIASES,
-);
+// Register all precompiled languages from binary
+const languageBinary = fromBase64(LANGUAGE_BINARY);
+const binaryReader = new BinaryReader(languageBinary);
+const languageCount = binaryReader.readU32();
 
-for (const spec of builtinLanguageSpecs) {
-  registerHighlightLanguage({ spec });
+for (let i = 0; i < languageCount; i++) {
+  const compiled = new CompiledLanguageSpec(binaryReader);
+  const entry: LanguageEntry = {
+    spec: compiled,
+    highlighter: new GenericHighlighter(compiled),
+  };
+  registerEntry(entry, compiled.aliases);
 }
 
 export function highlightCodeBlock(bytes: Uint8Array, lang?: string): Uint8Array {
