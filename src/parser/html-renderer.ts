@@ -115,7 +115,6 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
         codeBytes[offset++] = 0x0a;
       }
     }
-    console.log("codeLang", codeLang);
     const highlighted = highlightCodeBlock(codeBytes, codeLang);
     out.writeBytes(highlighted);
 

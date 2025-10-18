@@ -6,6 +6,8 @@ import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD, INFO_COLORS } from './constants';
 import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
+import { getLanguageSpec } from '../highlight';
+import { TokenType, GenericTokenizer } from '../highlight/language-core';
 
 // Font stacks with comprehensive Unicode support
 const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
@@ -16,6 +18,21 @@ const MARKER_GAP = 8;
 const BULLET_RADIUS = 3;
 const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
 const MAX_IMAGE_WIDTH = 700; // max width for images in px
+
+// Token colors for syntax highlighting (dark theme optimized)
+const TOKEN_COLORS = {
+  [TokenType.Keyword]: '#ff7b72',           // Bright red/pink for keywords
+  [TokenType.Identifier]: '#e6edf3',        // Light gray for identifiers
+  [TokenType.LiteralNum]: '#79c0ff',        // Bright blue for numbers
+  [TokenType.LiteralStr]: '#a5d6ff',        // Light blue for strings
+  [TokenType.LiteralTpl]: '#a5d6ff',        // Light blue for template literals
+  [TokenType.Comment]: '#8b949e',           // Medium gray for comments
+  [TokenType.Regex]: '#7ee787',             // Bright green for regex
+  [TokenType.Operator]: '#ff7b72',          // Bright red/pink for operators
+  [TokenType.Punct]: '#e6edf3',             // Light gray for punctuation
+  [TokenType.Whitespace]: '#e6edf3',        // Default text color
+  [TokenType.Newline]: '#e6edf3',           // Default text color
+} as const;
 
 /**
  * Measure the width of inline content
@@ -247,6 +264,76 @@ interface CanvasRenderState {
 }
 
 const canvasStates = new WeakMap<HTMLCanvasElement, CanvasRenderState>();
+
+/**
+ * Render syntax-highlighted code to canvas
+ */
+function renderHighlightedCode(
+  codeBytes: Uint8Array,
+  lang: string | undefined,
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  isMeasure: boolean,
+): { width: number; height: number; y: number } {
+  const TE = new TextEncoder();
+  
+  // Try to get language spec for tokenization
+  const spec = lang ? getLanguageSpec(lang) : undefined;
+  
+  let maxWidth = 0;
+  let currentY = y;
+  const lineHeight = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
+  
+  if (spec) {
+    // Tokenize and render with colors
+    const tokenizer = new GenericTokenizer(spec);
+    const lines = TD.decode(codeBytes).split('\n');
+    
+    for (const line of lines) {
+      const lineBytes = TE.encode(line);
+      let currentX = x;
+      
+      ctx.font = FONT_SIZE.code + 'px ' + FONT_STACK_MONO;
+      
+      tokenizer.tokenize(lineBytes, (type, s, e) => {
+        const tokenText = TD.decode(lineBytes.subarray(s, e));
+        const color = TOKEN_COLORS[type] || COLOR.text;
+        
+        if (!isMeasure) {
+          ctx.fillStyle = color;
+          ctx.fillText(tokenText, currentX, currentY);
+        }
+        
+        currentX += ctx.measureText(tokenText).width;
+      });
+      
+      if (currentX - x > maxWidth) {
+        maxWidth = currentX - x;
+      }
+      
+      currentY += lineHeight;
+    }
+  } else {
+    // Fall back to plain rendering without highlighting
+    const lines = TD.decode(codeBytes).split('\n');
+    ctx.font = FONT_SIZE.code + 'px ' + FONT_STACK_MONO;
+    
+    for (const line of lines) {
+      const w = ctx.measureText(line).width;
+      if (w > maxWidth) maxWidth = w;
+      
+      if (!isMeasure) {
+        ctx.fillStyle = COLOR.text;
+        ctx.fillText(line, x, currentY);
+      }
+      
+      currentY += lineHeight;
+    }
+  }
+  
+  return { width: maxWidth, height: currentY - y, y: currentY };
+}
 
 function drawInline(
   u8: Uint8Array,
@@ -576,8 +663,8 @@ function renderCanvas(
 ): number {
   if (!isMeasure) {
     if (!opts.skipClear) {
-      ctx.fillStyle = COLOR.bg;
-      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      // Clear to transparent so destination-over backgrounds work correctly
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     }
     ctx.fillStyle = COLOR.text;
     ctx.imageSmoothingEnabled = true;
@@ -597,6 +684,8 @@ function renderCanvas(
   let codeY = 0;
   let codeHeight = 0;
   let codeWidth = 0;
+  let codeBuffer: Array<{ s: number; e: number }> | null = null;
+  let codeLang: string | undefined = undefined;
   const codeBlocks: { x: number; y: number; width: number; height: number }[] = [];
   const blockquotes: { x: number; y: number; width: number; height: number }[] = [];
   let inBlockquote = false;
@@ -631,28 +720,29 @@ function renderCanvas(
         closePara();
         closeListsAll();
         if (!isMeasure && !inBlockquote) {
-          blockquoteY = y - FONT_SIZE.base * 0.5;
+          blockquoteY = y;
           inBlockquote = true;
         }
         indent += INDENT;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
         break;
 
       case 'bqClose':
         closePara();
         closeListsAll();
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.75;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.0;
         if (!isMeasure && inBlockquote) {
+          const bqPadding = 16;
           blockquotes.push({
-            x: MARGIN + indent - INDENT - 5,
+            x: MARGIN + indent - INDENT - bqPadding,
             y: blockquoteY,
-            width: maxWidth - (indent - INDENT) + 10,
+            width: maxWidth - (indent - INDENT) + bqPadding * 2,
             height: y - blockquoteY,
           });
           inBlockquote = false;
         }
         indent -= INDENT;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.5;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
         break;
 
       case 'hr':
@@ -827,43 +917,72 @@ function renderCanvas(
         closePara();
         closeListsAll();
         inCode = true;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
+        codeBuffer = [];
+        codeLang = ev.info?.lang;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.5;
         codeY = y;
         codeWidth = 0;
         codeHeight = 0;
         break;
 
       case 'codeText':
-        if (inCode) {
-          const text = TD.decode(u8.subarray(ev.s, ev.e));
-          ctx.font = FONT_SIZE.code + 'px ' + FONT_STACK_MONO;
-          const w = ctx.measureText(text).width;
-          if (w > codeWidth) codeWidth = w;
-          const codeLineH = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
-
-          if (!isMeasure) {
-            ctx.fillStyle = COLOR.text;
-            ctx.fillText(text, MARGIN + indent + 10, y);
-            ctx.fillStyle = COLOR.text;
-          }
-
-          y += codeLineH;
-          codeHeight += codeLineH;
+        if (inCode && codeBuffer) {
+          codeBuffer.push({ s: ev.s, e: ev.e });
         }
         break;
 
       case 'codeClose':
-        if (inCode) {
+        if (inCode && codeBuffer) {
           inCode = false;
+          
+          // Concatenate all code lines with newlines
+          let totalLen = 0;
+          for (const span of codeBuffer) {
+            totalLen += span.e - span.s;
+            totalLen += 1; // newline
+          }
+          
+          const codeBytes = totalLen > 0 ? new Uint8Array(totalLen) : new Uint8Array(0);
+          
+          if (totalLen > 0) {
+            let offset = 0;
+            for (const span of codeBuffer) {
+              const slice = u8.subarray(span.s, span.e);
+              codeBytes.set(slice, offset);
+              offset += slice.length;
+              codeBytes[offset++] = 0x0a; // newline
+            }
+          }
+          
+          // Render highlighted code
+          const codePaddingX = 20;
+          const codePaddingY = 16;
+          
+          const result = renderHighlightedCode(
+            codeBytes,
+            codeLang,
+            ctx,
+            MARGIN + indent + codePaddingX,
+            y,
+            isMeasure,
+          );
+          
+          codeWidth = result.width;
+          codeHeight = result.height;
+          y = result.y;
+          
           if (!isMeasure) {
             codeBlocks.push({
-              x: MARGIN + indent - 12,
-              y: codeY - 12,
-              width: codeWidth + 32,
-              height: codeHeight + 24,
+              x: MARGIN + indent - codePaddingX / 2,
+              y: codeY - codePaddingY,
+              width: codeWidth + codePaddingX * 2,
+              height: codeHeight + codePaddingY * 2,
             });
           }
-          y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
+          
+          codeBuffer = null;
+          codeLang = undefined;
+          y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.5;
         }
         break;
 
@@ -1031,17 +1150,17 @@ function renderCanvas(
         inInfo = true;
         infoY = y;
         infoType = ev.infoType;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.6;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.0;
         break;
 
       case 'infoClose':
         closePara();
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.6;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.0;
         
         if (!isMeasure && inInfo) {
-          // Record info block background with padding (matching CSS: 1rem vertical, 1.5rem horizontal)
-          const verticalPadding = 16;
-          const horizontalPadding = 24;
+          // Generous padding for info blocks
+          const verticalPadding = 20;
+          const horizontalPadding = 28;
           const infoHeight = y - infoY + verticalPadding;
           infoBlocks.push({
             x: MARGIN + indent - horizontalPadding / 2,
@@ -1053,7 +1172,7 @@ function renderCanvas(
         }
         
         inInfo = false;
-        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 0.5;
+        y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
         break;
     }
   }
@@ -1084,6 +1203,8 @@ function renderCanvas(
   if (!isMeasure) {
     ctx.save();
     ctx.globalCompositeOperation = 'destination-over';
+    
+    // Draw code block backgrounds
     for (const block of codeBlocks) {
       ctx.fillStyle = COLOR.codeBg;
       ctx.beginPath();
@@ -1100,12 +1221,48 @@ function renderCanvas(
       ctx.closePath();
       ctx.fill();
     }
+    
+    // Draw blockquote backgrounds with rounded corners
     for (const bq of blockquotes) {
+      const radius = 6;
+      // Background
       ctx.fillStyle = COLOR.bgSecondary;
-      ctx.fillRect(bq.x, bq.y, bq.width, bq.height);
+      ctx.beginPath();
+      ctx.moveTo(bq.x + radius, bq.y);
+      ctx.lineTo(bq.x + bq.width - radius, bq.y);
+      ctx.quadraticCurveTo(bq.x + bq.width, bq.y, bq.x + bq.width, bq.y + radius);
+      ctx.lineTo(bq.x + bq.width, bq.y + bq.height - radius);
+      ctx.quadraticCurveTo(bq.x + bq.width, bq.y + bq.height, bq.x + bq.width - radius, bq.y + bq.height);
+      ctx.lineTo(bq.x + radius, bq.y + bq.height);
+      ctx.quadraticCurveTo(bq.x, bq.y + bq.height, bq.x, bq.y + bq.height - radius);
+      ctx.lineTo(bq.x, bq.y + radius);
+      ctx.quadraticCurveTo(bq.x, bq.y, bq.x + radius, bq.y);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Left border (5px wide)
       ctx.fillStyle = COLOR.blockquoteBorder;
-      ctx.fillRect(bq.x + 5, bq.y, 4, bq.height);
+      ctx.fillRect(bq.x, bq.y + radius, 5, bq.height - radius * 2);
+      // Top rounded part of border
+      ctx.beginPath();
+      ctx.moveTo(bq.x, bq.y + radius);
+      ctx.lineTo(bq.x, bq.y + 5);
+      ctx.quadraticCurveTo(bq.x, bq.y, bq.x + 5, bq.y);
+      ctx.lineTo(bq.x + 5, bq.y + radius);
+      ctx.closePath();
+      ctx.fill();
+      // Bottom rounded part of border
+      ctx.beginPath();
+      ctx.moveTo(bq.x, bq.y + bq.height - radius);
+      ctx.lineTo(bq.x + 5, bq.y + bq.height - radius);
+      ctx.lineTo(bq.x + 5, bq.y + bq.height - 5);
+      ctx.quadraticCurveTo(bq.x + 5, bq.y + bq.height, bq.x, bq.y + bq.height);
+      ctx.lineTo(bq.x, bq.y + bq.height - radius);
+      ctx.closePath();
+      ctx.fill();
     }
+    
+    // Draw info block backgrounds
     for (const info of infoBlocks) {
       const colors = INFO_COLORS[info.type as keyof typeof INFO_COLORS];
       const radius = 6;
@@ -1125,27 +1282,32 @@ function renderCanvas(
       ctx.closePath();
       ctx.fill();
       
-      // Draw left border (4px wide)
+      // Draw left border (5px wide for better visibility)
       ctx.fillStyle = colors.border;
-      ctx.fillRect(info.x, info.y + radius, 4, info.height - radius * 2);
+      ctx.fillRect(info.x, info.y + radius, 5, info.height - radius * 2);
       // Top rounded part of border
       ctx.beginPath();
       ctx.moveTo(info.x, info.y + radius);
-      ctx.lineTo(info.x, info.y + 4);
-      ctx.quadraticCurveTo(info.x, info.y, info.x + 4, info.y);
-      ctx.lineTo(info.x + 4, info.y + radius);
+      ctx.lineTo(info.x, info.y + 5);
+      ctx.quadraticCurveTo(info.x, info.y, info.x + 5, info.y);
+      ctx.lineTo(info.x + 5, info.y + radius);
       ctx.closePath();
       ctx.fill();
       // Bottom rounded part of border
       ctx.beginPath();
       ctx.moveTo(info.x, info.y + info.height - radius);
-      ctx.lineTo(info.x + 4, info.y + info.height - radius);
-      ctx.lineTo(info.x + 4, info.y + info.height - 4);
-      ctx.quadraticCurveTo(info.x + 4, info.y + info.height, info.x, info.y + info.height);
+      ctx.lineTo(info.x + 5, info.y + info.height - radius);
+      ctx.lineTo(info.x + 5, info.y + info.height - 5);
+      ctx.quadraticCurveTo(info.x + 5, info.y + info.height, info.x, info.y + info.height);
       ctx.lineTo(info.x, info.y + info.height - radius);
       ctx.closePath();
       ctx.fill();
     }
+    
+    // Finally, fill the main background behind everything
+    ctx.fillStyle = COLOR.bg;
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    
     ctx.restore();
   }
 

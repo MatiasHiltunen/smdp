@@ -102,3 +102,12 @@ export function getRegisteredHighlightLanguages(): string[] {
 export function getRegisteredHighlightSpecs(): { name: string; aliases: readonly string[] }[] {
   return Array.from(specSet.values()).map((spec) => ({ name: spec.name, aliases: spec.aliases ?? [spec.name] }));
 }
+
+export function getLanguageSpec(lang?: string): CompiledLanguageSpec | undefined {
+  const normalized = normalizeLanguage(lang);
+  if (normalized) {
+    const entry = aliasRegistry.get(normalized.key);
+    return entry?.spec;
+  }
+  return undefined;
+}

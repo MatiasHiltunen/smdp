@@ -117,7 +117,7 @@ Visit [example.com](https://example.com) or www.github.com
 ### Info Blocks
 
 ::: info
-This is an informational message. It can contain **bold text**, *italic text*, and \`inline code\`.
+This is an informational message. It can contain **bold text**, *italic text*, and `inline code`.
 :::
 
 ::: warning
@@ -134,7 +134,7 @@ This is a success message. Everything completed successfully!
 
 ---
 
-**Strong text** and \`inline code\`.
+**Strong text** and `inline code`.
 
 
 ---
@@ -170,8 +170,8 @@ inline emojis:
 |        | ZERO WIDTH SPACE      | U+200B      | Invisible joiner           |
 | ‌      | ZERO WIDTH NON-JOINER | U+200C      | Affects ligatures          |
 | ‍      | ZERO WIDTH JOINER     | U+200D      | ZWJ sequence joiner        |
-|        | LINE SEPARATOR        | U+2028      | Line-breaking              |
-|        | PARAGRAPH SEPARATOR   | U+2029      | Line-breaking              |
+|       | LINE SEPARATOR        | U+2028      | Line-breaking              |
+|       | PARAGRAPH SEPARATOR   | U+2029      | Line-breaking              |
 |        | NARROW NO-BREAK SPACE | U+202F      | Used in French punctuation |
 | 　      | IDEOGRAPHIC SPACE     | U+3000      | Full-width space (CJK)     |
 
@@ -183,20 +183,6 @@ inline emojis:
 | -------------- | ----------------------- | ----------------------------------- | ---------------------------- |
 | Hello سلام 123 | Mixed English/Arabic    | U+0048…U+0633 U+0644 U+0627 U+0645… | Direction changes mid-string |
 | שלום!          | Hebrew with punctuation | U+05E9 U+05DC U+05D5 U+05DD U+0021  | RTL with LTR punctuation     |
-
----
-
-### 🔀 **Bidi Control Characters**
-
-| Sample | Name               | Code Points                        | Notes                    |
-| ------ | ------------------ | ---------------------------------- | ------------------------ |
-| ‎      | LEFT-TO-RIGHT MARK | U+200E                             | Invisible, forces LTR    |
-| ‏      | RIGHT-TO-LEFT MARK | U+200F                             | Invisible, forces RTL    |
-| ‪ABC‬  | LRE…PDF            | U+202A U+0041 U+0042 U+0043 U+202C | Explicit direction block |
-| ‫ABC‬  | RLE…PDF            | U+202B U+0041 U+0042 U+0043 U+202C | Explicit RTL block       |
-| ⁦ABC⁩  | LRI…PDI            | U+2066…U+2069                      | Modern isolates          |
-| ⁧ABC⁩  | RLI…PDI            | U+2067…U+2069                      | RTL isolate              |
-| ⁨ABC⁩  | FSI…PDI            | U+2068…U+2069                      | Contextual isolate       |
 
 ---
 
