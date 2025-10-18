@@ -661,10 +661,15 @@ function renderCanvas(
   isMeasure: boolean,
   opts: { skipClear?: boolean; onImageLoad?: () => void } = {},
 ): number {
+  const dpr = window.devicePixelRatio || 1;
+  const logicalWidth = ctx.canvas.width / dpr;
+  const logicalHeight = ctx.canvas.height / dpr;
+  
   if (!isMeasure) {
     if (!opts.skipClear) {
       // Clear to transparent so destination-over backgrounds work correctly
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      // Use logical dimensions since context is scaled
+      ctx.clearRect(0, 0, logicalWidth, logicalHeight);
     }
     ctx.fillStyle = COLOR.text;
     ctx.imageSmoothingEnabled = true;
@@ -675,7 +680,7 @@ function renderCanvas(
 
   let y = MARGIN;
   let indent = 0;
-  const maxWidth = ctx.canvas.width / (window.devicePixelRatio || 1) - 2 * MARGIN;
+  const maxWidth = logicalWidth - 2 * MARGIN;
   let paraOpen = false;
   let currentX = MARGIN;
   const listStack: CanvasListItem[] = [];
@@ -1305,8 +1310,9 @@ function renderCanvas(
     }
     
     // Finally, fill the main background behind everything
+    // Use logical dimensions since context is scaled
     ctx.fillStyle = COLOR.bg;
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
     
     ctx.restore();
   }

@@ -99,19 +99,20 @@ function getUrlFromSearchParams() {
   const url = new URL(window.location.href);
 
 
-  //console.log("url", url);
   
   const externalUrl = url.searchParams.get("url")
-
+  
+  console.log("externalUrl", externalUrl);
+  
   if(!externalUrl) return null
 
   const urlParam = URL.parse(externalUrl)
 
-  
+  console.log("urlParam", urlParam);
 
-  if (!urlParam?.pathname?.endsWith(".md")) {
+/*   if (!urlParam?.pathname?.endsWith(".md")) {
     return null;
-  }
+  } */
 
 
 
@@ -130,9 +131,9 @@ async function init() {
 
   let u8Md: Uint8Array
 
-  if (!!url && url?.protocol === "https:") {
+  if (!!url /* && url?.protocol === "https:" */) {
     u8Md = await fetchMarkdown(url);
-  
+ /*    console.log("downloadedMarkdown", u8Md); */
     //console.log("downloadedMarkdown", md);
   } else {
     u8Md = u8(mdData)
@@ -150,10 +151,11 @@ async function init() {
     const app = createApp();
 
     container.append(canvasPane, app);
-    // Initialize
+    document.body.append(container);
+    
+    // Initialize after DOM is ready
     editor.value = new TextDecoder().decode(u8Md);
     app.innerHTML = parseMarkdownToHtml(u8Md, parser);
-
     parseMarkdownToCanvas(u8Md, canvas, parser);
 
     // Update on input
@@ -166,16 +168,16 @@ async function init() {
       //parseMarkdownToCanvas(u8MdNew, canvas, parser)
 
     });
+    return; // Early return since container already appended
   } else if (route === "canvas") {
     const { canvasPane, canvas } = createCanvasContainer();
-
-    parser.renderToCanvas(u8Md, canvas)
+    
     container.append(canvasPane);
-
-  
-
-   // parser.parse(u8Md)
-    //parseMarkdownToCanvas(u8Md, canvas, parser);
+    document.body.append(container);
+    
+    // Render canvas after it's in the DOM so getBoundingClientRect() works
+    parser.renderToCanvas(u8Md, canvas);
+    return; // Early return to avoid appending container again
   } else if (route === "html") {
     const app = createApp();
     
