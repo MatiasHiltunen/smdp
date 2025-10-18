@@ -90,7 +90,8 @@ export class HtmlArena {
   }
 
   toUint8Array(): Uint8Array {
-    return this.buf.slice(0, this.len);
+    // Return a view instead of a copy for zero-allocation
+    return this.buf.subarray(0, this.len);
   }
 }
 
