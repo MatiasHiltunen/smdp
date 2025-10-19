@@ -20,6 +20,15 @@
   --radius-lg: 28px;
   --radius-md: 18px;
   --radius-sm: 10px;
+  --code-kw: #38bdf8;
+  --code-id: rgba(248, 250, 252, 0.92);
+  --code-num: #facc15;
+  --code-str: #4ade80;
+  --code-tpl: #22d3ee;
+  --code-com: rgba(148, 163, 184, 0.65);
+  --code-op: #f472b6;
+  --code-punc: rgba(226, 232, 240, 0.7);
+  --code-rx: #f97316;
 }
 
 * {
@@ -103,6 +112,40 @@ body.is-editing .floating-toggle {
   overflow: hidden;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
+}
+
+.canvas-pane {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: clamp(0.75rem, 2vw, 1.25rem);
+}
+
+.canvas-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-height: clamp(280px, 45vh, 540px);
+  max-height: clamp(360px, 65vh, 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  padding: 0 clamp(0.5rem, 2vw, 1rem);
+  margin: 0 auto;
+}
+
+.canvas-scroll canvas {
+  display: block;
+  margin: 0 auto;
+}
+
+.canvas-scroll #canvas-spacer {
+  width: 1px;
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+  user-select: none;
 }
 
 .markdown-viewer {
@@ -226,6 +269,53 @@ body.is-editing .floating-toggle {
   font-size: 0.95em;
 }
 
+.markdown-viewer pre code {
+  display: block;
+  color: var(--code-id);
+  font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+  line-height: 1.65;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.markdown-viewer .tok-kw {
+  color: var(--code-kw);
+  font-weight: 600;
+}
+
+.markdown-viewer .tok-id {
+  color: var(--code-id);
+}
+
+.markdown-viewer .tok-num {
+  color: var(--code-num);
+}
+
+.markdown-viewer .tok-str {
+  color: var(--code-str);
+}
+
+.markdown-viewer .tok-tpl {
+  color: var(--code-tpl);
+}
+
+.markdown-viewer .tok-com {
+  color: var(--code-com);
+  font-style: italic;
+}
+
+.markdown-viewer .tok-rx {
+  color: var(--code-rx);
+}
+
+.markdown-viewer .tok-op {
+  color: var(--code-op);
+}
+
+.markdown-viewer .tok-p {
+  color: var(--code-punc);
+}
+
 .markdown-viewer ul,
 .markdown-viewer ol {
   margin: clamp(1.2rem, 2.4vw, 1.6rem) 0;
@@ -268,8 +358,9 @@ body.is-editing .floating-toggle {
 
 .canvas-pane {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   min-height: clamp(320px, 60vh, 640px);
 }
 

@@ -156,8 +156,15 @@ function createCanvasView(): CanvasView {
   const canvasPane = createElement("div");
   canvasPane.className = "canvas-pane";
 
+  const canvasScroll = createElement("div");
+  canvasScroll.className = "canvas-scroll";
+
   const canvas = createElement("canvas");
   canvas.className = "md-canvas";
+
+  const canvasSpacer = createElement("div");
+  canvasSpacer.id = "canvas-spacer";
+  canvasSpacer.setAttribute("aria-hidden", "true");
 
   const editorPane = createElement("section");
   editorPane.className = "editor-pane";
@@ -167,7 +174,8 @@ function createCanvasView(): CanvasView {
   textarea.spellcheck = false;
 
   editorPane.appendChild(textarea);
-  canvasPane.appendChild(canvas);
+  canvasScroll.append(canvas, canvasSpacer);
+  canvasPane.appendChild(canvasScroll);
 
   const fab = createFloatingButton();
 

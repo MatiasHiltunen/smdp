@@ -9,9 +9,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "tsx --test tests/**/*.test.ts",
+    "test:e2e": "playwright test",
     "precompile": "tsx scripts/precompile-languages.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/node": "^24.8.1",
     "@types/web": "^0.0.280",
     "tsx": "^4.20.6",

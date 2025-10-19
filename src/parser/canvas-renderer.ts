@@ -1322,6 +1322,8 @@ function renderCanvas(
 
 export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement): void {
   const dpr = window.devicePixelRatio || 1;
+  canvas.dataset.renderReady = 'pending';
+  canvas.dataset.virtualized = 'false';
   const rect = canvas.getBoundingClientRect();
   const styleWidth = rect.width || 800;
   const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
@@ -1339,7 +1341,11 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const measureCtx = measureCanvas.getContext('2d', { 
     willReadFrequently: false 
   });
-  if (!measureCtx) return;
+  if (!measureCtx) {
+    delete canvas.dataset.renderReady;
+    delete canvas.dataset.virtualized;
+    return;
+  }
   
   // Enable emoji rendering support
   if ('fontKerning' in measureCtx) {
@@ -1377,6 +1383,8 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     
     ctx.scale(dpr, dpr);
     renderCanvas(u8, ctx, false, { onImageLoad: rerender });
+    canvas.dataset.virtualized = 'false';
+    canvas.dataset.renderReady = 'ready';
     if (spacer) spacer.style.height = '0px';
     const prev = canvasStates.get(canvas);
     if (prev?.scrollEl && prev.onScroll) {
@@ -1444,11 +1452,11 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     // Clamp scroll to prevent showing empty space at the bottom
     const maxScroll = Math.max(0, totalHeight - viewportHeight);
     const scrollTop = Math.min(rawScrollTop, maxScroll);
-    
+
     // Reset transform and work in bitmap pixels
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     // Copy the visible portion from offscreen canvas (all in bitmap pixels)
     ctx.drawImage(
       offscreen,
@@ -1475,5 +1483,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   scrollEl.addEventListener('scroll', scrollHandler, { passive: true });
 
   renderViewport();
+  canvas.dataset.virtualized = 'true';
+  canvas.dataset.renderReady = 'ready';
 }
 
