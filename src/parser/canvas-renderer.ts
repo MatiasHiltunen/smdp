@@ -8,6 +8,8 @@ import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD, INFO_COLO
 import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
 import { getLanguageSpec } from '../highlight';
 import { TokenType, GenericTokenizer } from '../highlight/language-core';
+import type { ParserOptions } from './index';
+import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
 
 // Font stacks with comprehensive Unicode support
 const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
@@ -658,7 +660,15 @@ function drawInline(
 
       case 'img': {
         const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
-        const src = TD.decode(u8.subarray(tok.srcS, tok.srcE));
+        const rawSrc = TD.decode(u8.subarray(tok.srcS, tok.srcE));
+        if (!urlAllowlist(rawSrc)) {
+          pushStyle({ code: true, color: COLOR.textSecondary });
+          addText(`[Blocked image: ${altText || rawSrc}]`);
+          popStyle();
+          if (line.length) flushLine();
+          break;
+        }
+        const src = resolveUrlRelativeToBase(rawSrc, baseUrl);
         
         // Flush current line before image
         if (line.length) flushLine();
@@ -771,8 +781,11 @@ function renderCanvas(
   u8: Uint8Array,
   ctx: CanvasRenderingContext2D,
   isMeasure: boolean,
-  opts: { skipClear?: boolean; onImageLoad?: () => void } = {},
+  opts: { skipClear?: boolean; onImageLoad?: () => void; parserOptions?: ParserOptions } = {},
 ): number {
+  const parserOptions = opts.parserOptions ?? {};
+  const urlAllowlist = parserOptions.urlAllowlist ?? defaultUrlAllowlist;
+  const baseUrl = parserOptions.baseUrl;
   const dpr = window.devicePixelRatio || 1;
   const logicalWidth = ctx.canvas.width / dpr;
   const logicalHeight = ctx.canvas.height / dpr;
@@ -1434,8 +1447,10 @@ function renderCanvas(
   return y;
 }
 
-export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement): void {
+export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
   const dpr = window.devicePixelRatio || 1;
+  canvas.dataset.renderReady = 'pending';
+  canvas.dataset.virtualized = 'false';
   const rect = canvas.getBoundingClientRect();
   const styleWidth = rect.width || 800;
   const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
@@ -1444,7 +1459,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   // Set up re-render callback for when images load
   const rerender = () => {
     // Re-render the canvas when an image finishes loading
-    renderToCanvasFromBlocks(u8, canvas);
+    renderToCanvasFromBlocks(u8, canvas, options);
   };
 
   const measureCanvas = document.createElement('canvas');
@@ -1453,7 +1468,11 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const measureCtx = measureCanvas.getContext('2d', { 
     willReadFrequently: false 
   });
-  if (!measureCtx) return;
+  if (!measureCtx) {
+    delete canvas.dataset.renderReady;
+    delete canvas.dataset.virtualized;
+    return;
+  }
   
   // Enable emoji rendering support
   if ('fontKerning' in measureCtx) {
@@ -1464,7 +1483,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   }
   
   measureCtx.scale(dpr, dpr);
-  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender }) + MARGIN * 2;
+  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender, parserOptions: options }) + MARGIN * 2;
 
   const viewportHeight = scrollEl ? scrollEl.clientHeight : totalHeight;
   // Use a dynamic threshold relative to current viewport height (2x viewport)
@@ -1491,7 +1510,9 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     }
     
     ctx.scale(dpr, dpr);
-    renderCanvas(u8, ctx, false, { onImageLoad: rerender });
+    renderCanvas(u8, ctx, false, { onImageLoad: rerender, parserOptions: options });
+    canvas.dataset.virtualized = 'false';
+    canvas.dataset.renderReady = 'ready';
     if (spacer) spacer.style.height = '0px';
     const prev = canvasStates.get(canvas);
     if (prev?.scrollEl && prev.onScroll) {
@@ -1521,7 +1542,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   }
   
   offscreenCtx.scale(dpr, dpr);
-  renderCanvas(u8, offscreenCtx, false, { onImageLoad: rerender });
+  renderCanvas(u8, offscreenCtx, false, { onImageLoad: rerender, parserOptions: options });
 
   canvas.width = styleWidth * dpr;
   canvas.height = viewportHeight * dpr;
@@ -1559,11 +1580,11 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     // Clamp scroll to prevent showing empty space at the bottom
     const maxScroll = Math.max(0, totalHeight - viewportHeight);
     const scrollTop = Math.min(rawScrollTop, maxScroll);
-    
+
     // Reset transform and work in bitmap pixels
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     // Copy the visible portion from offscreen canvas (all in bitmap pixels)
     ctx.drawImage(
       offscreen,
@@ -1590,5 +1611,6 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   scrollEl.addEventListener('scroll', scrollHandler, { passive: true });
 
   renderViewport();
+  canvas.dataset.virtualized = 'true';
+  canvas.dataset.renderReady = 'ready';
 }
-

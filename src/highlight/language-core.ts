@@ -684,8 +684,10 @@ export class GenericTokenizer {
 
     const push = (type: TokenTypeValue, s: number, e: number, meta?: number): void => {
       emit(type, s, e, meta);
-      prevType = type;
-      prevCode = type === TokenType.Keyword ? meta ?? 0 : 0;
+      if (type !== TokenType.Whitespace) {
+        prevType = type;
+        prevCode = type === TokenType.Keyword ? meta ?? 0 : 0;
+      }
       if (type !== TokenType.Whitespace && type !== TokenType.Newline && type !== TokenType.Comment) {
         lastSig = u8[e - 1];
         lastTwo = ((lastTwo & 0xff) << 8) | lastSig;
@@ -996,4 +998,3 @@ export class GenericHighlighter {
 export function compileLanguage(author: AuthorLanguageSpec): CompiledLanguageSpec {
   return new CompiledLanguageSpec(author);
 }
-

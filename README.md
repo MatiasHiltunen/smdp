@@ -1,18 +1,18 @@
 # Yet Another Markdown Parser
 
-A lightweight performance focused Markdown parser with zero dependencies.
+This repository contains an experimental Markdown parser written in TypeScript. The implementation keeps external dependencies out of the hot path and focuses on predictable, byte-level processing. Both HTML and Canvas renderers are included so the same parse result can be examined in different output backends. The project is still in an early phase; the public API and packaging will evolve before the planned npm publication later this year. The intent is not to compete with broad Markdown frameworks but to provide accessible visualisation while keeping the ratio between performance and supported features reasonable.
 
-## Features
+## Capabilities
 
-1. Single-pass parsing with byte-level operations
-2. No regular expressions for maximum performance
-3. Render to HTML or HTML5 Canvas
-4. Arena-style buffer with geometric growth
-5. Efficient parsing without unnecessary allocations
-6. Comprehensive test suite with golden tests, property tests, and benchmarks
-7. GFM-compliant parsing with tables, task lists, and strikethrough
-8. Security-hardened with URL allowlisting and HTML escaping
-9. SSR-ready with clean ESM exports
+1. Single-pass parsing implemented with byte spans rather than string slicing.
+2. No regular expressions in the core parser; all matching is done with explicit scans.
+3. Two renderers: an HTML renderer that emits escaped markup and a Canvas renderer for visual inspection.
+4. Arena-style byte buffer to reduce allocations while building output.
+5. Test coverage that includes golden tests, property-based fuzzing, and targeted benchmarks.
+6. GitHub Flavored Markdown coverage for tables, task items, and strikethrough.
+7. URL allowlisting and HTML escaping enabled by default.
+8. ESM exports suitable for browser bundlers and server-side usage.
+9. Optional dark/light UI presets with persisted preference and theme builder integration.
 
 ## Supported Markdown Features
 
@@ -36,7 +36,7 @@ A lightweight performance focused Markdown parser with zero dependencies.
 
 ## Syntax Highlighting
 
-Built-in syntax highlighters cover a range of common languages:
+Built-in syntax highlighters cover the following languages:
 
 - JavaScript / TypeScript
 - Python
@@ -148,6 +148,36 @@ const highlighted = highlightCodeBlock(new TextEncoder().encode(code), 'javascri
 console.log(new TextDecoder().decode(highlighted));
 ```
 
+### Theme Builder
+
+```typescript
+import { createThemeBuilder } from 'smdp/theme';
+
+const builder = createThemeBuilder()
+  .withMeta({ colorScheme: 'light', fontFamily: '"IBM Plex Sans", system-ui, sans-serif' })
+  .withTokens({
+    bgBase: '#f5f6fa',
+    textPrimary: '#1f2933',
+    accent: '#2563eb',
+    codeKw: '#7c3aed',
+  });
+
+// Option 1: apply directly to the current document
+builder.apply(); // defaults to document.documentElement
+
+// Option 2: inject scoped CSS (useful for SSR or style encapsulation)
+const themeCss = builder.buildCss(':root');
+```
+
+The demo includes a palette button that opens a theme editor. The editor uses the same `ThemeBuilder` helper exposed through the public API and updates CSS variables in place.
+
+## Principles
+- No third-party runtime code: the shipped bundle stays dependency-free so the executed code is auditable.
+- Privacy: there is no telemetry or analytics. Requests occur only when loading external Markdown that the user specifies.
+- Licensing: the entire codebase is released under the MIT License.
+- Roadmap transparency: work-in-progress branches are public and areas needing improvement are documented.
+- AI usage: we value carefully crafted code while recognising that LLMs, applied with intent and review, can accelerate exploration without diluting quality.
+
 ## Architecture
 
 The parser is split into logical modules:
@@ -163,17 +193,108 @@ The parser is split into logical modules:
 - **`canvas-renderer.ts`**: Canvas output renderer
 - **`index.ts`**: Main MDParser class and public API
 
+### Parser Pipeline
+
+The core pipeline is built around byte ranges rather than strings. The process is:
+
+1. **Line segmentation**: `lineSpans` walks the Uint8Array, recording start/end offsets for each line. No copies are made, and the raw array is never converted to strings at this stage.
+2. **Block parsing**: `blocks` iterates through the line spans once, emitting events such as `heading`, `listOpen`, `listItem`, `codeOpen`, etc. Indentation, fences, and info blocks are resolved here. Since block parsing is single-pass, nested structures (lists-in-lists, blockquotes) are tracked via a small stack structure.
+3. **Inline parsing**: For ranges that require inline formatting (links, emphasis, code spans), `inlineTokens` performs another byte-level pass within the line boundaries. It produces typed tokens (`text`, `link`, `img`, `code`, `autolink`, `strike`, ...). Multiple passes are avoided by piggybacking on the already segmented line spans.
+4. **Rendering**: Both renderers consume the block/inlines event stream without reparsing. The HTML renderer writes directly into an arena buffer (see `arena.ts`), which grows geometrically to limit reallocations; the Canvas renderer replays the same stream into 2D drawing commands, relying on the same inline tokenization for highlighting and styling.
+
+Important details:
+
+- **Arena writer**: The HTML renderer calls `HtmlArena.writeEscaped` and related methods that operate on byte slices, so writing out HTML stays allocation-friendly and avoids intermediate strings. Only at the end is `Uint8Array` converted back to a string (`TextDecoder`).
+- **Syntax highlighting**: The highlighting path is decoupled from the markdown parser. When a fenced code block is found, the captured byte ranges are passed to `highlightCodeBlock`. Highlighting uses a generative tokenizer compiled from language specs (or precompiled data), then writes markup via the same arena approach.
+- **Canvas rendering**: `renderToCanvasFromBlocks` shares the block event stream but renders into a canvas context. It keeps cached font measurements, performs line-wrapping per block, and triggers a rerender when images finish loading. Virtual scrolling is used when the rendered height exceeds twice the viewport.
+
+```ts
+// High-level structure: see src/parser/index.ts
+export class MDParser {
+  async parse(u8arr: Uint8Array) {
+    return renderHTMLFromBlocks(u8arr, this.options);
+  }
+
+  renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement) {
+    renderToCanvasFromBlocks(u8arr, canvas, this.options);
+  }
+}
+
+// renderHTMLFromBlocks (simplified) in src/parser/html-renderer.ts
+for (const ev of blocks(u8)) {
+  switch (ev.type) {
+    case 'heading':
+      arena.writeBytes(TAG.hPre[ev.level - 1]);
+      renderInline(u8, ev.s, ev.e, arena, options);
+      arena.writeBytes(TAG.hClose[ev.level - 1]);
+      break;
+    case 'codeOpen':
+      codeBuffer = [];
+      break;
+    case 'codeText':
+      codeBuffer.push({ s: ev.s, e: ev.e });
+      break;
+    case 'codeClose':
+      const highlighted = await highlightCodeBlock(join(codeBuffer), codeLang);
+      arena.writeBytes(highlighted);
+      codeBuffer = null;
+      break;
+    // ...other block types (lists, blockquotes, tables, info blocks)
+  }
+}
+
+// inlineTokens (see src/parser/inline-parser.ts) walks a byte slice and emits tokens
+if (c === 0x5b /* '[' */) {
+  const close = findBracket(u8, i + 1, e, 0x5d);
+  if (close !== -1) {
+    const hrefStart = close + 2; // '(' after ']'
+    const hrefEnd = findBracket(u8, hrefStart, e, 0x29);
+    tokens.push({ kind: 'link', textS: i + 1, textE: close, hrefS: hrefStart, hrefE: hrefEnd });
+  }
+}
+
+// Canvas renderer consumes the same events (src/parser/canvas-renderer.ts)
+for (const ev of blocks(u8)) {
+  switch (ev.type) {
+    case 'paraLine':
+      renderInlineToCanvas(ev.s, ev.e, ctx, currentX, currentY);
+      break;
+    case 'img':
+      const src = resolveUrlRelativeToBase(...);
+      const cached = loadImage(src, rerender);
+      drawImageOrPlaceholder(cached, ctx, currentX, currentY);
+      break;
+    // ...other block rendering
+  }
+}
+```
+
+### Current Strengths
+
+- **Predictable performance**: Byte-range processing and arena buffers keep allocations low, which shows up in the included micro-benchmarks (`npm run test:bench`).
+- **Single-pass correctness**: Blocks are identified without backtracking; inline parsing respects boundaries established by the block layer (for example, emphasis is never resolved inside code spans).
+- **Separation of concerns**: HTML and Canvas renderers consume the same block/inline events so new renderers (e.g., PDF or terminal) can be added without touching the parser core.
+- **Themeable UI**: The public theme builder feeds both the default UI and consumer customizations; the new light/dark presets are simply predefined token sets.
+
+### Areas for Improvement
+
+- **Streaming input**: Although the parser is single-pass, it still expects the full Uint8Array. Enabling incremental parsing (e.g., processing chunks from a stream) would reduce memory spikes for very large documents.
+- **Error recovery**: Inline parsing errs on the side of stopping at malformed constructs. Better error recovery could keep rendering intact even when Markdown is intentionally or accidentally broken.
+- **Extensibility hooks**: Callbacks for custom block/inline tokens could be surfaced. Today, extensions require forking the parser.
+- **Canvas accessibility**: The Canvas renderer focuses on presentation. To serve assistive technologies, a hybrid mode that emits both Canvas and hidden HTML (or ARIA descriptions) would close the accessibility gap.
+- **More grammars**: The highlighting pipeline accepts additional grammars, but coverage remains limited to the precompiled set. Expanding that library or providing an easier authoring path is on the roadmap.
+
 ## API Reference
 
 ### `MDParser`
 
 Main parser class.
 
-#### `parse(u8arr: Uint8Array): Promise<string>`
+#### `parse(u8arr: Uint8Array, overrides?: ParserOptions): Promise<string>`
 
-Parses Markdown (as Uint8Array) and returns a Promise that resolves to an HTML string.
+Parses Markdown (as Uint8Array) and returns a Promise that resolves to an HTML string. Pass `overrides.baseUrl` to rewrite relative links and image sources against the fetched document's origin.
 
-#### `renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement): void`
+#### `renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement, overrides?: ParserOptions): void`
 
 Renders Markdown (as Uint8Array) to an HTML5 Canvas.
 
@@ -196,8 +317,8 @@ You can also use the individual parsers and renderers:
 - `lineSpans(u8: Uint8Array)`: Generator yielding line spans
 - `inlineTokens(u8: Uint8Array, s: number, e: number)`: Generator yielding inline tokens
 - `blocks(u8: Uint8Array)`: Generator yielding block events
-- `renderHTMLFromBlocks(u8: Uint8Array)`: Render blocks to HTML
-- `renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement)`: Render blocks to canvas
+- `renderHTMLFromBlocks(u8: Uint8Array, options?: ParserOptions)`: Render blocks to HTML
+- `renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement, options?: ParserOptions)`: Render blocks to canvas
 
 ## Development
 
@@ -213,7 +334,7 @@ The project uses modern TypeScript with strict type checking enabled:
 
 ### Testing
 
-Comprehensive test suite with multiple test types:
+Test suites include golden comparisons, property-based checks, and micro-benchmarks:
 
 ```bash
 # Run all tests
@@ -240,14 +361,13 @@ npm run build
 
 ### Performance
 
-The parser is optimized for performance:
+Recent benchmark results (see `npm run test:bench`) on a 2023 MacBook Pro:
 
-- **Parsing**: ~100k ops/sec for small documents, ~1.5k ops/sec for large documents
-- **Highlighting**: ~300k ops/sec for small code, ~4k ops/sec for large code
-- **Memory**: ~5MB for 100 large document parses
-- **Canvas**: Virtual scrolling for large documents with viewport-based rendering
+- Parsing: ~100k ops/sec for small documents, ~1.5k ops/sec for large documents.
+- Highlighting: ~300k ops/sec for small code samples, ~4k ops/sec for large blocks.
+- Memory: ~5 MB RSS increase when parsing 100 large documents consecutively.
+- Canvas renderer: switches to virtual scrolling when the rendered content exceeds roughly twice the viewport height.
 
 ## License
 
 MIT
-

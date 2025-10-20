@@ -13,6 +13,7 @@
     "test:property": "tsx --test tests/parser.property.test.ts",
     "test:bench": "tsx --test tests/bench.test.ts",
     "test:watch": "tsx --test --watch tests/**/*.test.ts",
+    "test:e2e": "playwright test",
     "precompile": "tsx scripts/precompile-languages.ts"
   },
   "exports": {
@@ -31,10 +32,15 @@
     "./parser/canvas": {
       "browser": "./src/parser/canvas-renderer.ts",
       "import": "./src/parser/canvas-renderer.ts"
+    },
+    "./theme": {
+      "types": "./src/theme/index.ts",
+      "import": "./src/theme/index.ts"
     }
   },
   "sideEffects": false,
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/node": "^24.8.1",
     "@types/web": "^0.0.280",
     "tsx": "^4.20.6",

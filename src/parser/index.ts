@@ -11,6 +11,7 @@
 import { TE } from './constants';
 import { renderHTMLFromBlocks } from './html-renderer';
 import { renderToCanvasFromBlocks } from './canvas-renderer';
+import { defaultUrlAllowlist } from './utils';
 
 export interface ParserOptions {
   /**
@@ -21,49 +22,61 @@ export interface ParserOptions {
    * Custom URL allowlist function (default: allows http, https, mailto, relative URLs)
    */
   urlAllowlist?: (url: string) => boolean;
+  /**
+   * Base URL used to resolve relative links and image sources.
+   */
+  baseUrl?: string;
 }
+
+type ResolvedParserOptions = {
+  allowRawHtml: boolean;
+  urlAllowlist: (url: string) => boolean;
+  baseUrl?: string;
+};
+
 
 /**
  * Main Markdown parser class
  */
 export class MDParser {
-  private options: Required<ParserOptions>;
+  private options: ResolvedParserOptions;
 
   constructor(options: ParserOptions = {}) {
     this.options = {
       allowRawHtml: options.allowRawHtml ?? false,
-      urlAllowlist: options.urlAllowlist ?? ((url: string) => {
-        // Default allowlist: http, https, mailto, relative URLs
-        if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
-          return true;
-        }
-        // Relative URLs (no protocol before first '/', '?', or '#')
-        if (!url.includes('://')) {
-          return true;
-        }
-        return false;
-      }),
+      urlAllowlist: options.urlAllowlist ?? defaultUrlAllowlist,
+      baseUrl: options.baseUrl,
     };
   }
 
   /**
    * Parses Markdown (as Uint8Array) and returns HTML string
    */
-  async parse(u8arr: Uint8Array): Promise<string> {
-    return renderHTMLFromBlocks(u8arr, this.options);
+  async parse(u8arr: Uint8Array, overrides: ParserOptions = {}): Promise<string> {
+    const effective: ResolvedParserOptions = {
+      allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
+      urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
+      baseUrl: overrides.baseUrl ?? this.options.baseUrl,
+    };
+    return renderHTMLFromBlocks(u8arr, effective);
   }
 
   /**
    * Renders Markdown (as Uint8Array) to an HTML5 Canvas
    */
-  renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement): void {
-    renderToCanvasFromBlocks(u8arr, canvas);
+  renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement, overrides: ParserOptions = {}): void {
+    const effective: ResolvedParserOptions = {
+      allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
+      urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
+      baseUrl: overrides.baseUrl ?? this.options.baseUrl,
+    };
+    renderToCanvasFromBlocks(u8arr, canvas, effective);
   }
 
   /**
    * Get current parser options
    */
-  getOptions(): Readonly<Required<ParserOptions>> {
+  getOptions(): Readonly<ResolvedParserOptions> {
     return { ...this.options };
   }
 }
@@ -90,4 +103,3 @@ export { inlineTokens } from './inline-parser';
 export { blocks } from './block-parser';
 export { renderHTMLFromBlocks } from './html-renderer';
 export { renderToCanvasFromBlocks } from './canvas-renderer';
-

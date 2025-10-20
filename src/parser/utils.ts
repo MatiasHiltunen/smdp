@@ -451,3 +451,33 @@ export function isUrlAllowed(u8: Uint8Array, s: number, e: number): boolean {
   return false;
 }
 
+const ABSOLUTE_PROTOCOL_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
+export function defaultUrlAllowlist(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return true;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('mailto:')) {
+    return true;
+  }
+  return !trimmed.includes('://');
+}
+
+export function resolveUrlRelativeToBase(url: string, baseUrl: string | undefined): string {
+  if (!baseUrl) {
+    return url;
+  }
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return url;
+  }
+  if (trimmed.startsWith('//') || ABSOLUTE_PROTOCOL_RE.test(trimmed)) {
+    return url;
+  }
+  try {
+    const resolved = new URL(trimmed, baseUrl);
+    return resolved.toString();
+  } catch {
+    return url;
+  }
+}

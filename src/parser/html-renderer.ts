@@ -3,13 +3,13 @@
  */
 
 import { HtmlArena } from './arena';
-import { TAG } from './constants';
+import { TAG, TE } from './constants';
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import type { ListStackItem } from './types';
 import { highlightCodeBlock } from '../highlight';
 import type { ParserOptions } from './index';
-import { isUrlAllowed } from './utils';
+import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
 
 /**
  * Renders inline tokens to HTML
@@ -21,6 +21,9 @@ function renderInline(
   out: HtmlArena,
   options: ParserOptions = {},
 ): void {
+  const urlAllowlist = options.urlAllowlist ?? defaultUrlAllowlist;
+  const baseUrl = options.baseUrl;
+
   for (const tok of inlineTokens(u8, s, e)) {
     switch (tok.kind) {
       case 'text':
@@ -38,8 +41,14 @@ function renderInline(
         out.writeEscaped(u8, tok.altS, tok.altE);
         out.writeBytes(TAG.imgMid);
         const srcText = new TextDecoder().decode(u8.subarray(tok.srcS, tok.srcE));
-        if (options.urlAllowlist ? options.urlAllowlist(srcText) : isUrlAllowed(u8, tok.srcS, tok.srcE)) {
-          out.writeEscaped(u8, tok.srcS, tok.srcE);
+        if (urlAllowlist(srcText)) {
+          const resolvedSrc = resolveUrlRelativeToBase(srcText, baseUrl);
+          if (resolvedSrc !== srcText) {
+            const encoded = TE.encode(resolvedSrc);
+            out.writeEscaped(encoded, 0, encoded.length);
+          } else {
+            out.writeEscaped(u8, tok.srcS, tok.srcE);
+          }
         }
         out.writeBytes(TAG.imgClose);
         break;
@@ -47,10 +56,16 @@ function renderInline(
 
       case 'link': {
         const hrefText = new TextDecoder().decode(u8.subarray(tok.hrefS, tok.hrefE));
-        const allowed = options.urlAllowlist ? options.urlAllowlist(hrefText) : isUrlAllowed(u8, tok.hrefS, tok.hrefE);
+        const allowed = urlAllowlist(hrefText);
         if (allowed) {
           out.writeBytes(TAG.aOpenPre);
-          out.writeEscaped(u8, tok.hrefS, tok.hrefE);
+          const resolvedHref = resolveUrlRelativeToBase(hrefText, baseUrl);
+          if (resolvedHref !== hrefText) {
+            const encoded = TE.encode(resolvedHref);
+            out.writeEscaped(encoded, 0, encoded.length);
+          } else {
+            out.writeEscaped(u8, tok.hrefS, tok.hrefE);
+          }
           out.writeBytes(TAG.aMid);
           renderInline(u8, tok.textS, tok.textE, out, options);
           out.writeBytes(TAG.aClose);
@@ -75,7 +90,7 @@ function renderInline(
           out.writeEscaped(u8, tok.s, tok.e);
           out.writeBytes(TAG.aClose);
         } else {
-          const allowed = options.urlAllowlist ? options.urlAllowlist(hrefText) : isUrlAllowed(u8, hrefStart, hrefEnd);
+          const allowed = urlAllowlist(hrefText);
           if (allowed) {
             out.writeBytes(TAG.aOpenPre);
             out.writeEscaped(u8, hrefStart, hrefEnd);
@@ -342,4 +357,3 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
 
   return out.toString();
 }
-
