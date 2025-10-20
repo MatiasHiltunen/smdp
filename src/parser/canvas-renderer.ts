@@ -66,20 +66,59 @@ const GRAPHEME_SEGMENTER: any = (typeof (Intl as any).Segmenter === 'function')
   ? new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
   : null;
 
-// Token colors for syntax highlighting (dark theme optimized)
-const TOKEN_COLORS = {
-  [TokenType.Keyword]: '#ff7b72',           // Bright red/pink for keywords
-  [TokenType.Identifier]: '#e6edf3',        // Light gray for identifiers
-  [TokenType.LiteralNum]: '#79c0ff',        // Bright blue for numbers
-  [TokenType.LiteralStr]: '#a5d6ff',        // Light blue for strings
-  [TokenType.LiteralTpl]: '#a5d6ff',        // Light blue for template literals
-  [TokenType.Comment]: '#8b949e',           // Medium gray for comments
-  [TokenType.Regex]: '#7ee787',             // Bright green for regex
-  [TokenType.Operator]: '#ff7b72',          // Bright red/pink for operators
-  [TokenType.Punct]: '#e6edf3',             // Light gray for punctuation
-  [TokenType.Whitespace]: '#e6edf3',        // Default text color
-  [TokenType.Newline]: '#e6edf3',           // Default text color
-} as const;
+/**
+ * Get colors from CSS custom properties (theme-aware)
+ */
+function getThemeColors() {
+  const root = document.documentElement;
+  const computedStyle = getComputedStyle(root);
+  
+  return {
+    text: computedStyle.getPropertyValue('--text-primary').trim() || COLOR.text,
+    textSecondary: computedStyle.getPropertyValue('--text-secondary').trim() || COLOR.textSecondary,
+    bg: computedStyle.getPropertyValue('--bg-base').trim() || COLOR.bg,
+    bgSecondary: computedStyle.getPropertyValue('--bg-glass').trim() || COLOR.bgSecondary,
+    codeBg: computedStyle.getPropertyValue('--bg-panel').trim() || COLOR.codeBg,
+    border: computedStyle.getPropertyValue('--border-glass').trim() || COLOR.border,
+    accent: computedStyle.getPropertyValue('--accent').trim() || COLOR.accent,
+    link: computedStyle.getPropertyValue('--accent').trim() || COLOR.link,
+    inlineCodeBg: computedStyle.getPropertyValue('--bg-glass-strong').trim() || COLOR.inlineCodeBg,
+    inlineCodeText: computedStyle.getPropertyValue('--accent').trim() || COLOR.inlineCodeText,
+    blockquoteBorder: computedStyle.getPropertyValue('--accent').trim() || COLOR.blockquoteBorder,
+    hr: computedStyle.getPropertyValue('--border-strong').trim() || COLOR.hr,
+    listMarker: computedStyle.getPropertyValue('--accent').trim() || COLOR.listMarker,
+    // Syntax highlighting colors
+    codeKw: computedStyle.getPropertyValue('--code-kw').trim() || '#38bdf8',
+    codeId: computedStyle.getPropertyValue('--code-id').trim() || '#e6edf3',
+    codeNum: computedStyle.getPropertyValue('--code-num').trim() || '#79c0ff',
+    codeStr: computedStyle.getPropertyValue('--code-str').trim() || '#a5d6ff',
+    codeTpl: computedStyle.getPropertyValue('--code-tpl').trim() || '#a5d6ff',
+    codeCom: computedStyle.getPropertyValue('--code-com').trim() || '#8b949e',
+    codeOp: computedStyle.getPropertyValue('--code-op').trim() || '#ff7b72',
+    codePunc: computedStyle.getPropertyValue('--code-punc').trim() || '#e6edf3',
+    codeRx: computedStyle.getPropertyValue('--code-rx').trim() || '#7ee787',
+  };
+}
+
+/**
+ * Get token colors for syntax highlighting (theme-aware)
+ */
+function getTokenColors() {
+  const colors = getThemeColors();
+  return {
+    [TokenType.Keyword]: colors.codeKw,
+    [TokenType.Identifier]: colors.codeId,
+    [TokenType.LiteralNum]: colors.codeNum,
+    [TokenType.LiteralStr]: colors.codeStr,
+    [TokenType.LiteralTpl]: colors.codeTpl,
+    [TokenType.Comment]: colors.codeCom,
+    [TokenType.Regex]: colors.codeRx,
+    [TokenType.Operator]: colors.codeOp,
+    [TokenType.Punct]: colors.codePunc,
+    [TokenType.Whitespace]: colors.text,
+    [TokenType.Newline]: colors.text,
+  };
+}
 
 /**
  * Measure the width of inline content
@@ -198,11 +237,12 @@ function renderCellContent(
         ctx.font = font;
         const textWidth = measureWidth(ctx, text, font);
 
-        ctx.fillStyle = COLOR.inlineCodeBg;
+        const themeColors = getThemeColors();
+        ctx.fillStyle = themeColors.inlineCodeBg;
         ctx.fillRect(currentX - paddingX, y - codeSize - paddingY / 2, textWidth + paddingX * 2, codeSize + paddingY);
 
         // Text
-        ctx.fillStyle = COLOR.inlineCodeText;
+        ctx.fillStyle = themeColors.inlineCodeText;
         ctx.fillText(text, currentX, y);
         currentX += textWidth + paddingX * 2;
 
@@ -226,7 +266,8 @@ function renderCellContent(
         const font = getFontString(isBold, isItalic, baseSize, false);
         ctx.font = font;
         const prevStyle = ctx.fillStyle as string | CanvasGradient | CanvasPattern;
-        ctx.fillStyle = COLOR.link;
+        const themeColors = getThemeColors();
+        ctx.fillStyle = themeColors.link;
         ctx.fillText(text, currentX, y);
         currentX += measureWidth(ctx, text, font);
         ctx.fillStyle = prevStyle;
@@ -237,7 +278,8 @@ function renderCellContent(
         const font = getFontString(isBold, isItalic, baseSize, false);
         ctx.font = font;
         const prevStyle = ctx.fillStyle as string | CanvasGradient | CanvasPattern;
-        ctx.fillStyle = COLOR.link;
+        const themeColors = getThemeColors();
+        ctx.fillStyle = themeColors.link;
         ctx.fillText(text, currentX, y);
         currentX += measureWidth(ctx, text, font);
         ctx.fillStyle = prevStyle;
@@ -345,6 +387,10 @@ function renderHighlightedCode(
   
   // Cache font string
   const font = getFontString(false, false, FONT_SIZE.code, true);
+  
+  // Get theme-aware colors
+  const tokenColors = getTokenColors();
+  const themeColors = getThemeColors();
 
   if (spec) {
     // Tokenize and render with colors
@@ -359,7 +405,7 @@ function renderHighlightedCode(
 
       tokenizer.tokenize(lineBytes, (type, s, e) => {
         const tokenText = TD.decode(lineBytes.subarray(s, e));
-        const color = TOKEN_COLORS[type] || COLOR.text;
+        const color = tokenColors[type] || themeColors.text;
 
         if (!isMeasure) {
           ctx.fillStyle = color;
@@ -385,7 +431,7 @@ function renderHighlightedCode(
       if (w > maxWidth) maxWidth = w;
 
       if (!isMeasure) {
-        ctx.fillStyle = COLOR.text;
+        ctx.fillStyle = themeColors.text;
         ctx.fillText(line, x, currentY);
       }
 
@@ -415,19 +461,20 @@ function drawInline(
   let currentY = y;
   const line: TextSpan[] = [];
   const styleStack: TextStyle[] = [];
+  const themeColors = getThemeColors();
   let currentStyle: TextStyle = {
     bold: false,
     italic: false,
     code: false,
     link: false,
-    color: COLOR.text,
+    color: themeColors.text,
     size: baseStyle.size || FONT_SIZE.base,
   };
 
   const updateCtx = (): void => {
     const font = getFontString(currentStyle.bold || false, currentStyle.italic || false, currentStyle.size || FONT_SIZE.base, currentStyle.code || false);
     ctx.font = font;
-    ctx.fillStyle = currentStyle.color || COLOR.text;
+    ctx.fillStyle = currentStyle.color || themeColors.text;
   };
 
   const flushLine = (): void => {
@@ -468,7 +515,7 @@ function drawInline(
           const bgHeight = fontSize + paddingY;
           
           const previousFill = ctx.fillStyle;
-          ctx.fillStyle = COLOR.inlineCodeBg;
+          ctx.fillStyle = themeColors.inlineCodeBg;
           ctx.beginPath();
           ctx.moveTo(bgX + radius, bgY);
           ctx.lineTo(bgX + bgWidth - radius, bgY);
@@ -514,7 +561,7 @@ function drawInline(
           ctx.beginPath();
           ctx.moveTo(lineX, underlineY);
           ctx.lineTo(lineX + w, underlineY);
-          ctx.strokeStyle = COLOR.inlineCodeText;
+          ctx.strokeStyle = themeColors.inlineCodeText;
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -523,7 +570,7 @@ function drawInline(
           ctx.beginPath();
           ctx.moveTo(lineX, strikeY);
           ctx.lineTo(lineX + w, strikeY);
-          ctx.strokeStyle = COLOR.textSecondary;
+          ctx.strokeStyle = themeColors.textSecondary;
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -655,7 +702,7 @@ function drawInline(
         const codeSize = Math.round(surroundingSize * 0.9); // Slightly smaller than surrounding text
         
         // Push style with code flag - background will be drawn during flush
-        pushStyle({ code: true, color: COLOR.inlineCodeText, size: codeSize });
+        pushStyle({ code: true, color: themeColors.inlineCodeText, size: codeSize });
         addText(codeText);
         popStyle();
         break;
@@ -665,7 +712,7 @@ function drawInline(
         const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
         const rawSrc = TD.decode(u8.subarray(tok.srcS, tok.srcE));
         if (!allowlist(rawSrc)) {
-          pushStyle({ code: true, color: COLOR.textSecondary });
+          pushStyle({ code: true, color: themeColors.textSecondary });
           addText(`[Blocked image: ${altText || rawSrc}]`);
           popStyle();
           if (line.length) flushLine();
@@ -698,9 +745,9 @@ function drawInline(
               ctx.drawImage(cachedImg.img, x, currentY, displayWidth, displayHeight);
             } catch (err) {
               // If drawing fails (CORS, etc), show fallback
-              ctx.fillStyle = COLOR.border;
+              ctx.fillStyle = themeColors.border;
               ctx.fillRect(x, currentY, displayWidth, displayHeight);
-              ctx.fillStyle = COLOR.textSecondary;
+              ctx.fillStyle = themeColors.textSecondary;
           ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
               ctx.fillText(`[Image: ${altText || src}]`, x + 10, currentY + 20);
             }
@@ -712,7 +759,7 @@ function drawInline(
           currentY += displayHeight + FONT_SIZE.base * 0.5; // Add spacing after image
         } else if (cachedImg && cachedImg.status === 'error') {
           // Show error message
-          pushStyle({ code: true, color: COLOR.textSecondary });
+          pushStyle({ code: true, color: themeColors.textSecondary });
           addText(`[Image failed to load: ${altText || src}]`);
           popStyle();
           if (line.length) flushLine();
@@ -723,9 +770,9 @@ function drawInline(
           const placeholderHeight = (placeholderWidth * 3) / 4; // 4:3 aspect ratio
           
           if (!isMeasure) {
-            ctx.fillStyle = COLOR.bgSecondary;
+            ctx.fillStyle = themeColors.bgSecondary;
             ctx.fillRect(x, currentY, placeholderWidth, placeholderHeight);
-            ctx.fillStyle = COLOR.textSecondary;
+            ctx.fillStyle = themeColors.textSecondary;
         ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
             ctx.fillText(`Loading: ${altText || src}`, x + 10, currentY + placeholderHeight / 2);
           }
@@ -737,7 +784,7 @@ function drawInline(
       }
 
       case 'link': {
-        pushStyle({ link: true, color: COLOR.link });
+        pushStyle({ link: true, color: themeColors.link });
         const linkText = TD.decode(u8.subarray(tok.textS, tok.textE));
         addText(linkText);
         popStyle();
@@ -745,7 +792,7 @@ function drawInline(
       }
 
       case 'autolink':
-        pushStyle({ link: true, color: COLOR.link });
+        pushStyle({ link: true, color: themeColors.link });
         addText(TD.decode(u8.subarray(tok.s, tok.e)));
         popStyle();
         break;
@@ -793,13 +840,16 @@ function renderCanvas(
   const logicalWidth = ctx.canvas.width / dpr;
   const logicalHeight = ctx.canvas.height / dpr;
   
+  // Get theme-aware colors
+  const themeColors = getThemeColors();
+  
   if (!isMeasure) {
     if (!opts.skipClear) {
       // Clear to transparent so destination-over backgrounds work correctly
       // Use logical dimensions since context is scaled
       ctx.clearRect(0, 0, logicalWidth, logicalHeight);
     }
-    ctx.fillStyle = COLOR.text;
+    ctx.fillStyle = themeColors.text;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
   }
@@ -883,16 +933,16 @@ function renderCanvas(
         closeListsAll();
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
         if (!isMeasure) {
-          ctx.strokeStyle = COLOR.hr;
+          ctx.strokeStyle = themeColors.hr;
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.moveTo(MARGIN + indent, y);
           ctx.lineTo(maxWidth + MARGIN - indent, y);
           ctx.stroke();
           const centerX = (MARGIN + indent + maxWidth + MARGIN - indent) / 2;
-          ctx.fillStyle = COLOR.accent;
+          ctx.fillStyle = themeColors.accent;
           ctx.fillRect(centerX - 30, y - 1, 60, 2);
-          ctx.fillStyle = COLOR.text;
+          ctx.fillStyle = themeColors.text;
         }
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
         break;
@@ -920,7 +970,7 @@ function renderCanvas(
         y = hRes.y;
         if (!isMeasure && (level === 0 || level === 1)) {
           const borderY = y + hSize * 0.2;
-          ctx.strokeStyle = COLOR.border;
+          ctx.strokeStyle = themeColors.border;
           ctx.lineWidth = level === 0 ? 2 : 1;
           ctx.beginPath();
           ctx.moveTo(MARGIN + indent, borderY);
@@ -970,7 +1020,7 @@ function renderCanvas(
         const availableWidth = maxWidth - (textStart - MARGIN) - infoOffset;
 
         if (!isMeasure) {
-          ctx.fillStyle = COLOR.listMarker;
+          ctx.fillStyle = themeColors.listMarker;
           if (isOrdered) {
             ctx.font = ORDERED_MARKER_FONT;
             const markerX = textStart - markerWidth - MARKER_GAP;
@@ -986,7 +1036,7 @@ function renderCanvas(
             ctx.arc(bulletX, bulletY, BULLET_RADIUS, 0, Math.PI * 2);
             ctx.fill();
           }
-          ctx.fillStyle = COLOR.text;
+          ctx.fillStyle = themeColors.text;
         }
 
         const liRes = drawInline(
@@ -1044,7 +1094,7 @@ function renderCanvas(
           y,
           maxWidth - indent - bqOffset - infoOffset,
           isMeasure,
-          { size: baseSize, color: inBlockquote ? COLOR.textSecondary : COLOR.text, italic: inBlockquote },
+          { size: baseSize, color: inBlockquote ? themeColors.textSecondary : themeColors.text, italic: inBlockquote },
           opts.onImageLoad,
           urlAllowlist,
           baseUrl,
@@ -1184,7 +1234,7 @@ function renderCanvas(
           // Draw table background with rounded corners
           if (!isMeasure) {
             ctx.save();
-            ctx.fillStyle = COLOR.bgSecondary;
+            ctx.fillStyle = themeColors.bgSecondary;
             ctx.beginPath();
             ctx.moveTo(tableX + tableRadius, tableY);
             ctx.lineTo(tableX + tableWidth - tableRadius, tableY);
@@ -1208,7 +1258,7 @@ function renderCanvas(
               const cellWidth = tableColWidths[i];
               
               // Header border
-              ctx.strokeStyle = COLOR.border;
+              ctx.strokeStyle = themeColors.border;
               ctx.lineWidth = 1;
               ctx.strokeRect(x, y, cellWidth, headerRowHeight);
               
@@ -1224,7 +1274,7 @@ function renderCanvas(
                 cellWidth - cellPadding * 2,
                 FONT_SIZE.base,
                 cell.align,
-                COLOR.text,
+                themeColors.text,
               );
               
               x += cellWidth;
@@ -1250,7 +1300,7 @@ function renderCanvas(
               
               if (!isMeasure) {
                 // Cell border
-                ctx.strokeStyle = COLOR.border;
+                ctx.strokeStyle = themeColors.border;
                 ctx.lineWidth = 1;
                 ctx.strokeRect(x, y, cellWidth, dataRowHeight);
                 
@@ -1266,7 +1316,7 @@ function renderCanvas(
                   cellWidth - cellPadding * 2,
                   FONT_SIZE.base,
                   align,
-                  COLOR.textSecondary,
+                  themeColors.textSecondary,
                 );
               }
               
@@ -1347,7 +1397,7 @@ function renderCanvas(
     
     // Draw code block backgrounds
     for (const block of codeBlocks) {
-      ctx.fillStyle = COLOR.codeBg;
+      ctx.fillStyle = themeColors.codeBg;
       ctx.beginPath();
       const radius = 4;
       ctx.moveTo(block.x + radius, block.y);
@@ -1367,7 +1417,7 @@ function renderCanvas(
     for (const bq of blockquotes) {
       const radius = 4;
       // Background
-      ctx.fillStyle = COLOR.bgSecondary;
+      ctx.fillStyle = themeColors.bgSecondary;
       ctx.beginPath();
       ctx.moveTo(bq.x + radius, bq.y);
       ctx.lineTo(bq.x + bq.width - radius, bq.y);
@@ -1382,7 +1432,7 @@ function renderCanvas(
       ctx.fill();
       
       // Left border (5px wide)
-      ctx.fillStyle = COLOR.blockquoteBorder;
+      ctx.fillStyle = themeColors.blockquoteBorder;
       ctx.fillRect(bq.x, bq.y + radius, 5, bq.height - radius * 2);
       // Top rounded part of border
       ctx.beginPath();
@@ -1447,7 +1497,7 @@ function renderCanvas(
     
     // Finally, fill the main background behind everything
     // Use logical dimensions since context is scaled
-    ctx.fillStyle = COLOR.bg;
+    ctx.fillStyle = themeColors.bg;
     ctx.fillRect(0, 0, logicalWidth, logicalHeight);
     
     ctx.restore();
