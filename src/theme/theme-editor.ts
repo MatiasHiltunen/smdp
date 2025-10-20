@@ -141,28 +141,35 @@ function saveThemeToUrl(builder: ThemeBuilder): void {
   const config = builder.build();
   const params = new URLSearchParams(window.location.search);
   
-  // Remove existing theme params
+  // Determine current theme mode
+  const currentMode = document.documentElement.getAttribute('data-theme') || 'dark';
+  const prefix = currentMode === 'light' ? 'l_' : 'd_';
+  
+  // Remove existing theme params for current mode only
   const keysToDelete: string[] = [];
   params.forEach((_, key) => {
-    if (key.startsWith('m_') || key.startsWith('t_') || key.startsWith('c_')) {
+    if (key.startsWith(`${prefix}m_`) || key.startsWith(`${prefix}t_`) || key.startsWith(`${prefix}c_`)) {
       keysToDelete.push(key);
     }
   });
   keysToDelete.forEach(key => params.delete(key));
   
-  // Save meta fields
+  // Save meta fields with mode prefix
   Object.entries(config.meta).forEach(([key, value]) => {
-    params.set(`m_${key}`, value);
+    // Skip colorScheme as it's determined by the mode itself
+    if (key !== 'colorScheme') {
+      params.set(`${prefix}m_${key}`, value);
+    }
   });
   
-  // Save token fields
+  // Save token fields with mode prefix
   Object.entries(config.tokens).forEach(([key, value]) => {
-    params.set(`t_${key}`, value);
+    params.set(`${prefix}t_${key}`, value);
   });
   
-  // Save custom properties
+  // Save custom properties with mode prefix
   Object.entries(config.customProperties).forEach(([key, value]) => {
-    params.set(`c_${key.replace(/^--/, '')}`, value);
+    params.set(`${prefix}c_${key.replace(/^--/, '')}`, value);
   });
   
   // Update URL without reload
@@ -173,28 +180,32 @@ function saveThemeToUrl(builder: ThemeBuilder): void {
 }
 
 /**
- * Load theme configuration from URL search parameters
+ * Load theme configuration from URL search parameters for the current mode
  */
-function loadThemeFromUrl(builder: ThemeBuilder): boolean {
+export function loadThemeFromUrl(builder: ThemeBuilder): boolean {
   const params = new URLSearchParams(window.location.search);
   let hasThemeParams = false;
+  
+  // Determine current theme mode
+  const currentMode = document.documentElement.getAttribute('data-theme') || 'dark';
+  const prefix = currentMode === 'light' ? 'l_' : 'd_';
   
   const meta: Partial<ThemeMeta> = {};
   const tokens: Partial<Record<ThemeTokenKey, string>> = {};
   const customProperties: Record<string, string> = {};
   
-  // Load meta fields
+  // Load meta fields for current mode
   params.forEach((value, key) => {
-    if (key.startsWith('m_')) {
-      const metaKey = key.slice(2);
+    if (key.startsWith(`${prefix}m_`)) {
+      const metaKey = key.slice(prefix.length + 2); // Remove prefix + 'm_'
       (meta as Record<string, string>)[metaKey] = value;
       hasThemeParams = true;
-    } else if (key.startsWith('t_')) {
-      const tokenKey = key.slice(2) as ThemeTokenKey;
+    } else if (key.startsWith(`${prefix}t_`)) {
+      const tokenKey = key.slice(prefix.length + 2) as ThemeTokenKey; // Remove prefix + 't_'
       tokens[tokenKey] = value;
       hasThemeParams = true;
-    } else if (key.startsWith('c_')) {
-      const propKey = `--${key.slice(2)}`;
+    } else if (key.startsWith(`${prefix}c_`)) {
+      const propKey = `--${key.slice(prefix.length + 2)}`; // Remove prefix + 'c_'
       customProperties[propKey] = value;
       hasThemeParams = true;
     }

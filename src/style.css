@@ -37,6 +37,14 @@
   --blockquote-bg: rgba(45, 212, 191, 0.06);
   --blockquote-text: rgba(226, 232, 240, 0.85);
   --blockquote-accent: rgba(94, 234, 212, 0.4);
+  --info-border: rgba(59, 130, 246, 0.45);
+  --info-bg: rgba(59, 130, 246, 0.16);
+  --warning-border: rgba(245, 158, 11, 0.45);
+  --warning-bg: rgba(245, 158, 11, 0.16);
+  --error-border: rgba(239, 68, 68, 0.5);
+  --error-bg: rgba(239, 68, 68, 0.16);
+  --success-border: rgba(16, 185, 129, 0.45);
+  --success-bg: rgba(16, 185, 129, 0.16);
 }
 
 :root[data-theme="light"] {
@@ -68,6 +76,14 @@
   --blockquote-bg: rgba(59, 130, 246, 0.12);
   --blockquote-text: rgba(30, 41, 59, 0.85);
   --blockquote-accent: rgba(37, 99, 235, 0.55);
+  --info-border: rgba(59, 130, 246, 0.5);
+  --info-bg: rgba(59, 130, 246, 0.12);
+  --warning-border: rgba(234, 179, 8, 0.55);
+  --warning-bg: rgba(234, 179, 8, 0.12);
+  --error-border: rgba(220, 38, 38, 0.55);
+  --error-bg: rgba(220, 38, 38, 0.12);
+  --success-border: rgba(34, 197, 94, 0.55);
+  --success-bg: rgba(34, 197, 94, 0.12);
 }
 
 * {
@@ -243,9 +259,9 @@ body.is-editing .floating-toggle {
   margin: clamp(1.5rem, 3vw, 2.25rem) 0;
   padding: 1.25rem 1.5rem;
   border-radius: var(--radius-md);
-  border: 1px solid var(--blockquote-border, rgba(94, 234, 212, 0.3));
-  background: var(--blockquote-bg, rgba(45, 212, 191, 0.06));
-  color: var(--blockquote-text, rgba(226, 232, 240, 0.85));
+  border: 1px solid var(--blockquote-border);
+  background: var(--blockquote-bg);
+  color: var(--blockquote-text);
   position: relative;
 }
 
@@ -255,7 +271,7 @@ body.is-editing .floating-toggle {
   position: absolute;
   left: 16px;
   top: -10px;
-  color: var(--blockquote-accent, rgba(94, 234, 212, 0.4));
+  color: var(--blockquote-accent);
 }
 
 .markdown-viewer .info-block {
@@ -280,39 +296,39 @@ body.is-editing .floating-toggle {
 }
 
 .markdown-viewer .info-block.info {
-  border-color: rgba(59, 130, 246, 0.45);
-  background: rgba(59, 130, 246, 0.16);
+  border-color: var(--info-border);
+  background: var(--info-bg);
 }
 
 .markdown-viewer .info-block.info::before {
-  background: rgba(59, 130, 246, 0.9);
+  background: var(--info-border);
 }
 
 .markdown-viewer .info-block.warning {
-  border-color: rgba(245, 158, 11, 0.45);
-  background: rgba(245, 158, 11, 0.16);
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
 }
 
 .markdown-viewer .info-block.warning::before {
-  background: rgba(245, 158, 11, 0.9);
+  background: var(--warning-border);
 }
 
 .markdown-viewer .info-block.error {
-  border-color: rgba(239, 68, 68, 0.5);
-  background: rgba(239, 68, 68, 0.16);
+  border-color: var(--error-border);
+  background: var(--error-bg);
 }
 
 .markdown-viewer .info-block.error::before {
-  background: rgba(239, 68, 68, 0.95);
+  background: var(--error-border);
 }
 
 .markdown-viewer .info-block.success {
-  border-color: rgba(16, 185, 129, 0.45);
-  background: rgba(16, 185, 129, 0.16);
+  border-color: var(--success-border);
+  background: var(--success-bg);
 }
 
 .markdown-viewer .info-block.success::before {
-  background: rgba(16, 185, 129, 0.9);
+  background: var(--success-border);
 }
 
 .markdown-viewer pre {
@@ -451,6 +467,52 @@ body.is-editing .floating-toggle {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.4), transparent);
   margin: clamp(2rem, 4vw, 2.75rem) 0;
+}
+
+.markdown-viewer .footnotes {
+  margin-top: clamp(2.5rem, 5vw, 4rem);
+  font-size: 0.9em;
+  color: var(--text-secondary);
+}
+
+.markdown-viewer .footnotes hr {
+  margin: clamp(2rem, 4vw, 2.75rem) 0 clamp(1rem, 2vw, 1.5rem);
+}
+
+.markdown-viewer .footnotes ol {
+  padding-left: clamp(1.5rem, 3vw, 2rem);
+  margin: 0;
+}
+
+.markdown-viewer .footnotes li {
+  margin-bottom: 0.5rem;
+}
+
+.markdown-viewer .footnote-ref {
+  font-size: 0.8em;
+  vertical-align: super;
+  line-height: 0;
+  margin-left: 0.15em;
+}
+
+.markdown-viewer .footnote-ref a {
+  color: var(--accent);
+  text-decoration: none;
+  padding: 0 0.2em;
+}
+
+.markdown-viewer .footnote-ref a:hover {
+  text-decoration: underline;
+}
+
+.markdown-viewer .footnote-backref {
+  margin-left: 0.5em;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+.markdown-viewer .footnote-backref:hover {
+  text-decoration: underline;
 }
 
 .canvas-pane {

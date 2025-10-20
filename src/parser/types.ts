@@ -38,6 +38,7 @@ export type InlineToken =
   | { kind: 'img'; altS: number; altE: number; srcS: number; srcE: number }
   | { kind: 'link'; hrefS: number; hrefE: number; textS: number; textE: number }
   | { kind: 'autolink'; s: number; e: number; isWww: boolean }
+  | { kind: 'footnoteRef'; idS: number; idE: number }
   | { kind: 'emOpen' }
   | { kind: 'emClose' }
   | { kind: 'strongOpen' }
@@ -63,7 +64,8 @@ export type BlockEvent =
   | { type: 'tableRow'; cells: Array<{ s: number; e: number }> }
   | { type: 'tableClose' }
   | { type: 'infoOpen'; infoType: 'info' | 'warning' | 'error' | 'success' }
-  | { type: 'infoClose' };
+  | { type: 'infoClose' }
+  | { type: 'footnoteDef'; idS: number; idE: number; contentS: number; contentE: number };
 
 export interface BlockState {
   bqLevel: number;

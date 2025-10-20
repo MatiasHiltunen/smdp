@@ -216,10 +216,10 @@ const LIGHT_META: ThemeMeta = {
 const LIGHT_CUSTOM_PROPERTIES: Record<string, string> = {
   '--bg-glow-a': 'rgba(37, 99, 235, 0.18)',
   '--bg-glow-b': 'rgba(14, 165, 233, 0.14)',
-  '--blockquote-border': 'rgba(59, 130, 246, 0.45)',
+/*   '--blockquote-border': 'rgba(59, 130, 246, 0.45)',
   '--blockquote-bg': 'rgba(59, 130, 246, 0.12)',
   '--blockquote-text': 'rgba(30, 41, 59, 0.85)',
-  '--blockquote-accent': 'rgba(37, 99, 235, 0.55)',
+  '--blockquote-accent': 'rgba(37, 99, 235, 0.55)', */
 };
 
 function cloneTokens(tokens: ThemeTokens): ThemeTokens {

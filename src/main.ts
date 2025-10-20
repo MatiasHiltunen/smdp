@@ -1,6 +1,6 @@
 import { MDParser, u8 } from "./parser";
 import { createThemeBuilder, defaultTheme, lightTheme } from "./theme";
-import { initializeThemeEditor, type ThemeEditorHandle } from "./theme/theme-editor";
+import { initializeThemeEditor, loadThemeFromUrl, type ThemeEditorHandle } from "./theme/theme-editor";
 import "./style.css";
 
 const themeBuilder = createThemeBuilder();
@@ -40,13 +40,23 @@ function getCurrentTheme(): "light" | "dark" {
   return prefersLight ? "light" : "dark";
 }
 
-function applyTheme(theme: "light" | "dark"): void {
+function applyTheme(theme: "light" | "dark", preserveCustomizations: boolean = false): void {
   const config = theme === "light" ? lightTheme : defaultTheme;
-  themeBuilder
-    .withMeta(config.meta)
-    .withTokens(config.tokens)
-    .withCustomProperties(config.customProperties)
-    .apply();
+  
+  if (preserveCustomizations) {
+    // Only update theme-specific meta, keep existing tokens
+    themeBuilder
+      .withMeta({ colorScheme: config.meta.colorScheme })
+      .apply();
+  } else {
+    // Full theme replacement (initial load)
+    themeBuilder
+      .withMeta(config.meta)
+      .withTokens(config.tokens)
+      .withCustomProperties(config.customProperties)
+      .apply();
+  }
+  
   document.documentElement.setAttribute("data-theme", theme);
   try {
     if (typeof window !== "undefined") {
@@ -358,8 +368,17 @@ function createFabMenu(
   themeToggleButton.addEventListener('click', () => {
     const current = getCurrentTheme();
     const next = current === 'dark' ? 'light' : 'dark';
-    applyTheme(next);
+    applyTheme(next, false); // Apply new theme defaults
+    // Reload customizations from URL if present
+    const hasUrlTheme = loadThemeFromUrl(themeBuilder);
+    if (hasUrlTheme) {
+      themeBuilder.apply();
+      themeEditorHandle?.refresh();
+    }
     updateThemeIcon(next);
+    isMenuOpen = false;
+    menu.classList.remove('is-open');
+    mainButton.setAttribute('aria-expanded', 'false');
   });
 
   exportButton.addEventListener('click', () => {

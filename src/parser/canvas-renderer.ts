@@ -163,6 +163,13 @@ function measureInlineContent(
       case 'emClose':
         currentItalic = false;
         break;
+      case 'footnoteRef': {
+        const text = TD.decode(u8.subarray(tok.idS, tok.idE));
+        const superSize = currentSize * 0.7;
+        const font = getFontString(currentBold, currentItalic, superSize, currentMono);
+        width += measureWidth(ctx, `[${text}]`, font);
+        break;
+      }
       case 'link': {
         const text = TD.decode(u8.subarray(tok.textS, tok.textE));
         const font = getFontString(currentBold, currentItalic, currentSize, currentMono);
@@ -261,6 +268,19 @@ function renderCellContent(
       case 'emClose':
         isItalic = false;
         break;
+      case 'footnoteRef': {
+        const text = TD.decode(u8.subarray(tok.idS, tok.idE));
+        const superSize = baseSize * 0.7;
+        const font = getFontString(isBold, isItalic, superSize, false);
+        ctx.font = font;
+        const prevStyle = ctx.fillStyle as string | CanvasGradient | CanvasPattern;
+        const themeColors = getThemeColors();
+        ctx.fillStyle = themeColors.accent;
+        ctx.fillText(`[${text}]`, currentX, y - baseSize * 0.3);
+        currentX += measureWidth(ctx, `[${text}]`, font);
+        ctx.fillStyle = prevStyle;
+        break;
+      }
       case 'link': {
         const text = TD.decode(u8.subarray(tok.textS, tok.textE));
         const font = getFontString(isBold, isItalic, baseSize, false);
@@ -780,6 +800,14 @@ function drawInline(
         }
         
         currentX = x; // Reset x after image
+        break;
+      }
+
+      case 'footnoteRef': {
+        const fnText = TD.decode(u8.subarray(tok.idS, tok.idE));
+        pushStyle({ color: themeColors.accent, size: FONT_SIZE.base * 0.7 });
+        addText(`[${fnText}]`);
+        popStyle();
         break;
       }
 

@@ -85,8 +85,23 @@ export function* inlineTokens(
       }
     }
 
-    // [text](url)
+    // [text](url) or [^footnote]
     if (c === 0x5b) { // [
+      // Check for footnote reference [^id]
+      if (i + 2 < e && u8[i + 1] === 0x5e) { // [^
+        const close = findBracket(u8, i + 2, e, 0x5d); // ]
+        if (close !== -1) {
+          yield {
+            kind: 'footnoteRef',
+            idS: i + 2,
+            idE: close,
+          };
+          i = close + 1;
+          continue;
+        }
+      }
+      
+      // Regular link [text](url)
       const close = findBracket(u8, i + 1, e, 0x5d); // ]
       if (close !== -1 && close + 1 < e && u8[close + 1] === 0x28) { // (
         const endParen = findBracket(u8, close + 2, e, 0x29); // )

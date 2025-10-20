@@ -1,6 +1,8 @@
 # Parser Refactoring Complete
 
-The Markdown parser has been successfully refactored from a single JavaScript file into a modern, modular TypeScript codebase.
+The Markdown parser has been successfully refactored from a single JavaScript file into a modern, modular TypeScript codebase.[^1]
+
+We keep notes.[^2] They remind us that even handmade parsers benefit from fuzzing.
 
 ## What Changed
 
@@ -68,3 +70,5 @@ All code follows world-class quality standards with:
 - ✅ Comprehensive type coverage
 - ✅ Modern ES2022+ features
 
+[^1]: This refactoring was completed in 2024 with full TypeScript support and modern module structure.
+[^2]: Property-based tests run under `npm test`. When they fail you get a crimson banner in the UI.

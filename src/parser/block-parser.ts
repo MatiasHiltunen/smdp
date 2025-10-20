@@ -129,6 +129,27 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
       }
     }
 
+    // Footnote definitions [^id]: content
+    if (i + 4 < end && u8[i] === 0x5b && u8[i + 1] === 0x5e) { // [^
+      let j = i + 2;
+      while (j < end && u8[j] !== 0x5d) j++; // Find ]
+      if (j < end && j + 1 < end && u8[j + 1] === 0x3a) { // ]:
+        const idS = i + 2;
+        const idE = j;
+        let contentStart = j + 2;
+        // Skip whitespace after colon
+        while (contentStart < end && u8[contentStart] === 0x20) contentStart++;
+        yield {
+          type: 'footnoteDef',
+          idS,
+          idE,
+          contentS: contentStart,
+          contentE: end,
+        };
+        continue;
+      }
+    }
+
     // Tables - check if current line starts with | and next line is separator
     if (!st.inTable && i < end && u8[i] === 0x7c && lineIdx + 1 < lines.length) { // |
       const nextLine = lines[lineIdx + 1];

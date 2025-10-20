@@ -76,6 +76,17 @@ function renderInline(
         break;
       }
 
+      case 'footnoteRef': {
+        out.writeAscii('<sup class="footnote-ref"><a href="#fn-');
+        out.writeEscaped(u8, tok.idS, tok.idE);
+        out.writeAscii('" id="fnref-');
+        out.writeEscaped(u8, tok.idS, tok.idE);
+        out.writeAscii('">');
+        out.writeEscaped(u8, tok.idS, tok.idE);
+        out.writeAscii('</a></sup>');
+        break;
+      }
+
       case 'autolink': {
         // Build effective href span including implicit protocol for www
         const hrefStart = tok.s - (tok.isWww ? 0 : 0);
@@ -144,6 +155,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
   let inCode = false;
   let codeBuffer: Array<{ s: number; e: number }> | null = null;
   let codeLang: string | undefined;
+  const footnotes: Array<{ idS: number; idE: number; contentS: number; contentE: number }> = [];
 
   const closePara = (): void => {
     if (paraOpen) {
@@ -345,6 +357,16 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         closePara();
         out.writeBytes(TAG.infoBlockClose);
         break;
+
+      case 'footnoteDef':
+        // Collect footnote definitions to render at the end
+        footnotes.push({
+          idS: ev.idS,
+          idE: ev.idE,
+          contentS: ev.contentS,
+          contentE: ev.contentE,
+        });
+        break;
     }
   }
 
@@ -353,6 +375,21 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
   if (inCode) {
     await flushCodeBlock();
     inCode = false;
+  }
+
+  // Render footnotes section if any exist
+  if (footnotes.length > 0) {
+    out.writeAscii('<div class="footnotes"><hr><ol>');
+    for (const fn of footnotes) {
+      out.writeAscii('<li id="fn-');
+      out.writeEscaped(u8, fn.idS, fn.idE);
+      out.writeAscii('">');
+      renderInline(u8, fn.contentS, fn.contentE, out, options);
+      out.writeAscii(' <a href="#fnref-');
+      out.writeEscaped(u8, fn.idS, fn.idE);
+      out.writeAscii('" class="footnote-backref">↩</a></li>');
+    }
+    out.writeAscii('</ol></div>');
   }
 
   return out.toString();
