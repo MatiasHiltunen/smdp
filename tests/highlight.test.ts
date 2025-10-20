@@ -11,14 +11,14 @@ async function loadHighlightModule() {
 async function highlightToHtml(source: string, lang?: string) {
   const mod = await loadHighlightModule();
   const bytes = encoder.encode(source);
-  const result = mod.highlightCodeBlock(bytes, lang);
+  const result = await mod.highlightCodeBlock(bytes, lang);
   return decoder.decode(result);
 }
 
 async function renderMarkdownToHtml(markdown: string) {
   const { MDParser, u8 } = await import('../src/parser/index.ts');
   const parser = new MDParser();
-  return parser.parse(u8(markdown));
+  return await parser.parse(u8(markdown), {});
 }
 
 test('falls back to basic highlighting for unknown languages', async () => {

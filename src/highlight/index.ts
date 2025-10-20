@@ -1,7 +1,26 @@
-import { HtmlArena } from '../parser/arena';
 import type { AuthorLanguageSpec } from './language-core';
 import { CompiledLanguageSpec, GenericHighlighter, compileLanguage, BinaryReader } from './language-core';
 import { LANGUAGE_BINARY, fromBase64 } from './precompiled';
+
+// Lazy import for HtmlArena (only needed in browser contexts)
+let HtmlArena: any;
+async function getHtmlArena() {
+  if (!HtmlArena) {
+    try {
+      // Dynamic import for browser environments
+      const arenaModule = await import('../parser/arena');
+      HtmlArena = arenaModule.HtmlArena;
+    } catch (e) {
+      // Fallback for environments where arena might not be available
+      HtmlArena = class {
+        writeAscii() {}
+        writeEscaped() {}
+        toUint8Array() { return new Uint8Array(); }
+      };
+    }
+  }
+  return HtmlArena;
+}
 
 const NON_CLASS_RE = /[^a-z0-9+#-]+/g;
 
@@ -20,8 +39,9 @@ function normalizeLanguage(lang?: string): NormalizedLang | undefined {
   return { key: lower, className };
 }
 
-function basicHighlight(bytes: Uint8Array, className?: string): Uint8Array {
-  const arena = new HtmlArena();
+async function basicHighlight(bytes: Uint8Array, className?: string): Promise<Uint8Array> {
+  const ArenaClass = await getHtmlArena();
+  const arena = new ArenaClass();
   arena.writeAscii('<pre class="code-block"><code');
   if (className) {
     arena.writeAscii(' class="language-');
@@ -70,21 +90,25 @@ export function registerHighlightLanguage(options: RegisterLanguageOptions): Com
   return compiled;
 }
 
-// Register all precompiled languages from binary
-const languageBinary = fromBase64(LANGUAGE_BINARY);
-const binaryReader = new BinaryReader(languageBinary);
-const languageCount = binaryReader.readU32();
-
-for (let i = 0; i < languageCount; i++) {
-  const compiled = new CompiledLanguageSpec(binaryReader);
-  const entry: LanguageEntry = {
-    spec: compiled,
-    highlighter: new GenericHighlighter(compiled),
-  };
-  registerEntry(entry, compiled.aliases);
+let precompiledLoaded = false;
+function ensurePrecompiledLoaded(): void {
+  if (precompiledLoaded) return;
+  const languageBinary = fromBase64(LANGUAGE_BINARY);
+  const binaryReader = new BinaryReader(languageBinary);
+  const languageCount = binaryReader.readU32();
+  for (let i = 0; i < languageCount; i++) {
+    const compiled = new CompiledLanguageSpec(binaryReader);
+    const entry: LanguageEntry = {
+      spec: compiled,
+      highlighter: new GenericHighlighter(compiled),
+    };
+    registerEntry(entry, compiled.aliases);
+  }
+  precompiledLoaded = true;
 }
 
-export function highlightCodeBlock(bytes: Uint8Array, lang?: string): Uint8Array {
+export async function highlightCodeBlock(bytes: Uint8Array, lang?: string): Promise<Uint8Array> {
+  ensurePrecompiledLoaded();
   const normalized = normalizeLanguage(lang);
   if (normalized) {
     const entry = aliasRegistry.get(normalized.key);
@@ -92,18 +116,21 @@ export function highlightCodeBlock(bytes: Uint8Array, lang?: string): Uint8Array
       return entry.highlighter.highlight(bytes, normalized.className);
     }
   }
-  return basicHighlight(bytes, normalized?.className ?? (lang ? lang.toLowerCase() : undefined));
+  return await basicHighlight(bytes, normalized?.className ?? (lang ? lang.toLowerCase() : undefined));
 }
 
 export function getRegisteredHighlightLanguages(): string[] {
+  ensurePrecompiledLoaded();
   return Array.from(aliasSet.values()).sort();
 }
 
 export function getRegisteredHighlightSpecs(): { name: string; aliases: readonly string[] }[] {
+  ensurePrecompiledLoaded();
   return Array.from(specSet.values()).map((spec) => ({ name: spec.name, aliases: spec.aliases ?? [spec.name] }));
 }
 
 export function getLanguageSpec(lang?: string): CompiledLanguageSpec | undefined {
+  ensurePrecompiledLoaded();
   const normalized = normalizeLanguage(lang);
   if (normalized) {
     const entry = aliasRegistry.get(normalized.key);

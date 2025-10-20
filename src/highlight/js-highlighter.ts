@@ -98,7 +98,7 @@ export class JSHighlighter {
     this.highlighter = new GenericHighlighter(compiled);
   }
 
-  highlight(u8: Uint8Array, languageClass?: string): Uint8Array {
+  async highlight(u8: Uint8Array, languageClass?: string): Promise<Uint8Array> {
     return this.highlighter.highlight(u8, languageClass ?? 'javascript');
   }
 }

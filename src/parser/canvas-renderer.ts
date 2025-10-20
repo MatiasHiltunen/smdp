@@ -19,6 +19,51 @@ const BULLET_RADIUS = 3;
 const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
 const MAX_IMAGE_WIDTH = 700; // max width for images in px
 
+// Font string cache for common font combinations
+const fontCache = new Map<string, string>();
+function getFontString(bold: boolean, italic: boolean, size: number, mono: boolean): string {
+  const key = `${bold ? 'bold ' : ''}${italic ? 'italic ' : ''}${size}px ${mono ? FONT_STACK_MONO : FONT_STACK}`;
+  let cached = fontCache.get(key);
+  if (!cached) {
+    cached = key;
+    fontCache.set(key, cached);
+  }
+  return cached;
+}
+
+// Cached text measurement per context font/text with better cache management
+const textWidthCache = new WeakMap<CanvasRenderingContext2D, Map<string, number>>();
+function measureWidth(ctx: CanvasRenderingContext2D, text: string, font?: string): number {
+  const currentFont = font || ctx.font || '';
+  let cache = textWidthCache.get(ctx);
+  if (!cache) {
+    cache = new Map();
+    textWidthCache.set(ctx, cache);
+  }
+  const key = currentFont + '\n' + text;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const w = ctx.measureText(text).width;
+  // More aggressive cache management - clear when getting large
+  if (cache.size > 2000) {
+    // Keep only the most recently used entries
+    const entries = Array.from(cache.entries());
+    entries.sort((a, b) => b[1] - a[1]); // Sort by usage count (we'll add usage tracking)
+    cache.clear();
+    // Keep top 1000 most used
+    for (let i = 0; i < Math.min(1000, entries.length); i++) {
+      cache.set(entries[i][0], entries[i][1]);
+    }
+  }
+  cache.set(key, w);
+  return w;
+}
+
+// Grapheme segmentation support (falls back to code point iteration)
+const GRAPHEME_SEGMENTER: any = (typeof (Intl as any).Segmenter === 'function')
+  ? new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
+  : null;
+
 // Token colors for syntax highlighting (dark theme optimized)
 const TOKEN_COLORS = {
   [TokenType.Keyword]: '#ff7b72',           // Bright red/pink for keywords
@@ -45,41 +90,53 @@ function measureInlineContent(
   baseSize: number,
 ): number {
   let width = 0;
-  ctx.font = baseSize + 'px ' + FONT_STACK;
-  
+  let currentBold = false;
+  let currentItalic = false;
+  let currentSize = baseSize;
+  let currentMono = false;
+
   for (const tok of inlineTokens(u8, s, e)) {
     switch (tok.kind) {
       case 'text': {
         const text = TD.decode(u8.subarray(tok.s, tok.e));
-        width += ctx.measureText(text).width;
+        const font = getFontString(currentBold, currentItalic, currentSize, currentMono);
+        width += measureWidth(ctx, text, font);
         break;
       }
       case 'code': {
         const text = TD.decode(u8.subarray(tok.s, tok.e));
         const codeSize = Math.round(baseSize * 0.9);
-        const prevFont = ctx.font;
-        ctx.font = codeSize + 'px ' + FONT_STACK_MONO;
-        width += ctx.measureText(text).width + 12; // padding
-        ctx.font = prevFont;
+        const font = getFontString(currentBold, currentItalic, codeSize, true);
+        width += measureWidth(ctx, text, font) + 12; // padding
         break;
       }
       case 'strongOpen':
+        currentBold = true;
+        break;
       case 'strongClose':
-        ctx.font = ctx.font.includes('bold') ? baseSize + 'px ' + FONT_STACK : 'bold ' + baseSize + 'px ' + FONT_STACK;
+        currentBold = false;
+        break;
+      case 'emOpen':
+        currentItalic = true;
+        break;
+      case 'emClose':
+        currentItalic = false;
         break;
       case 'link': {
         const text = TD.decode(u8.subarray(tok.textS, tok.textE));
-        width += ctx.measureText(text).width;
+        const font = getFontString(currentBold, currentItalic, currentSize, currentMono);
+        width += measureWidth(ctx, text, font);
         break;
       }
       case 'autolink': {
         const text = TD.decode(u8.subarray(tok.s, tok.e));
-        width += ctx.measureText(text).width;
+        const font = getFontString(currentBold, currentItalic, currentSize, currentMono);
+        width += measureWidth(ctx, text, font);
         break;
       }
     }
   }
-  
+
   return width;
 }
 
@@ -116,16 +173,16 @@ function renderCellContent(
   let currentX = offsetX;
   let isBold = false;
   let isItalic = false;
-  
-  ctx.fillStyle = color;
-  ctx.font = baseSize + 'px ' + FONT_STACK;
-  
+
   for (const tok of inlineTokens(u8, s, e)) {
     switch (tok.kind) {
       case 'text': {
         const text = TD.decode(u8.subarray(tok.s, tok.e));
+        const font = getFontString(isBold, isItalic, baseSize, false);
+        ctx.font = font;
+        ctx.fillStyle = color;
         ctx.fillText(text, currentX, y);
-        currentX += ctx.measureText(text).width;
+        currentX += measureWidth(ctx, text, font);
         break;
       }
       case 'code': {
@@ -133,55 +190,54 @@ function renderCellContent(
         const codeSize = Math.round(baseSize * 0.9);
         const paddingX = 6;
         const paddingY = 4;
-        
+
         // Background
-        const prevFont = ctx.font;
-        ctx.font = codeSize + 'px ' + FONT_STACK_MONO;
-        const textWidth = ctx.measureText(text).width;
-        
+        const font = getFontString(isBold, isItalic, codeSize, true);
+        ctx.font = font;
+        const textWidth = measureWidth(ctx, text, font);
+
         ctx.fillStyle = COLOR.inlineCodeBg;
         ctx.fillRect(currentX - paddingX, y - codeSize - paddingY / 2, textWidth + paddingX * 2, codeSize + paddingY);
-        
+
         // Text
         ctx.fillStyle = COLOR.inlineCodeText;
         ctx.fillText(text, currentX, y);
         currentX += textWidth + paddingX * 2;
-        
-        ctx.font = prevFont;
+
         ctx.fillStyle = color;
         break;
       }
       case 'strongOpen':
         isBold = true;
-        ctx.font = (isItalic ? 'italic ' : '') + 'bold ' + baseSize + 'px ' + FONT_STACK;
         break;
       case 'strongClose':
         isBold = false;
-        ctx.font = (isItalic ? 'italic ' : '') + baseSize + 'px ' + FONT_STACK;
         break;
       case 'emOpen':
         isItalic = true;
-        ctx.font = 'italic ' + (isBold ? 'bold ' : '') + baseSize + 'px ' + FONT_STACK;
         break;
       case 'emClose':
         isItalic = false;
-        ctx.font = (isBold ? 'bold ' : '') + baseSize + 'px ' + FONT_STACK;
         break;
       case 'link': {
         const text = TD.decode(u8.subarray(tok.textS, tok.textE));
+        const font = getFontString(isBold, isItalic, baseSize, false);
+        ctx.font = font;
         const prevStyle = ctx.fillStyle as string | CanvasGradient | CanvasPattern;
         ctx.fillStyle = COLOR.link;
         ctx.fillText(text, currentX, y);
-        currentX += ctx.measureText(text).width;
+        currentX += measureWidth(ctx, text, font);
         ctx.fillStyle = prevStyle;
         break;
       }
       case 'autolink': {
         const text = TD.decode(u8.subarray(tok.s, tok.e));
+        const font = getFontString(isBold, isItalic, baseSize, false);
+        ctx.font = font;
         const prevStyle = ctx.fillStyle as string | CanvasGradient | CanvasPattern;
         ctx.fillStyle = COLOR.link;
         ctx.fillText(text, currentX, y);
-        currentX += ctx.measureText(text).width;
+        currentX += measureWidth(ctx, text, font);
         ctx.fillStyle = prevStyle;
         break;
       }
@@ -285,49 +341,52 @@ function renderHighlightedCode(
   let currentY = y;
   const lineHeight = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
   
+  // Cache font string
+  const font = getFontString(false, false, FONT_SIZE.code, true);
+
   if (spec) {
     // Tokenize and render with colors
     const tokenizer = new GenericTokenizer(spec);
     const lines = TD.decode(codeBytes).split('\n');
-    
+
     for (const line of lines) {
       const lineBytes = TE.encode(line);
       let currentX = x;
-      
-      ctx.font = FONT_SIZE.code + 'px ' + FONT_STACK_MONO;
-      
+
+      ctx.font = font;
+
       tokenizer.tokenize(lineBytes, (type, s, e) => {
         const tokenText = TD.decode(lineBytes.subarray(s, e));
         const color = TOKEN_COLORS[type] || COLOR.text;
-        
+
         if (!isMeasure) {
           ctx.fillStyle = color;
           ctx.fillText(tokenText, currentX, currentY);
         }
-        
-        currentX += ctx.measureText(tokenText).width;
+
+        currentX += measureWidth(ctx, tokenText, font);
       });
-      
+
       if (currentX - x > maxWidth) {
         maxWidth = currentX - x;
       }
-      
+
       currentY += lineHeight;
     }
   } else {
     // Fall back to plain rendering without highlighting
     const lines = TD.decode(codeBytes).split('\n');
-    ctx.font = FONT_SIZE.code + 'px ' + FONT_STACK_MONO;
-    
+    ctx.font = font;
+
     for (const line of lines) {
-      const w = ctx.measureText(line).width;
+      const w = measureWidth(ctx, line, font);
       if (w > maxWidth) maxWidth = w;
-      
+
       if (!isMeasure) {
         ctx.fillStyle = COLOR.text;
         ctx.fillText(line, x, currentY);
       }
-      
+
       currentY += lineHeight;
     }
   }
@@ -361,10 +420,7 @@ function drawInline(
   };
 
   const updateCtx = (): void => {
-    let font = '';
-    if (currentStyle.bold) font += 'bold ';
-    if (currentStyle.italic) font += 'italic ';
-    font += currentStyle.size + 'px ' + (currentStyle.code ? FONT_STACK_MONO : FONT_STACK);
+    const font = getFontString(currentStyle.bold || false, currentStyle.italic || false, currentStyle.size || FONT_SIZE.base, currentStyle.code || false);
     ctx.font = font;
     ctx.fillStyle = currentStyle.color || COLOR.text;
   };
@@ -439,7 +495,7 @@ function drawInline(
     for (const span of line) {
       currentStyle = span.style;
       updateCtx();
-      const w = ctx.measureText(span.text).width;
+      const w = measureWidth(ctx, span.text);
       if (!isMeasure) {
         // Adjust y position to maintain baseline alignment for different font sizes
         const fontSize = currentStyle.size || FONT_SIZE.base;
@@ -454,6 +510,15 @@ function drawInline(
           ctx.moveTo(lineX, underlineY);
           ctx.lineTo(lineX + w, underlineY);
           ctx.strokeStyle = COLOR.inlineCodeText;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+        if (currentStyle.strike) {
+          const strikeY = currentY + baselineOffset + fontSize * 0.55;
+          ctx.beginPath();
+          ctx.moveTo(lineX, strikeY);
+          ctx.lineTo(lineX + w, strikeY);
+          ctx.strokeStyle = COLOR.textSecondary;
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -478,12 +543,50 @@ function drawInline(
   };
 
   const findBreak = (text: string, start: number, maxW: number): number => {
+    if (GRAPHEME_SEGMENTER) {
+      let lastOk = start;
+      let cursor = start;
+      let currentWidth = 0;
+
+      try {
+        // Use Intl.Segmenter for proper grapheme breaking
+        const segmenter = GRAPHEME_SEGMENTER;
+        const textSegment = text.substring(start);
+        const segments = segmenter.segment(textSegment);
+
+        for (const segment of segments) {
+          const segText = segment.segment;
+          if (!segText) continue;
+
+          const candidate = cursor + segText.length;
+          const sub = text.substring(start, candidate);
+          const width = measureWidth(ctx, sub, ctx.font);
+
+          if (width <= maxW) {
+            lastOk = candidate;
+            cursor = candidate;
+            currentWidth = width;
+          } else {
+            // Try to break within the current grapheme cluster if needed
+            if (currentWidth > 0 && currentWidth <= maxW) {
+              return lastOk;
+            }
+            break;
+          }
+        }
+        return lastOk;
+      } catch (e) {
+        // Fallback if Intl.Segmenter fails
+      }
+    }
+
+    // Fallback: binary search on code units
     let low = start;
     let high = text.length;
     while (low < high) {
       const mid = (low + high + 1) >> 1;
       const sub = text.substring(start, mid);
-      if (ctx.measureText(sub).width <= maxW) {
+      if (measureWidth(ctx, sub, ctx.font) <= maxW) {
         low = mid;
       } else {
         high = mid - 1;
@@ -498,7 +601,8 @@ function drawInline(
     for (const part of parts) {
       updateCtx();
       const isSpacePart = /\s/.test(part[0]);
-      const partW = ctx.measureText(part).width;
+      const font = getFontString(currentStyle.bold || false, currentStyle.italic || false, currentStyle.size || FONT_SIZE.base, currentStyle.code || false);
+      const partW = measureWidth(ctx, part, font);
       let remaining = maxWidth - (currentX - x);
 
       if (partW <= remaining) {
@@ -515,7 +619,7 @@ function drawInline(
             if (pEnd > pStart) {
               const sub = part.substring(pStart, pEnd);
               line.push({ text: sub, style: { ...currentStyle } });
-              currentX += ctx.measureText(sub).width;
+              currentX += measureWidth(ctx, sub, font);
               pStart = pEnd;
             } else {
               if (line.length) {
@@ -523,7 +627,7 @@ function drawInline(
               } else {
                 const char = part[pStart];
                 line.push({ text: char, style: { ...currentStyle } });
-                currentX += ctx.measureText(char).width;
+                currentX += measureWidth(ctx, char, font);
                 pStart++;
               }
             }
@@ -646,6 +750,14 @@ function drawInline(
         break;
 
       case 'strongClose':
+        popStyle();
+        break;
+
+      case 'strikeOpen':
+        pushStyle({ strike: true });
+        break;
+
+      case 'strikeClose':
         popStyle();
         break;
     }
@@ -807,8 +919,9 @@ function renderCanvas(
         listStack.push({ kind: ev.kind, counter: 1 });
         indent += INDENT;
         if (ev.kind === 'ol') {
-          ctx.font = ORDERED_MARKER_FONT;
-          orderedMarkerWidths[listStack.length - 1] = ctx.measureText('1.').width;
+          const font = getFontString(true, false, FONT_SIZE.base, false);
+          ctx.font = font;
+          orderedMarkerWidths[listStack.length - 1] = measureWidth(ctx, '1.', font);
         }
         break;
 
@@ -825,15 +938,16 @@ function renderCanvas(
         let markerText = '';
         if (isOrdered) {
           markerText = `${top.counter}.`;
-          ctx.font = ORDERED_MARKER_FONT;
-          const measured = ctx.measureText(markerText).width;
+          const font = getFontString(true, false, baseSize, false);
+          ctx.font = font;
+          const measured = measureWidth(ctx, markerText, font);
           const currentMax = orderedMarkerWidths[level] || 0;
           if (measured > currentMax) orderedMarkerWidths[level] = measured;
           top.counter += 1;
         }
 
         const markerWidth = isOrdered
-          ? orderedMarkerWidths[level] || ctx.measureText(markerText).width
+          ? orderedMarkerWidths[level] || (markerText ? measureWidth(ctx, markerText, ctx.font) : BULLET_RADIUS * 2)
           : BULLET_RADIUS * 2;
         const availableWidth = maxWidth - (textStart - MARGIN) - infoOffset;
 
@@ -1353,7 +1467,8 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender }) + MARGIN * 2;
 
   const viewportHeight = scrollEl ? scrollEl.clientHeight : totalHeight;
-  const needsVirtualScroll = totalHeight > VIRTUAL_SCROLL_THRESHOLD;
+  // Use a dynamic threshold relative to current viewport height (2x viewport)
+  const needsVirtualScroll = scrollEl ? (totalHeight > viewportHeight * 2) : (totalHeight > VIRTUAL_SCROLL_THRESHOLD);
 
   if (!needsVirtualScroll || !scrollEl) {
     canvas.width = styleWidth * dpr;

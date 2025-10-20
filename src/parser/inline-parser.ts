@@ -22,6 +22,7 @@ export function* inlineTokens(
 ): Generator<InlineToken> {
   const emStack: Array<{ char: number; pos: number }> = [];
   const strongStack: Array<{ char: number; pos: number }> = [];
+  const strikeStack: number[] = [];
   let i = s;
   let inCode = false;
   let codeTicks = 0;
@@ -115,6 +116,24 @@ export function* inlineTokens(
       continue;
     }
 
+    // Strikethrough ~~text~~
+    if (c === 0x7e) { // ~
+      let j = i;
+      while (j < e && u8[j] === 0x7e) j++;
+      const runLen = j - i;
+      if (runLen >= 2) {
+        if (strikeStack.length > 0) {
+          strikeStack.pop();
+          yield { kind: 'strikeClose' };
+        } else {
+          strikeStack.push(i);
+          yield { kind: 'strikeOpen' };
+        }
+        i = j;
+        continue;
+      }
+    }
+
     // Emphasis (simple toggling for * and _, with separate handling for singles/doubles)
     if (c === 0x2a || c === 0x5f) { // * or _
       let j = i;
@@ -169,6 +188,10 @@ export function* inlineTokens(
   while (emStack.length > 0) {
     emStack.pop();
     yield { kind: 'emClose' };
+  }
+  while (strikeStack.length > 0) {
+    strikeStack.pop();
+    yield { kind: 'strikeClose' };
   }
 }
 

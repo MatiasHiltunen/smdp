@@ -12,15 +12,45 @@ import { TE } from './constants';
 import { renderHTMLFromBlocks } from './html-renderer';
 import { renderToCanvasFromBlocks } from './canvas-renderer';
 
+export interface ParserOptions {
+  /**
+   * Allow raw HTML blocks in the markdown (default: false for security)
+   */
+  allowRawHtml?: boolean;
+  /**
+   * Custom URL allowlist function (default: allows http, https, mailto, relative URLs)
+   */
+  urlAllowlist?: (url: string) => boolean;
+}
+
 /**
  * Main Markdown parser class
  */
 export class MDParser {
+  private options: Required<ParserOptions>;
+
+  constructor(options: ParserOptions = {}) {
+    this.options = {
+      allowRawHtml: options.allowRawHtml ?? false,
+      urlAllowlist: options.urlAllowlist ?? ((url: string) => {
+        // Default allowlist: http, https, mailto, relative URLs
+        if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
+          return true;
+        }
+        // Relative URLs (no protocol before first '/', '?', or '#')
+        if (!url.includes('://')) {
+          return true;
+        }
+        return false;
+      }),
+    };
+  }
+
   /**
    * Parses Markdown (as Uint8Array) and returns HTML string
    */
-  parse(u8arr: Uint8Array): string {
-    return renderHTMLFromBlocks(u8arr);
+  async parse(u8arr: Uint8Array): Promise<string> {
+    return renderHTMLFromBlocks(u8arr, this.options);
   }
 
   /**
@@ -28,6 +58,13 @@ export class MDParser {
    */
   renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement): void {
     renderToCanvasFromBlocks(u8arr, canvas);
+  }
+
+  /**
+   * Get current parser options
+   */
+  getOptions(): Readonly<Required<ParserOptions>> {
+    return { ...this.options };
   }
 }
 

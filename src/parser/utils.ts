@@ -390,13 +390,64 @@ export function detectInfoBlock(
     i++;
   }
   
-  const typeBytes = u8.slice(typeStart, i);
-  const type = new TextDecoder().decode(typeBytes).toLowerCase();
+  const typeBytes = u8.subarray(typeStart, i);
+  const type = TD.decode(typeBytes).toLowerCase();
   
   if (type === 'info' || type === 'warning' || type === 'error' || type === 'success') {
     return { isInfo: true, type };
   }
   
   return { isInfo: false };
+}
+
+/**
+ * Determine if a URL is allowed based on protocol allowlist.
+ * - Allowed protocols: http, https, mailto
+ * - Relative URLs (no protocol before first '/' or '?') are allowed
+ */
+export function isUrlAllowed(u8: Uint8Array, s: number, e: number): boolean {
+  let i = s;
+  let colonAt = -1;
+  while (i < e) {
+    const c = u8[i];
+    if (c === 0x3a) { // ':'
+      colonAt = i;
+      break;
+    }
+    if (c === 0x2f || c === 0x3f || c === 0x23) { // '/', '?', '#'
+      // No protocol before path/query/fragment → relative
+      return true;
+    }
+    i++;
+  }
+  if (colonAt === -1) {
+    // No ':' found → relative or hostname-only → allow
+    return true;
+  }
+  // Compare lowercase protocol prefix
+  const protEnd = colonAt;
+  const len = protEnd - s;
+  if (len <= 0) return false;
+
+  // Fast-path checks for 'http' and 'mailto'
+  // http / https
+  if (len === 4 &&
+      (u8[s] | 32) === 0x68 && // h
+      (u8[s+1] | 32) === 0x74 && // t
+      (u8[s+2] | 32) === 0x74 && // t
+      (u8[s+3] | 32) === 0x70) { // p
+    return true;
+  }
+  // mailto
+  if (len === 6 &&
+      (u8[s] | 32) === 0x6d && // m
+      (u8[s+1] | 32) === 0x61 && // a
+      (u8[s+2] | 32) === 0x69 && // i
+      (u8[s+3] | 32) === 0x6c && // l
+      (u8[s+4] | 32) === 0x74 && // t
+      (u8[s+5] | 32) === 0x6f) { // o
+    return true;
+  }
+  return false;
 }
 

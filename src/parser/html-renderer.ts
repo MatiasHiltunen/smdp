@@ -8,6 +8,8 @@ import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import type { ListStackItem } from './types';
 import { highlightCodeBlock } from '../highlight';
+import type { ParserOptions } from './index';
+import { isUrlAllowed } from './utils';
 
 /**
  * Renders inline tokens to HTML
@@ -17,6 +19,7 @@ function renderInline(
   s: number,
   e: number,
   out: HtmlArena,
+  options: ParserOptions = {},
 ): void {
   for (const tok of inlineTokens(u8, s, e)) {
     switch (tok.kind) {
@@ -30,31 +33,61 @@ function renderInline(
         out.writeBytes(TAG.codeClose);
         break;
         
-      case 'img':
+      case 'img': {
         out.writeBytes(TAG.imgPre);
         out.writeEscaped(u8, tok.altS, tok.altE);
         out.writeBytes(TAG.imgMid);
-        // Minimal attribute escaping for URL; percent-encoding left to caller input
-        out.writeEscaped(u8, tok.srcS, tok.srcE);
+        const srcText = new TextDecoder().decode(u8.subarray(tok.srcS, tok.srcE));
+        if (options.urlAllowlist ? options.urlAllowlist(srcText) : isUrlAllowed(u8, tok.srcS, tok.srcE)) {
+          out.writeEscaped(u8, tok.srcS, tok.srcE);
+        }
         out.writeBytes(TAG.imgClose);
         break;
-        
-      case 'link':
-        out.writeBytes(TAG.aOpenPre);
-        out.writeEscaped(u8, tok.hrefS, tok.hrefE);
-        out.writeBytes(TAG.aMid);
-        renderInline(u8, tok.textS, tok.textE, out); // Localized pass; no allocations
-        out.writeBytes(TAG.aClose);
+      }
+
+      case 'link': {
+        const hrefText = new TextDecoder().decode(u8.subarray(tok.hrefS, tok.hrefE));
+        const allowed = options.urlAllowlist ? options.urlAllowlist(hrefText) : isUrlAllowed(u8, tok.hrefS, tok.hrefE);
+        if (allowed) {
+          out.writeBytes(TAG.aOpenPre);
+          out.writeEscaped(u8, tok.hrefS, tok.hrefE);
+          out.writeBytes(TAG.aMid);
+          renderInline(u8, tok.textS, tok.textE, out, options);
+          out.writeBytes(TAG.aClose);
+        } else {
+          // Fallback to plain text if URL is not allowed
+          renderInline(u8, tok.textS, tok.textE, out, options);
+        }
         break;
-        
-      case 'autolink':
-        out.writeBytes(TAG.aOpenPre);
-        if (tok.isWww) out.writeAscii('https://'); // Modern default
-        out.writeEscaped(u8, tok.s, tok.e);
-        out.writeBytes(TAG.aMid);
-        out.writeEscaped(u8, tok.s, tok.e);
-        out.writeBytes(TAG.aClose);
+      }
+
+      case 'autolink': {
+        // Build effective href span including implicit protocol for www
+        const hrefStart = tok.s - (tok.isWww ? 0 : 0);
+        const hrefEnd = tok.e;
+        const hrefText = tok.isWww ? 'https://' + new TextDecoder().decode(u8.subarray(tok.s, tok.e)) : new TextDecoder().decode(u8.subarray(hrefStart, hrefEnd));
+        if (tok.isWww) {
+          // Only allow if http(s) when prefixed; we synthesize https://www...
+          out.writeBytes(TAG.aOpenPre);
+          out.writeAscii('https://');
+          out.writeEscaped(u8, tok.s, tok.e);
+          out.writeBytes(TAG.aMid);
+          out.writeEscaped(u8, tok.s, tok.e);
+          out.writeBytes(TAG.aClose);
+        } else {
+          const allowed = options.urlAllowlist ? options.urlAllowlist(hrefText) : isUrlAllowed(u8, hrefStart, hrefEnd);
+          if (allowed) {
+            out.writeBytes(TAG.aOpenPre);
+            out.writeEscaped(u8, hrefStart, hrefEnd);
+            out.writeBytes(TAG.aMid);
+            out.writeEscaped(u8, tok.s, tok.e);
+            out.writeBytes(TAG.aClose);
+          } else {
+            out.writeEscaped(u8, tok.s, tok.e);
+          }
+        }
         break;
+      }
         
       case 'emOpen':
         out.writeBytes(TAG.emOpen);
@@ -71,6 +104,12 @@ function renderInline(
       case 'strongClose':
         out.writeBytes(TAG.strongClose);
         break;
+      case 'strikeOpen':
+        out.writeAscii('<del>');
+        break;
+      case 'strikeClose':
+        out.writeAscii('</del>');
+        break;
     }
   }
 }
@@ -78,8 +117,11 @@ function renderInline(
 /**
  * Renders blocks to HTML string
  */
-export function renderHTMLFromBlocks(u8: Uint8Array): string {
+export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOptions = {}): Promise<string> {
   const out = new HtmlArena();
+  // Heuristic: output is usually within ~1.2x of input plus tags
+  const reserveApprox = (u8.length + (u8.length >>> 2) + 1024) | 0;
+  out.reserve(reserveApprox);
   // Lightweight list/bq tracking to add structure around items
   const listStack: ListStackItem[] = [];
   let paraOpen = false;
@@ -95,7 +137,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
     }
   };
 
-  const flushCodeBlock = (): void => {
+  const flushCodeBlock = async (): Promise<void> => {
     if (!codeBuffer) return;
 
     let totalLen = 0;
@@ -115,7 +157,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
         codeBytes[offset++] = 0x0a;
       }
     }
-    const highlighted = highlightCodeBlock(codeBytes, codeLang);
+    const highlighted = await highlightCodeBlock(codeBytes, codeLang);
     out.writeBytes(highlighted);
 
     codeBuffer = null;
@@ -169,7 +211,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
         closePara();
         closeListsAll();
         out.writeBytes(TAG.hPre[ev.level - 1]);
-        renderInline(u8, ev.s, ev.e, out);
+        renderInline(u8, ev.s, ev.e, out, options);
         out.writeBytes(TAG.hClose[ev.level - 1]);
         break;
 
@@ -180,7 +222,12 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
 
       case 'listItem':
         startLi();
-        renderInline(u8, ev.s, ev.e, out);
+        if (ev.task) {
+          out.writeAscii('<input type="checkbox" disabled');
+          if (ev.checked) out.writeAscii(' checked');
+          out.writeAscii('> ');
+        }
+        renderInline(u8, ev.s, ev.e, out, options);
         out.writeBytes(TAG.lf);
         break;
 
@@ -203,7 +250,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
         } else {
           out.writeBytes(TAG.lf);
         }
-        renderInline(u8, ev.s, ev.e, out);
+        renderInline(u8, ev.s, ev.e, out, options);
         break;
 
       case 'codeOpen':
@@ -222,7 +269,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
 
       case 'codeClose':
         if (inCode) {
-          flushCodeBlock();
+          await flushCodeBlock();
           inCode = false;
         }
         break;
@@ -239,7 +286,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
           const thTag = cell.align === 'center' ? TAG.thCenter : 
                         cell.align === 'right' ? TAG.thRight : TAG.thLeft;
           out.writeBytes(thTag);
-          renderInline(u8, cell.s, cell.e, out);
+          renderInline(u8, cell.s, cell.e, out, options);
           out.writeBytes(TAG.thClose);
         }
         out.writeBytes(TAG.theadClose);
@@ -249,7 +296,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
         out.writeBytes(TAG.trOpen);
         for (const cell of ev.cells) {
           out.writeBytes(TAG.tdOpen);
-          renderInline(u8, cell.s, cell.e, out);
+          renderInline(u8, cell.s, cell.e, out, options);
           out.writeBytes(TAG.tdClose);
         }
         out.writeBytes(TAG.trClose);
@@ -289,7 +336,7 @@ export function renderHTMLFromBlocks(u8: Uint8Array): string {
   closePara();
   closeListsAll();
   if (inCode) {
-    flushCodeBlock();
+    await flushCodeBlock();
     inCode = false;
   }
 

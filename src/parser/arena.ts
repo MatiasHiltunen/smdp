@@ -42,6 +42,14 @@ export class HtmlArena {
     this.len = p + u8.length;
   }
 
+  /**
+   * Reserve capacity for additional bytes to reduce future reallocations.
+   */
+  reserve(additionalCapacity: number): void {
+    const need = this.len + (additionalCapacity | 0);
+    if (need > this.buf.length) this.ensure(need);
+  }
+
   writeAscii(str: string): void {
     // For constants only
     const p = this.len;

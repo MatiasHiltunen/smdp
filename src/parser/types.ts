@@ -41,7 +41,9 @@ export type InlineToken =
   | { kind: 'emOpen' }
   | { kind: 'emClose' }
   | { kind: 'strongOpen' }
-  | { kind: 'strongClose' };
+  | { kind: 'strongClose' }
+  | { kind: 'strikeOpen' }
+  | { kind: 'strikeClose' };
 
 // Block event types
 export type BlockEvent =
@@ -50,7 +52,7 @@ export type BlockEvent =
   | { type: 'hr' }
   | { type: 'heading'; level: number; s: number; e: number }
   | { type: 'listOpen'; kind: 'ul' | 'ol'; indent: number }
-  | { type: 'listItem'; s: number; e: number }
+  | { type: 'listItem'; s: number; e: number; task?: boolean; checked?: boolean }
   | { type: 'listClose'; kind: 'ul' | 'ol' }
   | { type: 'paraLine'; s: number; e: number }
   | { type: 'codeOpen'; info?: FenceMeta }
@@ -81,6 +83,7 @@ export interface TextStyle {
   italic?: boolean;
   code?: boolean;
   link?: boolean;
+  strike?: boolean;
   color?: string;
   size?: number;
 }

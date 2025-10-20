@@ -1,5 +1,3 @@
-import { HtmlArena } from '../parser/arena';
-
 const TE = new TextEncoder();
 const TD = new TextDecoder();
 
@@ -575,6 +573,8 @@ export class CompiledLanguageSpec {
       case TokenType.LiteralStr:
       case TokenType.LiteralTpl:
       case TokenType.Regex:
+      case TokenType.Whitespace:
+      case TokenType.Newline:
         return false;
       case TokenType.Keyword:
         switch (prevCode | 0) {
@@ -592,10 +592,27 @@ export class CompiledLanguageSpec {
             return true;
         }
       case TokenType.Punct:
+        // `/` can start regex after punctuation like `)`, `]`, `}`, `,`, `;`, `:`
+        if (lastSig === 0x29 || lastSig === 0x5d || lastSig === 0x7d ||
+            lastSig === 0x2c || lastSig === 0x3b || lastSig === 0x3a) {
+          return true;
+        }
+        return false; // Don't start regex after other punctuation
       case TokenType.Operator:
-        if (lastSig === 0x29 || lastSig === 0x5d || lastSig === 0x7d) return false;
+        // `/` should NOT start regex after arithmetic operators
+        // This prevents `a / b` from being interpreted as regex
+        if (lastSig === 0x2b || lastSig === 0x2d || lastSig === 0x2a ||
+            lastSig === 0x2f || lastSig === 0x25 || lastSig === 0x2a) {
+          return false; // Arithmetic operators - don't start regex
+        }
+        // `/` can start regex after other operators like `=`, `!`, `?`, etc.
+        if (lastSig === 0x3d || lastSig === 0x21 || lastSig === 0x3f ||
+            lastSig === 0x7c || lastSig === 0x26 || lastSig === 0x5e) {
+          return true;
+        }
+        // Check for `++` and `--`
         if (lastTwo === 0x2b2b || lastTwo === 0x2d2d) return false;
-        return true;
+        return true; // Default for other operators
       default:
         return true;
     }
@@ -814,6 +831,27 @@ export class GenericTokenizer {
         push(TokenType.Operator, s, i);
         continue;
       }
+      // Check for single-character operators
+      if (
+        a === 0x2b || // +
+        a === 0x2d || // -
+        a === 0x2a || // *
+        a === 0x2f || // /
+        a === 0x25 || // %
+        a === 0x3d || // =
+        a === 0x21 || // !
+        a === 0x3f || // ?
+        a === 0x7c || // |
+        a === 0x26 || // &
+        a === 0x5e || // ^
+        a === 0x7e || // ~
+        a === 0x3c || // <
+        a === 0x3e   // >
+      ) {
+        push(TokenType.Operator, s, i);
+        continue;
+      }
+
       const punct =
         a === 0x28 ||
         a === 0x29 ||
@@ -864,8 +902,22 @@ export class GenericHighlighter {
     this.tokenizer = new GenericTokenizer(spec);
   }
 
-  highlight(u8: Uint8Array, languageClass?: string): Uint8Array {
-    const arena = new HtmlArena();
+  async highlight(u8: Uint8Array, languageClass?: string): Promise<Uint8Array> {
+    // Dynamic import for HtmlArena (only needed in browser contexts)
+    let ArenaClass: any;
+    try {
+      const arenaModule = await import('../parser/arena');
+      ArenaClass = arenaModule.HtmlArena;
+    } catch (e) {
+      // Fallback for environments where arena might not be available
+      ArenaClass = class {
+        writeAscii() {}
+        writeEscaped() {}
+        toUint8Array() { return new Uint8Array(); }
+      };
+    }
+
+    const arena = new ArenaClass();
     const langClass = languageClass ?? this.spec.name.toLowerCase();
 
     arena.writeAscii('<pre class="code-block"><code');

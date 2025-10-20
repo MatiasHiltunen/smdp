@@ -9,8 +9,31 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "tsx --test tests/**/*.test.ts",
+    "test:golden": "tsx --test tests/parser.golden.test.ts",
+    "test:property": "tsx --test tests/parser.property.test.ts",
+    "test:bench": "tsx --test tests/bench.test.ts",
+    "test:watch": "tsx --test --watch tests/**/*.test.ts",
     "precompile": "tsx scripts/precompile-languages.ts"
   },
+  "exports": {
+    ".": {
+      "types": "./src/parser/index.ts",
+      "import": "./src/parser/index.ts"
+    },
+    "./highlight": {
+      "types": "./src/highlight/index.ts",
+      "import": "./src/highlight/index.ts"
+    },
+    "./parser": {
+      "types": "./src/parser/index.ts",
+      "import": "./src/parser/index.ts"
+    },
+    "./parser/canvas": {
+      "browser": "./src/parser/canvas-renderer.ts",
+      "import": "./src/parser/canvas-renderer.ts"
+    }
+  },
+  "sideEffects": false,
   "devDependencies": {
     "@types/node": "^24.8.1",
     "@types/web": "^0.0.280",

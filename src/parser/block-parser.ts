@@ -210,8 +210,23 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
         st.listStack.push({ kind: li.type, indent: li.indent });
         yield { type: 'listOpen', kind: li.type, indent: li.indent };
       }
+      // Detect GFM task list prefix [ ] or [x]
+      let task = false;
+      let checked = false;
+      let afterStart = li.afterStart;
+      if (afterStart + 3 <= end && u8[afterStart] === 0x5b && u8[afterStart + 2] === 0x5d) { // '[' _ ']'
+        const mid = u8[afterStart + 1] | 32; // lowercased
+        if (mid === 0x20 || mid === 0x78) { // space or 'x'
+          const maybeSpace = (afterStart + 3 < end) ? u8[afterStart + 3] : 0;
+          if (maybeSpace === 0x20) {
+            task = true;
+            checked = mid === 0x78; // 'x'
+            afterStart += 4; // skip "[ ] " or "[x] "
+          }
+        }
+      }
       
-      yield { type: 'listItem', s: li.afterStart, e: li.afterEnd };
+      yield { type: 'listItem', s: afterStart, e: li.afterEnd, task, checked };
       continue;
     }
 
