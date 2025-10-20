@@ -45,7 +45,7 @@ export class MDParser {
     this.options = {
       allowRawHtml: options.allowRawHtml ?? false,
       urlAllowlist: options.urlAllowlist ?? defaultUrlAllowlist,
-      baseUrl: options.baseUrl,
+      ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
     };
   }
 
@@ -53,10 +53,11 @@ export class MDParser {
    * Parses Markdown (as Uint8Array) and returns HTML string
    */
   async parse(u8arr: Uint8Array, overrides: ParserOptions = {}): Promise<string> {
+    const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
     const effective: ResolvedParserOptions = {
       allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
       urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
-      baseUrl: overrides.baseUrl ?? this.options.baseUrl,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
     };
     return renderHTMLFromBlocks(u8arr, effective);
   }
@@ -65,10 +66,11 @@ export class MDParser {
    * Renders Markdown (as Uint8Array) to an HTML5 Canvas
    */
   renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement, overrides: ParserOptions = {}): void {
+    const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
     const effective: ResolvedParserOptions = {
       allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
       urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
-      baseUrl: overrides.baseUrl ?? this.options.baseUrl,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
     };
     renderToCanvasFromBlocks(u8arr, canvas, effective);
   }

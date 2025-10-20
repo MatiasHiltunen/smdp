@@ -242,7 +242,7 @@ export class ThemeBuilder {
   withMeta(meta: Partial<ThemeMeta>): this {
     for (const [key, value] of Object.entries(meta)) {
       if (value !== undefined) {
-        (this.meta as Record<string, string>)[key] = value;
+        (this.meta as unknown as Record<string, string>)[key] = value;
       }
     }
     return this;
