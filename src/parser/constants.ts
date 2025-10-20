@@ -78,15 +78,15 @@ export const TAG = {
 } as const;
 
 export const FONT_SIZE = {
-  base: 16,
-  code: 14,
-  heading: [40, 32, 24, 20, 17.6, 16], // Matching CSS em sizes
+  base: 14,
+  code: 13,
+  heading: [28, 22, 18, 16, 14.5, 14], // More reasonable sizes
 } as const;
 
-export const LINE_HEIGHT_MULTIPLIER = 1.2;
+export const LINE_HEIGHT_MULTIPLIER = 1.5;
 
-export const MARGIN = 10;
-export const INDENT = 30;
+export const MARGIN = 16;
+export const INDENT = 24;
 
 // Match CSS custom properties for consistent theming
 export const COLOR = {

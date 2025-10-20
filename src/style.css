@@ -19,9 +19,9 @@
   --accent-strong: #0ea5e9;
   --shadow-soft: 0 24px 80px rgba(15, 23, 42, 0.55);
   --shadow-button: 0 18px 40px rgba(14, 165, 233, 0.25);
-  --radius-lg: 28px;
-  --radius-md: 18px;
-  --radius-sm: 10px;
+  --radius-lg: 12px;
+  --radius-md: 8px;
+  --radius-sm: 4px;
   --code-kw: #38bdf8;
   --code-id: rgba(248, 250, 252, 0.92);
   --code-num: #facc15;
@@ -80,7 +80,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: stretch;
-  padding: clamp(1.25rem, 4vw, 3rem);
+  padding: clamp(0.75rem, 2.5vw, 1.5rem);
   color: var(--text-primary);
   background: radial-gradient(circle at 12% 18%, var(--bg-glow-a, rgba(56, 189, 248, 0.12)) 0%, transparent 55%),
     radial-gradient(circle at 82% 12%, var(--bg-glow-b, rgba(94, 234, 212, 0.12)) 0%, transparent 60%),
@@ -117,11 +117,11 @@ body.is-editing .floating-toggle {
 }
 
 .app-shell {
-  width: min(100%, 1200px);
+  width: min(100%, 1400px);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: clamp(1.5rem, 4vw, 2.5rem);
-  padding: clamp(1.5rem, 4vw, 3rem);
+  gap: clamp(1rem, 2.5vw, 1.5rem);
+  padding: clamp(1rem, 2.5vw, 1.75rem);
   border-radius: var(--radius-lg);
   background: rgba(15, 23, 42, 0.88);
   border: 1px solid var(--border-glass);
@@ -136,7 +136,7 @@ body.is-editing .floating-toggle {
   border-radius: var(--radius-md);
   background: var(--bg-glass);
   border: 1px solid var(--border-glass);
-  padding: clamp(1.25rem, 3vw, 2rem);
+  padding: clamp(1rem, 2vw, 1.25rem);
   overflow: hidden;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -159,7 +159,7 @@ body.is-editing .floating-toggle {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
-  padding: 0 clamp(0.5rem, 2vw, 1rem);
+  padding: 0 clamp(0.25rem, 1vw, 0.5rem);
   margin: 0 auto;
 }
 
@@ -476,7 +476,7 @@ body.is-editing .floating-toggle {
   border-radius: var(--radius-md);
   background: var(--bg-panel);
   border: 1px solid var(--border-strong);
-  padding: clamp(1rem, 2.4vw, 1.6rem);
+  padding: clamp(0.75rem, 1.5vw, 1rem);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
   box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.12);
@@ -492,7 +492,7 @@ body.is-editing .editor-pane {
   resize: none;
   border: none;
   border-radius: var(--radius-sm);
-  padding: 1rem 1.25rem;
+  padding: 0.75rem 1rem;
   font: inherit;
   font-family: var(--font-mono, "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace);
   line-height: 1.6;
@@ -593,9 +593,7 @@ body.is-editing .editor-pane {
 
 .theme-editor-overlay {
   flex: 1 1 auto;
-  background: rgba(5, 11, 24, 0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: transparent;
   opacity: 0;
   transition: opacity 0.25s ease;
 }
@@ -724,6 +722,27 @@ body.is-editing .editor-pane {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.45);
   background: rgba(15, 23, 42, 0.92);
+}
+
+.theme-editor-input[type="color"] {
+  cursor: pointer;
+  padding: 0.25rem;
+  background: rgba(15, 23, 42, 0.95);
+  border-radius: var(--radius-sm);
+}
+
+.theme-editor-input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.theme-editor-input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+}
+
+.theme-editor-input[type="color"]::-moz-color-swatch {
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
 }
 
 .theme-editor-footer {

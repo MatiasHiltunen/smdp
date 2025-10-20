@@ -461,7 +461,7 @@ function drawInline(
           const baselineOffset = baseLineSize - fontSize;
           const paddingX = Math.max(6, fontSize * 0.35);
           const paddingY = Math.max(4, fontSize * 0.3);
-          const radius = 5;
+          const radius = 3;
           const bgX = tempX - paddingX;
           const bgY = currentY + baselineOffset - paddingY / 2;
           const bgWidth = (codeEndX - tempX) + paddingX * 2;
@@ -865,7 +865,7 @@ function renderCanvas(
         closeListsAll();
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.0;
         if (!isMeasure && inBlockquote) {
-          const bqPadding = 16;
+          const bqPadding = 10;
           blockquotes.push({
             x: MARGIN + indent - INDENT - bqPadding,
             y: blockquoteY,
@@ -1096,8 +1096,8 @@ function renderCanvas(
           }
           
           // Render highlighted code
-          const codePaddingX = 20;
-          const codePaddingY = 16;
+          const codePaddingX = 12;
+          const codePaddingY = 10;
           
           const result = renderHighlightedCode(
             codeBytes,
@@ -1179,7 +1179,7 @@ function renderCanvas(
           const tableHeight = headerRowHeight + pendingTableRows.length * dataRowHeight;
           const tableX = MARGIN + indent;
           const tableY = y;
-          const tableRadius = 6;
+          const tableRadius = 4;
           
           // Draw table background with rounded corners
           if (!isMeasure) {
@@ -1299,9 +1299,9 @@ function renderCanvas(
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.0;
         
         if (!isMeasure && inInfo) {
-          // Generous padding for info blocks
-          const verticalPadding = 20;
-          const horizontalPadding = 28;
+          // Padding for info blocks
+          const verticalPadding = 12;
+          const horizontalPadding = 16;
           const infoHeight = y - infoY + verticalPadding;
           infoBlocks.push({
             x: MARGIN + indent - horizontalPadding / 2,
@@ -1349,7 +1349,7 @@ function renderCanvas(
     for (const block of codeBlocks) {
       ctx.fillStyle = COLOR.codeBg;
       ctx.beginPath();
-      const radius = 8;
+      const radius = 4;
       ctx.moveTo(block.x + radius, block.y);
       ctx.lineTo(block.x + block.width - radius, block.y);
       ctx.quadraticCurveTo(block.x + block.width, block.y, block.x + block.width, block.y + radius);
@@ -1365,7 +1365,7 @@ function renderCanvas(
     
     // Draw blockquote backgrounds with rounded corners
     for (const bq of blockquotes) {
-      const radius = 6;
+      const radius = 4;
       // Background
       ctx.fillStyle = COLOR.bgSecondary;
       ctx.beginPath();
@@ -1406,7 +1406,7 @@ function renderCanvas(
     // Draw info block backgrounds
     for (const info of infoBlocks) {
       const colors = INFO_COLORS[info.type as keyof typeof INFO_COLORS];
-      const radius = 6;
+      const radius = 4;
       
       // Draw rounded background
       ctx.fillStyle = colors.bg;

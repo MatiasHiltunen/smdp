@@ -85,7 +85,122 @@ const TOKEN_GROUPS: ReadonlyArray<{ title: string; fields: readonly TokenField[]
   },
 ] as const;
 
-function createInputField(labelText: string, id: string): { field: HTMLDivElement; input: HTMLInputElement } {
+/**
+ * Save theme configuration to URL search parameters
+ */
+function saveThemeToUrl(builder: ThemeBuilder): void {
+  const config = builder.build();
+  const params = new URLSearchParams(window.location.search);
+  
+  // Remove existing theme params
+  const keysToDelete: string[] = [];
+  params.forEach((_, key) => {
+    if (key.startsWith('m_') || key.startsWith('t_') || key.startsWith('c_')) {
+      keysToDelete.push(key);
+    }
+  });
+  keysToDelete.forEach(key => params.delete(key));
+  
+  // Save meta fields
+  Object.entries(config.meta).forEach(([key, value]) => {
+    params.set(`m_${key}`, value);
+  });
+  
+  // Save token fields
+  Object.entries(config.tokens).forEach(([key, value]) => {
+    params.set(`t_${key}`, value);
+  });
+  
+  // Save custom properties
+  Object.entries(config.customProperties).forEach(([key, value]) => {
+    params.set(`c_${key.replace(/^--/, '')}`, value);
+  });
+  
+  // Update URL without reload
+  const newUrl = params.toString() 
+    ? `${window.location.pathname}?${params.toString()}`
+    : window.location.pathname;
+  window.history.replaceState({}, '', newUrl);
+}
+
+/**
+ * Load theme configuration from URL search parameters
+ */
+function loadThemeFromUrl(builder: ThemeBuilder): boolean {
+  const params = new URLSearchParams(window.location.search);
+  let hasThemeParams = false;
+  
+  const meta: Partial<ThemeMeta> = {};
+  const tokens: Partial<Record<ThemeTokenKey, string>> = {};
+  const customProperties: Record<string, string> = {};
+  
+  // Load meta fields
+  params.forEach((value, key) => {
+    if (key.startsWith('m_')) {
+      const metaKey = key.slice(2);
+      (meta as Record<string, string>)[metaKey] = value;
+      hasThemeParams = true;
+    } else if (key.startsWith('t_')) {
+      const tokenKey = key.slice(2) as ThemeTokenKey;
+      tokens[tokenKey] = value;
+      hasThemeParams = true;
+    } else if (key.startsWith('c_')) {
+      const propKey = `--${key.slice(2)}`;
+      customProperties[propKey] = value;
+      hasThemeParams = true;
+    }
+  });
+  
+  if (hasThemeParams) {
+    if (Object.keys(meta).length > 0) {
+      builder.withMeta(meta);
+    }
+    if (Object.keys(tokens).length > 0) {
+      builder.withTokens(tokens);
+    }
+    if (Object.keys(customProperties).length > 0) {
+      builder.withCustomProperties(customProperties);
+    }
+  }
+  
+  return hasThemeParams;
+}
+
+/**
+ * Check if a field key represents a color value
+ */
+function isColorField(key: string): boolean {
+  return key.startsWith('bg') || 
+         key.startsWith('text') || 
+         key.startsWith('accent') || 
+         key.startsWith('border') ||
+         key.startsWith('code');
+}
+
+/**
+ * Convert rgba/rgb/hex color to hex format for color picker
+ */
+function toHexColor(value: string): string {
+  // Already hex
+  if (value.startsWith('#')) {
+    return value.slice(0, 7); // Remove alpha if present
+  }
+  
+  // Parse rgba/rgb
+  const rgbaMatch = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
+  if (rgbaMatch) {
+    const [, r, g, b] = rgbaMatch;
+    const hex = '#' + [r, g, b].map(n => {
+      const val = parseInt(n, 10);
+      return val.toString(16).padStart(2, '0');
+    }).join('');
+    return hex;
+  }
+  
+  return '#000000'; // fallback
+}
+
+function createInputField(labelText: string, id: string, key: string): { field: HTMLDivElement; input: HTMLInputElement; textInput?: HTMLInputElement } {
   const field = document.createElement('div');
   field.className = 'theme-editor-field';
 
@@ -96,16 +211,51 @@ function createInputField(labelText: string, id: string): { field: HTMLDivElemen
 
   const input = document.createElement('input');
   input.className = 'theme-editor-input';
-  input.type = 'text';
   input.id = id;
   input.autocomplete = 'off';
   input.spellcheck = false;
-
-  field.append(label, input);
-  return { field, input };
+  
+  const isColor = isColorField(key);
+  
+  if (isColor) {
+    // Create a wrapper for color picker + text input
+    const inputWrapper = document.createElement('div');
+    inputWrapper.style.display = 'flex';
+    inputWrapper.style.gap = '0.5rem';
+    
+    // Color picker
+    input.type = 'color';
+    input.style.width = '3rem';
+    input.style.height = '2.25rem';
+    input.style.padding = '0.25rem';
+    input.style.cursor = 'pointer';
+    
+    // Text input for manual editing
+    const textInput = document.createElement('input');
+    textInput.className = 'theme-editor-input';
+    textInput.type = 'text';
+    textInput.style.flex = '1';
+    textInput.autocomplete = 'off';
+    textInput.spellcheck = false;
+    textInput.placeholder = 'Color value';
+    
+    inputWrapper.append(input, textInput);
+    field.append(label, inputWrapper);
+    return { field, input, textInput };
+  } else {
+    input.type = 'text';
+    field.append(label, input);
+    return { field, input };
+  }
 }
 
 export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle {
+  // Load theme from URL if present
+  const hasUrlTheme = loadThemeFromUrl(builder);
+  if (hasUrlTheme) {
+    builder.apply();
+  }
+  
   const wrapper = document.createElement('div');
   wrapper.className = 'theme-editor-wrapper';
   wrapper.setAttribute('aria-hidden', 'true');
@@ -156,10 +306,11 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
   metaFieldsContainer.className = 'theme-editor-fields';
 
   const inputs = new Map<string, HTMLInputElement>();
+  const textInputs = new Map<string, HTMLInputElement>();
 
   META_FIELDS.forEach((fieldDef, index) => {
     const fieldId = `theme-meta-${fieldDef.key}`;
-    const { field, input } = createInputField(fieldDef.label, fieldId);
+    const { field, input, textInput } = createInputField(fieldDef.label, fieldId, fieldDef.key);
     input.dataset.section = 'meta';
     input.dataset.key = fieldDef.key;
     if (index === 0) {
@@ -167,6 +318,11 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
     }
     metaFieldsContainer.append(field);
     inputs.set(`meta:${fieldDef.key}`, input);
+    if (textInput) {
+      textInput.dataset.section = 'meta';
+      textInput.dataset.key = fieldDef.key;
+      textInputs.set(`meta:${fieldDef.key}`, textInput);
+    }
   });
 
   metaSection.append(metaHeading, metaFieldsContainer);
@@ -184,11 +340,16 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
 
     group.fields.forEach((fieldDef) => {
       const fieldId = `theme-token-${fieldDef.key}`;
-      const { field, input } = createInputField(fieldDef.label, fieldId);
+      const { field, input, textInput } = createInputField(fieldDef.label, fieldId, fieldDef.key);
       input.dataset.section = 'token';
       input.dataset.key = fieldDef.key;
       fieldsContainer.append(field);
       inputs.set(`token:${fieldDef.key}`, input);
+      if (textInput) {
+        textInput.dataset.section = 'token';
+        textInput.dataset.key = fieldDef.key;
+        textInputs.set(`token:${fieldDef.key}`, textInput);
+      }
     });
 
     section.append(heading, fieldsContainer);
@@ -253,21 +414,39 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
   const refresh = () => {
     const configuration = builder.build();
     META_FIELDS.forEach((fieldDef) => {
-      const input = inputs.get(`meta:${fieldDef.key}`);
+      const key = `meta:${fieldDef.key}`;
+      const input = inputs.get(key);
+      const textInput = textInputs.get(key);
       if (input) {
         const value = configuration.meta[fieldDef.key];
-        if (document.activeElement !== input) {
-          input.value = value;
+        if (document.activeElement !== input && document.activeElement !== textInput) {
+          if (input.type === 'color') {
+            input.value = toHexColor(value);
+            if (textInput) {
+              textInput.value = value;
+            }
+          } else {
+            input.value = value;
+          }
         }
       }
     });
     TOKEN_GROUPS.forEach((group) => {
       group.fields.forEach((fieldDef) => {
-        const input = inputs.get(`token:${fieldDef.key}`);
+        const key = `token:${fieldDef.key}`;
+        const input = inputs.get(key);
+        const textInput = textInputs.get(key);
         if (input) {
           const value = configuration.tokens[fieldDef.key];
-          if (document.activeElement !== input) {
-            input.value = value;
+          if (document.activeElement !== input && document.activeElement !== textInput) {
+            if (input.type === 'color') {
+              input.value = toHexColor(value);
+              if (textInput) {
+                textInput.value = value;
+              }
+            } else {
+              input.value = value;
+            }
           }
         }
       });
@@ -339,11 +518,43 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
       builder.withToken(key as ThemeTokenKey, value);
     }
     builder.apply();
+    saveThemeToUrl(builder);
   };
 
-  inputs.forEach((input) => {
+  // Handle color picker changes
+  inputs.forEach((input, key) => {
     input.addEventListener('input', (event) => {
-      applyFromInput(event.currentTarget as HTMLInputElement);
+      const target = event.currentTarget as HTMLInputElement;
+      if (target.type === 'color') {
+        // Update the corresponding text input
+        const textInput = textInputs.get(key);
+        if (textInput) {
+          textInput.value = target.value;
+        }
+      }
+      applyFromInput(target);
+    });
+  });
+  
+  // Handle text input changes for color fields
+  textInputs.forEach((textInput, key) => {
+    textInput.addEventListener('input', (event) => {
+      const target = event.currentTarget as HTMLInputElement;
+      const colorInput = inputs.get(key);
+      
+      // Try to update the color picker if the value is valid
+      if (colorInput) {
+        try {
+          const hexValue = toHexColor(target.value);
+          if (hexValue !== '#000000' || target.value.includes('0')) {
+            colorInput.value = hexValue;
+          }
+        } catch (e) {
+          // Invalid color, don't update color picker
+        }
+      }
+      
+      applyFromInput(target);
     });
   });
 
@@ -352,6 +563,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
     builder.withTokens(defaultTheme.tokens);
     builder.withCustomProperties(defaultTheme.customProperties);
     builder.apply();
+    saveThemeToUrl(builder);
     refresh();
   });
 
