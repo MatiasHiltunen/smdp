@@ -6,7 +6,7 @@ Experimental 'batteries included' client-side markdown parser & renderer written
 
 _There are already many excellent, battle-tested markdown parsing / rendering libraries and utilities available in js/ts ecosystem. However, none of those were fully suitable for me in my daily work in another contexts where ease of use, lightness and privacy are essential requirements._
 
-- So, I decided to create a tool that would allow me to visualize any markdown in an accessible way with as little effort as possible. This also worked as a nice reminder and bit of a learning experience in working with modern js/ts lower level capabilities, and I think this can work also as an example of how JIT-compiled javaScript can take an advantage of contiguous memory layout for storing state. Although not optimized yet, it can already make a quite a difference in performance and memory usage. 
+So, I decided to create a tool that would allow me to visualize any markdown in an accessible way with as little effort as possible. This also worked as a nice reminder and bit of a learning experience in working with modern js/ts lower level capabilities, and I think this can work also as an example of how JIT-compiled javaScript can take an advantage of contiguous memory layout for storing state. Although not optimized yet, it can already make a quite a difference in performance and memory usage. 
 
 I have tried this with quite large .md files (+100Mb), that contained pretty much only code. As the basic syntax-highlighting is built-in and those blocks are fairly heavy to render, they performed surprisingly well, even _on my phone_.
 
