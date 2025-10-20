@@ -1,6 +1,28 @@
-# Yet Another Markdown Parser
+# Small Markdown Parser
 
-This repository contains an experimental Markdown parser written in TypeScript. The implementation keeps external dependencies out of the hot path and focuses on predictable, byte-level processing. Both HTML and Canvas renderers are included so the same parse result can be examined in different output backends. The project is still in an early phase; the public API and packaging will evolve before the planned npm publication later this year. The intent is not to compete with broad Markdown frameworks but to provide accessible visualisation while keeping the ratio between performance and supported features reasonable.
+Experimental 'batteries included' client-side markdown parser & renderer written in pure TypeScript. 
+
+## Background
+
+_There are already many excellent, battle-tested markdown parsing / rendering libraries and utilities available in js/ts ecosystem. However, none of those were fully suitable for me in my daily work in another contexts where ease of use, lightness and privacy are essential requirements._
+
+- So, I decided to create a tool that would allow me to visualize any markdown in an accessible way with as little effort as possible. This also worked as a nice reminder and bit of a learning experience in working with modern js/ts lower level capabilities, and I think this can work also as an example of how JIT-compiled javaScript can take an advantage of contiguous memory layout for storing state. Although not optimized yet, it can already make a quite a difference in performance and memory usage. 
+
+I have tried this with quite large .md files (+100Mb), that contained pretty much only code. As the basic syntax-highlighting is built-in and those blocks are fairly heavy to render, they performed surprisingly well, even _on my phone_.
+
+As an example to use the parser/renderer I created small service [md2.at](https://md2.at) which is just a client-side typescript on free static hosting (render.com). This small "service" allows me to append any publicly available .md -file into the service's url and I get shareable/embeddable visualization for that markdown. 
+
+This example service is still in very early stages but it is going to stay 
+
+Aimed for making markdown visualizations more accessible while maintaining efficiency and privacy.
+
+- Zero external dependencies in build 
+
+The implementation keeps external dependencies out of the hot path and focuses on predictable, byte-level processing. Both HTML and Canvas renderers are included so the same parse result can be examined in different output backends. 
+
+The project is still in an early phase, the public API and packaging will evolve before the planned publication later this year. 
+
+The intent of this repository is not to compete with broad Markdown frameworks but to provide accessible visualisation while keeping the ratio between performance and supported features reasonable.
 
 ## Capabilities
 
@@ -36,7 +58,11 @@ This repository contains an experimental Markdown parser written in TypeScript. 
 
 ## Syntax Highlighting
 
-Built-in syntax highlighters cover the following languages:
+Syntax Highlighting language specs are not complete and probably contain still many issues, few that I'm already aware of and working towards to fix those.
+
+_To keep things lightweight, this is probably going to be an optional plugin based feature in the future to get correct grammars for different languages._
+
+So far built-in basic syntax highlighters cover the following languages: 
 
 - JavaScript / TypeScript
 - Python
@@ -71,9 +97,13 @@ Built-in syntax highlighters cover the following languages:
 
 Additional languages can be registered at runtime with `registerHighlightLanguage`.
 
+I have experimental setup of using precompiled language specs in runtime to reduce overhead of compiling those but this is not optimal way to do things and might look bad as the code containes block of base64 encoded binary representation that is consumed by highlihting. [This code is used to generate the precompiled.ts file.](/scripts/precompile-languages.ts)
+
 ## Usage
 
-### HTML Rendering (Browser & SSR)
+### HTML Rendering 
+
+Should work with both, browser and SSR.
 
 ```typescript
 import { MDParser, u8 } from 'smdp';
@@ -92,7 +122,9 @@ parser.parse(u8(markdown)).then(html => {
 });
 ```
 
-### Canvas Rendering (Browser Only)
+### Canvas Rendering 
+
+Works only in browser, still work in progress
 
 ```typescript
 import { MDParser, u8 } from 'smdp';
@@ -172,11 +204,10 @@ const themeCss = builder.buildCss(':root');
 The demo includes a palette button that opens a theme editor. The editor uses the same `ThemeBuilder` helper exposed through the public API and updates CSS variables in place.
 
 ## Principles
-- No third-party runtime code: the shipped bundle stays dependency-free so the executed code is auditable.
-- Privacy: there is no telemetry or analytics. Requests occur only when loading external Markdown that the user specifies.
+
+- Privacy: there is no telemetry or analytics built in the code. Requests occur only when loading external Markdown that the user specifies to be loaded from trusted source.
 - Licensing: the entire codebase is released under the MIT License.
-- Roadmap transparency: work-in-progress branches are public and areas needing improvement are documented.
-- AI usage: we value carefully crafted code while recognising that LLMs, applied with intent and review, can accelerate exploration without diluting quality.
+- AI usage: we highly value carefully hand-crafted code while recognising that LLMs, applied with intent and review, can accelerate exploration without diluting quality.
 
 ## Architecture
 
@@ -200,12 +231,12 @@ The core pipeline is built around byte ranges rather than strings. The process i
 1. **Line segmentation**: `lineSpans` walks the Uint8Array, recording start/end offsets for each line. No copies are made, and the raw array is never converted to strings at this stage.
 2. **Block parsing**: `blocks` iterates through the line spans once, emitting events such as `heading`, `listOpen`, `listItem`, `codeOpen`, etc. Indentation, fences, and info blocks are resolved here. Since block parsing is single-pass, nested structures (lists-in-lists, blockquotes) are tracked via a small stack structure.
 3. **Inline parsing**: For ranges that require inline formatting (links, emphasis, code spans), `inlineTokens` performs another byte-level pass within the line boundaries. It produces typed tokens (`text`, `link`, `img`, `code`, `autolink`, `strike`, ...). Multiple passes are avoided by piggybacking on the already segmented line spans.
-4. **Rendering**: Both renderers consume the block/inlines event stream without reparsing. The HTML renderer writes directly into an arena buffer (see `arena.ts`), which grows geometrically to limit reallocations; the Canvas renderer replays the same stream into 2D drawing commands, relying on the same inline tokenization for highlighting and styling.
+4. **Rendering**: Both renderers consume the block/inlines event stream without reparsing. The HTML renderer writes directly into an arena-like buffer (see `arena.ts`), which grows geometrically to limit reallocations. The Canvas renderer replays the same stream into 2D drawing commands, relying on the same inline tokenization for highlighting and styling.
 
 Important details:
 
-- **Arena writer**: The HTML renderer calls `HtmlArena.writeEscaped` and related methods that operate on byte slices, so writing out HTML stays allocation-friendly and avoids intermediate strings. Only at the end is `Uint8Array` converted back to a string (`TextDecoder`).
-- **Syntax highlighting**: The highlighting path is decoupled from the markdown parser. When a fenced code block is found, the captured byte ranges are passed to `highlightCodeBlock`. Highlighting uses a generative tokenizer compiled from language specs (or precompiled data), then writes markup via the same arena approach.
+- **Writer**: The HTML renderer calls `HtmlArena.writeEscaped` and related methods that operate on byte slices, so writing out HTML stays allocation-friendly and avoids intermediate strings. Only at the end is `Uint8Array` converted back to a string (`TextDecoder`).
+- **Syntax highlighting**: The highlighting path is decoupled from the markdown parser. When a fenced code block is found, the captured byte ranges are passed to `highlightCodeBlock`. Highlighting uses a generative tokenizer compiled from language specs (or precompiled data), then writes markup via the same arena-like approach.
 - **Canvas rendering**: `renderToCanvasFromBlocks` shares the block event stream but renders into a canvas context. It keeps cached font measurements, performs line-wrapping per block, and triggers a rerender when images finish loading. Virtual scrolling is used when the rendered height exceeds twice the viewport.
 
 ```ts
@@ -271,8 +302,8 @@ for (const ev of blocks(u8)) {
 
 ### Current Strengths
 
-- **Predictable performance**: Byte-range processing and arena buffers keep allocations low, which shows up in the included micro-benchmarks (`npm run test:bench`).
-- **Single-pass correctness**: Blocks are identified without backtracking; inline parsing respects boundaries established by the block layer (for example, emphasis is never resolved inside code spans).
+- **Predictable performance**: Byte-range processing and arena-like buffers keep allocations low, which shows up in the included micro-benchmarks (`npm run test:bench`).
+- **Single-pass correctness**: Blocks are identified without backtracking, inline parsing respects boundaries established by the block layer (for example, emphasis is never resolved inside code spans).
 - **Separation of concerns**: HTML and Canvas renderers consume the same block/inline events so new renderers (e.g., PDF or terminal) can be added without touching the parser core.
 - **Themeable UI**: The public theme builder feeds both the default UI and consumer customizations; the new light/dark presets are simply predefined token sets.
 
@@ -358,15 +389,6 @@ npm install
 npm run dev
 npm run build
 ```
-
-### Performance
-
-Recent benchmark results (see `npm run test:bench`) on a 2023 MacBook Pro:
-
-- Parsing: ~100k ops/sec for small documents, ~1.5k ops/sec for large documents.
-- Highlighting: ~300k ops/sec for small code samples, ~4k ops/sec for large blocks.
-- Memory: ~5 MB RSS increase when parsing 100 large documents consecutively.
-- Canvas renderer: switches to virtual scrolling when the rendered content exceeds roughly twice the viewport height.
 
 ## License
 

@@ -407,7 +407,10 @@ function drawInline(
   isMeasure: boolean,
   baseStyle: Partial<TextStyle> = {},
   onImageLoad?: () => void,
+  urlAllowlist?: (url: string) => boolean,
+  baseUrl?: string,
 ): DrawResult {
+  const allowlist = urlAllowlist ?? defaultUrlAllowlist;
   let currentX = x;
   let currentY = y;
   const line: TextSpan[] = [];
@@ -661,7 +664,7 @@ function drawInline(
       case 'img': {
         const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
         const rawSrc = TD.decode(u8.subarray(tok.srcS, tok.srcE));
-        if (!urlAllowlist(rawSrc)) {
+        if (!allowlist(rawSrc)) {
           pushStyle({ code: true, color: COLOR.textSecondary });
           addText(`[Blocked image: ${altText || rawSrc}]`);
           popStyle();
@@ -911,6 +914,8 @@ function renderCanvas(
           isMeasure,
           { bold: true, size: hSize },
           opts.onImageLoad,
+          urlAllowlist,
+          baseUrl,
         );
         y = hRes.y;
         if (!isMeasure && (level === 0 || level === 1)) {
@@ -995,6 +1000,8 @@ function renderCanvas(
           isMeasure,
           { size: baseSize },
           opts.onImageLoad,
+          urlAllowlist,
+          baseUrl,
         );
         y = liRes.y + baseSize * 0.8;
         break;
@@ -1039,6 +1046,8 @@ function renderCanvas(
           isMeasure,
           { size: baseSize, color: inBlockquote ? COLOR.textSecondary : COLOR.text, italic: inBlockquote },
           opts.onImageLoad,
+          urlAllowlist,
+          baseUrl,
         );
         currentX = pRes.x;
         y = pRes.y;
