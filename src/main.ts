@@ -6,10 +6,7 @@ import "./style.css";
 const themeBuilder = createThemeBuilder();
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
-let themeToggleButton: HTMLButtonElement | null = null;
-let themeEditorButtonListenerAttached = false;
 let themeEditorViewListenerAttached = false;
-let themeSwitcherButton: HTMLButtonElement | null = null;
 
 const parser = new MDParser({
   // Security: disable raw HTML blocks by default
@@ -26,23 +23,6 @@ function ensureThemeEditor(): ThemeEditorHandle {
   return themeEditorHandle;
 }
 
-function ensureThemeToggleButton(): HTMLButtonElement {
-  const editor = ensureThemeEditor();
-  if (!themeToggleButton) {
-    const panel = editor.root.querySelector<HTMLElement>('.theme-editor-panel');
-    const panelId = panel?.id ?? 'theme-editor-panel';
-    themeToggleButton = createThemeToggleButton(editor, panelId);
-    if (!themeEditorButtonListenerAttached) {
-      const updatePressed = (event: Event) => {
-        const { detail } = event as CustomEvent<{ open: boolean }>;
-        themeToggleButton?.setAttribute("aria-expanded", String(detail.open));
-      };
-      editor.root.addEventListener("theme-editor-toggle", updatePressed);
-      themeEditorButtonListenerAttached = true;
-    }
-  }
-  return themeToggleButton;
-}
 
 function getCurrentTheme(): "light" | "dark" {
   if (typeof window === "undefined") {
@@ -75,41 +55,9 @@ function applyTheme(theme: "light" | "dark"): void {
   } catch {
     // ignore storage errors
   }
-  if (themeSwitcherButton) {
-    themeSwitcherButton.setAttribute("aria-pressed", String(theme === "light"));
-    themeSwitcherButton.setAttribute("data-theme", theme);
-    const nextLabel = theme === "light" ? "Switch to dark mode" : "Switch to light mode";
-    themeSwitcherButton.title = nextLabel;
-    themeSwitcherButton.ariaLabel = nextLabel;
-  }
   themeEditorHandle?.refresh();
 }
 
-function createThemeSwitchButton(): HTMLButtonElement {
-  const button = createElement("button");
-  button.className = "floating-theme-switch";
-  button.type = "button";
-  button.title = "Toggle light or dark mode";
-  button.ariaLabel = "Toggle light or dark mode";
-  button.setAttribute("aria-pressed", "false");
-  button.setAttribute("data-theme", getCurrentTheme());
-  button.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path
-        d="M12 3a1 1 0 0 0 0 2 7 7 0 1 1-6.32 10.11 1 1 0 0 0-1.8.86A9 9 0 1 0 12 3Z"
-        fill="currentColor"
-      ></path>
-    </svg>
-  `;
-
-  button.addEventListener("click", () => {
-    const current = getCurrentTheme();
-    const next = current === "dark" ? "light" : "dark";
-    applyTheme(next);
-  });
-
-  return button;
-}
 
 type RenderMode = "html" | "canvas";
 
@@ -199,7 +147,6 @@ async function fetchMarkdown(externalUrl: URL | null): Promise<MarkdownFetchResu
 
 type BaseView = {
   shell: HTMLElement;
-  fab: HTMLButtonElement;
   textarea: HTMLTextAreaElement;
   editorPane: HTMLElement;
 };
@@ -212,47 +159,207 @@ type CanvasView = BaseView & {
   canvas: HTMLCanvasElement;
 };
 
-function createFloatingButton(): HTMLButtonElement {
-  const button = createElement("button");
-  button.className = "floating-toggle";
-  button.type = "button";
-  button.title = "Edit markdown";
-  button.ariaLabel = "Toggle editor";
-  button.setAttribute("aria-expanded", "false");
-  button.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path
-        d="M4.5 20a.5.5 0 0 1-.5-.5v-3.086a1 1 0 0 1 .293-.707L14.586 5.414a2 2 0 0 1 2.828 0l1.172 1.172a2 2 0 0 1 0 2.828L8.293 20.293a1 1 0 0 1-.707.293H4.5Zm12.379-13.207a.5.5 0 0 0-.707 0L6 16.964V19h2.036l10.172-10.172a.5.5 0 0 0 0-.707l-1.329-1.328ZM19 21H5a1 1 0 1 1 0-2h14a1 1 0 1 1 0 2Z"
-        fill="currentColor"
-      ></path>
-    </svg>
-  `;
-  return button;
+
+/**
+ * Export the rendered HTML as a self-contained HTML5 file
+ */
+function exportAsHtml(view: HtmlView | CanvasView): void {
+  const viewer = view.shell.querySelector('.markdown-viewer');
+  if (!viewer) {
+    alert('No rendered content to export');
+    return;
+  }
+
+  // Get all styles from the document
+  const styles = Array.from(document.styleSheets)
+    .map(sheet => {
+      try {
+        return Array.from(sheet.cssRules)
+          .map(rule => rule.cssText)
+          .join('\n');
+      } catch (e) {
+        // Can't access cross-origin stylesheets
+        return '';
+      }
+    })
+    .join('\n');
+
+  // Create HTML5 document
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="generator" content="SMDP - Simple Markdown Parser">
+  <title>Exported Markdown</title>
+  <style>
+${styles}
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="viewer-pane">
+      <article class="markdown-viewer">
+${viewer.innerHTML}
+      </article>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  // Create blob and download
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = createElement('a');
+  a.href = url;
+  a.download = `markdown-export-${Date.now()}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
-function createThemeToggleButton(editor: ThemeEditorHandle, panelId: string): HTMLButtonElement {
-  const button = createElement("button");
-  button.className = "floating-theme";
-  button.type = "button";
-  button.title = "Open theme editor";
-  button.ariaLabel = "Toggle theme editor";
-  button.setAttribute("aria-expanded", "false");
-  button.setAttribute("aria-haspopup", "dialog");
-  button.setAttribute("aria-controls", panelId);
-  button.innerHTML = `
+/**
+ * Create a FAB menu with all actions
+ */
+function createFabMenu(
+  view: HtmlView | CanvasView,
+  themeEditor: ThemeEditorHandle,
+  onToggleEditor?: () => void
+): HTMLElement {
+  const menu = createElement('div');
+  menu.className = 'fab-menu';
+
+  // Main FAB button (plus icon)
+  const mainButton = createElement('button');
+  mainButton.className = 'fab-main';
+  mainButton.type = 'button';
+  mainButton.title = 'Menu';
+  mainButton.ariaLabel = 'Toggle menu';
+  mainButton.setAttribute('aria-expanded', 'false');
+  mainButton.innerHTML = `
     <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path
-        d="M12 2a1 1 0 0 1 1 1v1.18a4.002 4.002 0 0 0 2.4 3.664l.06.026 1.09.424a1 1 0 0 1 .345 1.635l-.837.837a4 4 0 0 0-.97 3.935l.032.117.307 1.086a1 1 0 0 1-1.24 1.24l-1.086-.307a4 4 0 0 0-3.935.97l-.837.837a1 1 0 0 1-1.635-.345l-.424-1.09a4.002 4.002 0 0 0-3.69-2.457H4a1 1 0 0 1-1-1v-1.1a1 1 0 0 1 .553-.894l1.09-.424a4.002 4.002 0 0 0 2.401-3.664V6.5a4.002 4.002 0 0 0-2.4-3.664L4.494 2.81A1 1 0 0 1 5 1.9l1.086.307a4 4 0 0 0 3.935-.97l.837-.837A1 1 0 0 1 12 1v1Z"
-        fill="currentColor"
-      ></path>
+      <path d="M12 4a1 1 0 0 1 1 1v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5a1 1 0 0 1 1-1Z" fill="currentColor"/>
     </svg>
   `;
 
-  button.addEventListener("click", () => {
-    editor.toggle();
+  // Actions container
+  const actions = createElement('div');
+  actions.className = 'fab-actions';
+
+  // Edit button
+  const editButton = createElement('button');
+  editButton.className = 'fab-action';
+  editButton.type = 'button';
+  editButton.setAttribute('data-tooltip', 'Edit Markdown');
+  editButton.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+      <path d="M4.5 20a.5.5 0 0 1-.5-.5v-3.086a1 1 0 0 1 .293-.707L14.586 5.414a2 2 0 0 1 2.828 0l1.172 1.172a2 2 0 0 1 0 2.828L8.293 20.293a1 1 0 0 1-.707.293H4.5Zm12.379-13.207a.5.5 0 0 0-.707 0L6 16.964V19h2.036l10.172-10.172a.5.5 0 0 0 0-.707l-1.329-1.328Z" fill="currentColor"/>
+    </svg>
+  `;
+
+  // Theme editor button
+  const themeButton = createElement('button');
+  themeButton.className = 'fab-action';
+  themeButton.type = 'button';
+  themeButton.setAttribute('data-tooltip', 'Theme Editor');
+  themeButton.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+      <path d="M12 3a9 9 0 0 1 9 9 9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9Zm0 2a7 7 0 0 0-7 7 7 7 0 0 0 7 7V5Z" fill="currentColor"/>
+    </svg>
+  `;
+
+  // Light/Dark theme toggle button
+  const themeToggleButton = createElement('button');
+  themeToggleButton.className = 'fab-action';
+  themeToggleButton.type = 'button';
+  
+  // Function to update theme toggle icon
+  const updateThemeIcon = (theme: 'light' | 'dark') => {
+    themeToggleButton.setAttribute('data-theme', theme);
+    if (theme === 'dark') {
+      // Show sun icon (click to go light)
+      themeToggleButton.setAttribute('data-tooltip', 'Switch to Light Mode');
+      themeToggleButton.innerHTML = `
+        <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+          <path d="M12 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 17a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm9-8a1 1 0 0 1 0 2h-1a1 1 0 1 1 0-2h1ZM4 11a1 1 0 1 0 0 2H3a1 1 0 1 0 0-2h1Zm14.071-5.071a1 1 0 0 1 0 1.414l-.707.707a1 1 0 1 1-1.414-1.414l.707-.707a1 1 0 0 1 1.414 0ZM8.05 15.95a1 1 0 0 1 0 1.414l-.707.707a1 1 0 1 1-1.414-1.414l.707-.707a1 1 0 0 1 1.414 0Zm9.9 0a1 1 0 0 1 1.414 0l.707.707a1 1 0 0 1-1.414 1.414l-.707-.707a1 1 0 0 1 0-1.414ZM8.05 5.93a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414ZM12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm-7 5a7 7 0 1 1 14 0 7 7 0 0 1-14 0Z" fill="currentColor"/>
+        </svg>
+      `;
+    } else {
+      // Show moon icon (click to go dark)
+      themeToggleButton.setAttribute('data-tooltip', 'Switch to Dark Mode');
+      themeToggleButton.innerHTML = `
+        <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+          <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1Z" fill="currentColor"/>
+        </svg>
+      `;
+    }
+  };
+  
+  // Initialize with current theme
+  updateThemeIcon(getCurrentTheme());
+
+  // Export HTML button
+  const exportButton = createElement('button');
+  exportButton.className = 'fab-action';
+  exportButton.type = 'button';
+  exportButton.setAttribute('data-tooltip', 'Export as HTML');
+  exportButton.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+      <path d="M13 3a1 1 0 1 0-2 0v12.586l-3.293-3.293a1 1 0 0 0-1.414 1.414l5 5a1 1 0 0 0 1.414 0l5-5a1 1 0 0 0-1.414-1.414L13 15.586V3ZM4 17a1 1 0 1 0 0 2h16a1 1 0 1 0 0-2H4Z" fill="currentColor"/>
+    </svg>
+  `;
+
+  // Event handlers
+  let isMenuOpen = false;
+
+  mainButton.addEventListener('click', () => {
+    isMenuOpen = !isMenuOpen;
+    menu.classList.toggle('is-open', isMenuOpen);
+    mainButton.setAttribute('aria-expanded', String(isMenuOpen));
   });
 
-  return button;
+  editButton.addEventListener('click', () => {
+    onToggleEditor?.();
+    isMenuOpen = false;
+    menu.classList.remove('is-open');
+    mainButton.setAttribute('aria-expanded', 'false');
+  });
+
+  themeButton.addEventListener('click', () => {
+    themeEditor.toggle();
+    isMenuOpen = false;
+    menu.classList.remove('is-open');
+    mainButton.setAttribute('aria-expanded', 'false');
+  });
+
+  themeToggleButton.addEventListener('click', () => {
+    const current = getCurrentTheme();
+    const next = current === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    updateThemeIcon(next);
+  });
+
+  exportButton.addEventListener('click', () => {
+    exportAsHtml(view);
+    isMenuOpen = false;
+    menu.classList.remove('is-open');
+    mainButton.setAttribute('aria-expanded', 'false');
+  });
+
+  // Close menu when clicking outside
+  document.addEventListener('click', (e) => {
+    if (isMenuOpen && !menu.contains(e.target as Node)) {
+      isMenuOpen = false;
+      menu.classList.remove('is-open');
+      mainButton.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  actions.append(editButton, themeButton, themeToggleButton, exportButton);
+  menu.append(mainButton, actions);
+
+  return menu;
 }
 
 function createHtmlView(): HtmlView {
@@ -281,13 +388,10 @@ function createHtmlView(): HtmlView {
   editorPane.appendChild(textarea);
   viewerPane.appendChild(viewer);
 
-  const fab = createFloatingButton();
-
   shell.append(viewerPane, editorPane);
 
   return {
     shell,
-    fab,
     textarea,
     editorPane,
     viewer,
@@ -327,13 +431,10 @@ function createCanvasView(): CanvasView {
   canvasScroll.append(canvas, canvasSpacer);
   canvasPane.appendChild(canvasScroll);
 
-  const fab = createFloatingButton();
-
   shell.append(canvasPane, editorPane);
 
   return {
     shell,
-    fab,
     textarea,
     editorPane,
     canvas,
@@ -351,38 +452,6 @@ function applyMarkdownToCanvas(view: CanvasView, bytes: Uint8Array, baseUrl?: st
   parser.renderToCanvas(bytes, view.canvas, overrides);
 }
 
-function attachFabToggle(
-  view: BaseView,
-  options?: {
-    onOpen?: () => void;
-    onClose?: () => void;
-  }
-): void {
-  const { fab, shell, editorPane } = view;
-
-  shell.classList.remove("show-editor");
-  const controlsId = editorPane.id || "markdown-editor-pane";
-  editorPane.setAttribute("aria-hidden", "true");
-  editorPane.toggleAttribute("inert", true);
-  fab.setAttribute("aria-controls", controlsId);
-  fab.setAttribute("aria-expanded", "false");
-
-  fab.addEventListener("click", () => {
-    const isEditing = document.body.classList.toggle("is-editing");
-    shell.classList.toggle("show-editor", isEditing);
-    fab.setAttribute("aria-expanded", String(isEditing));
-    editorPane.setAttribute("aria-hidden", String(!isEditing));
-    editorPane.toggleAttribute("inert", !isEditing);
-    if (isEditing) {
-      view.textarea.focus();
-      options?.onOpen?.();
-    } else {
-      options?.onClose?.();
-    }
-  });
-
-  document.body.appendChild(fab);
-}
 
 function enableRealtimeUpdates(
   view: HtmlView | CanvasView,
@@ -435,19 +504,21 @@ async function init(): Promise<void> {
   document.body.replaceChildren(view.shell);
   const themeEditor = ensureThemeEditor();
   document.body.appendChild(themeEditor.root);
-  const themeButton = ensureThemeToggleButton();
-  document.body.appendChild(themeButton);
-  if (!themeSwitcherButton) {
-    themeSwitcherButton = createThemeSwitchButton();
-  }
-  if (!themeSwitcherButton.isConnected) {
-    document.body.appendChild(themeSwitcherButton);
-  }
-  applyTheme(initialTheme);
-
-  attachFabToggle(view, {
-    onOpen: () => themeEditor.close(),
+  
+  // Create FAB menu with editor toggle callback
+  const fabMenu = createFabMenu(view, themeEditor, () => {
+    const isEditing = document.body.classList.toggle("is-editing");
+    view.shell.classList.toggle("show-editor", isEditing);
+    view.editorPane.setAttribute("aria-hidden", String(!isEditing));
+    view.editorPane.toggleAttribute("inert", !isEditing);
+    if (isEditing) {
+      view.textarea.focus();
+      themeEditor.close();
+    }
   });
+  document.body.appendChild(fabMenu);
+  
+  applyTheme(initialTheme);
 
   if (!themeEditorViewListenerAttached) {
     themeEditor.root.addEventListener("theme-editor-toggle", (event) => {
