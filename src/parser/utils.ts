@@ -401,6 +401,75 @@ export function detectInfoBlock(
 }
 
 /**
+ * Determine the expected length (in bytes) of a UTF-8 sequence from its lead byte.
+ * Returns 0 for invalid lead bytes.
+ */
+function utf8SequenceLength(lead: number): number {
+  if (lead <= 0x7f) return 1;
+  if ((lead & 0b1110_0000) === 0b1100_0000) return 2;
+  if ((lead & 0b1111_0000) === 0b1110_0000) return 3;
+  if ((lead & 0b1111_1000) === 0b1111_0000) return 4;
+  return 0;
+}
+
+/**
+ * Clamp the end offset of a slice so it never splits a UTF-8 code point.
+ * If the provided end already aligns with a code point boundary it is returned as-is.
+ * If the end lands inside a code point and the full sequence fits within maxEnd,
+ * the end is extended to include the remaining continuation bytes. Otherwise the
+ * partial sequence is dropped to preserve well-formed UTF-8.
+ */
+export function clampUtf8SliceEnd(
+  u8: Uint8Array,
+  start: number,
+  end: number,
+  maxEnd: number = end,
+): number {
+  if (end <= start) return end;
+  if (end > u8.length) end = u8.length;
+  if (maxEnd > u8.length) maxEnd = u8.length;
+
+  const last = u8[end - 1];
+  if ((last & 0b1000_0000) === 0) {
+    // ASCII, already aligned.
+    return end;
+  }
+
+  let leadIndex = end - 1;
+  while (leadIndex > start && (u8[leadIndex] & 0b1100_0000) === 0b1000_0000) {
+    leadIndex--;
+  }
+
+  const leadByte = u8[leadIndex];
+  if ((leadByte & 0b1100_0000) === 0b1000_0000) {
+    // We ran out of buffer before finding a lead byte; treat as aligned.
+    return end;
+  }
+
+  const expected = utf8SequenceLength(leadByte);
+  if (expected === 0) {
+    return end;
+  }
+
+  const have = end - leadIndex;
+  if (have === expected) {
+    return end;
+  }
+
+  if (have < expected) {
+    const extended = end + (expected - have);
+    if (extended <= maxEnd) {
+      return extended;
+    }
+    return leadIndex;
+  }
+
+  // have > expected: clamp back to the end of this code point
+  const clamped = leadIndex + expected;
+  return clamped <= end ? clamped : end;
+}
+
+/**
  * Determine if a URL is allowed based on protocol allowlist.
  * - Allowed protocols: http, https, mailto
  * - Relative URLs (no protocol before first '/' or '?') are allowed

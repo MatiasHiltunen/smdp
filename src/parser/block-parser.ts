@@ -17,6 +17,7 @@ import {
   parseTableRow,
   detectInfoBlock,
   parseFenceMeta,
+  clampUtf8SliceEnd,
 } from './utils';
 
 /**
@@ -252,10 +253,7 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
     }
 
     // Paragraph line (ensure we don't split inside a multibyte codepoint)
-    let lineEnd = end;
-    while (lineEnd > i && (u8[lineEnd - 1] & 0b11000000) === 0b10000000) {
-      lineEnd--;
-    }
+    const lineEnd = clampUtf8SliceEnd(u8, i, end, end);
     yield { type: 'paraLine', s: i, e: lineEnd };
   }
 
@@ -276,4 +274,3 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
     yield { type: 'listClose', kind: item.kind };
   }
 }
-

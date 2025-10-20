@@ -197,24 +197,66 @@ function exportAsHtml(view: HtmlView | CanvasView): void {
   // Get current theme attribute
   const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
   
-  // Get current CSS custom properties from root
-  const rootStyles = getComputedStyle(document.documentElement);
-  const customProps: string[] = [];
+  // Parse URL parameters to extract mode-specific customizations
+  const params = new URLSearchParams(window.location.search);
+  const darkCustomProps: string[] = [];
+  const lightCustomProps: string[] = [];
   
-  // Collect all CSS custom properties
-  for (let i = 0; i < rootStyles.length; i++) {
-    const prop = rootStyles[i];
-    if (prop.startsWith('--')) {
-      const value = rootStyles.getPropertyValue(prop).trim();
-      if (value) {
-        customProps.push(`  ${prop}: ${value};`);
+  // Helper to convert theme params to CSS properties
+  const convertParamsToCss = (prefix: string, targetArray: string[]) => {
+    const meta: Record<string, string> = {};
+    const tokens: Record<string, string> = {};
+    const customs: Record<string, string> = {};
+    
+    params.forEach((value, key) => {
+      if (key.startsWith(`${prefix}m_`)) {
+        const metaKey = key.slice(prefix.length + 2);
+        meta[metaKey] = value;
+      } else if (key.startsWith(`${prefix}t_`)) {
+        const tokenKey = key.slice(prefix.length + 2);
+        tokens[tokenKey] = value;
+      } else if (key.startsWith(`${prefix}c_`)) {
+        const propKey = `--${key.slice(prefix.length + 2)}`;
+        customs[propKey] = value;
       }
-    }
+    });
+    
+    // Add meta properties
+    if (meta.fontFamily) targetArray.push(`  font-family: ${meta.fontFamily};`);
+    if (meta.fontSize) targetArray.push(`  font-size: ${meta.fontSize};`);
+    if (meta.fontWeight) targetArray.push(`  font-weight: ${meta.fontWeight};`);
+    if (meta.lineHeight) targetArray.push(`  line-height: ${meta.lineHeight};`);
+    if (meta.monoFontFamily) targetArray.push(`  --font-mono: ${meta.monoFontFamily};`);
+    
+    // Add token properties (converted to CSS variables)
+    Object.entries(tokens).forEach(([key, value]) => {
+      // Convert camelCase token names to kebab-case CSS variable names
+      const cssVarName = `--${key.replace(/([A-Z])/g, '-$1').toLowerCase()}`;
+      targetArray.push(`  ${cssVarName}: ${value};`);
+    });
+    
+    // Add custom properties
+    Object.entries(customs).forEach(([key, value]) => {
+      targetArray.push(`  ${key}: ${value};`);
+    });
+  };
+  
+  // Extract dark mode customizations
+  convertParamsToCss('d_', darkCustomProps);
+  
+  // Extract light mode customizations
+  convertParamsToCss('l_', lightCustomProps);
+  
+  // Build theme override styles
+  let themeOverrides = '';
+  
+  if (darkCustomProps.length > 0) {
+    themeOverrides += `\n:root, :root[data-theme="dark"] {\n${darkCustomProps.join('\n')}\n}`;
   }
   
-  const themeOverrides = customProps.length > 0 
-    ? `\n:root {\n${customProps.join('\n')}\n}`
-    : '';
+  if (lightCustomProps.length > 0) {
+    themeOverrides += `\n:root[data-theme="light"] {\n${lightCustomProps.join('\n')}\n}`;
+  }
 
   // Create HTML5 document
   const html = `<!DOCTYPE html>
