@@ -33,6 +33,33 @@ const META_FIELDS: readonly MetaField[] = [
   { key: 'lineHeight', label: 'Line height' },
 ] as const;
 
+const FONT_FAMILIES = [
+  '"Inter", system-ui, -apple-system, sans-serif',
+  '"Segoe UI", system-ui, -apple-system, sans-serif',
+  'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+  '"Helvetica Neue", Helvetica, Arial, sans-serif',
+  'Georgia, "Times New Roman", Times, serif',
+  '"Arial", Helvetica, sans-serif',
+  'Verdana, Geneva, Tahoma, sans-serif',
+  '"Trebuchet MS", sans-serif',
+] as const;
+
+const MONO_FONT_FAMILIES = [
+  '"JetBrains Mono", "SFMono-Regular", ui-monospace, monospace',
+  '"Fira Code", "SF Mono", Monaco, monospace',
+  '"Source Code Pro", "Courier New", monospace',
+  '"Consolas", "Monaco", "Andale Mono", monospace',
+  '"SF Mono", "Monaco", "Inconsolata", monospace',
+  'ui-monospace, "Cascadia Code", monospace',
+  'Menlo, Monaco, "Courier New", monospace',
+] as const;
+
+const FONT_SIZES = ['12px', '13px', '14px', '15px', '16px', '17px', '18px', '20px', '22px'] as const;
+
+const FONT_WEIGHTS = ['300', '400', '500', '600', '700'] as const;
+
+const LINE_HEIGHTS = ['1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '2.0'] as const;
+
 const TOKEN_GROUPS: ReadonlyArray<{ title: string; fields: readonly TokenField[] }> = [
   {
     title: 'Background & Surfaces',
@@ -67,6 +94,28 @@ const TOKEN_GROUPS: ReadonlyArray<{ title: string; fields: readonly TokenField[]
       { key: 'radiusLg', label: 'Large radius' },
       { key: 'radiusMd', label: 'Medium radius' },
       { key: 'radiusSm', label: 'Small radius' },
+    ],
+  },
+  {
+    title: 'Blockquote',
+    fields: [
+      { key: 'blockquoteBorder', label: 'Border' },
+      { key: 'blockquoteBg', label: 'Background' },
+      { key: 'blockquoteText', label: 'Text' },
+      { key: 'blockquoteAccent', label: 'Accent' },
+    ],
+  },
+  {
+    title: 'Info Blocks',
+    fields: [
+      { key: 'infoBorder', label: 'Info border' },
+      { key: 'infoBg', label: 'Info background' },
+      { key: 'warningBorder', label: 'Warning border' },
+      { key: 'warningBg', label: 'Warning background' },
+      { key: 'errorBorder', label: 'Error border' },
+      { key: 'errorBg', label: 'Error background' },
+      { key: 'successBorder', label: 'Success border' },
+      { key: 'successBg', label: 'Success background' },
     ],
   },
   {
@@ -174,7 +223,12 @@ function isColorField(key: string): boolean {
          key.startsWith('text') || 
          key.startsWith('accent') || 
          key.startsWith('border') ||
-         key.startsWith('code');
+         key.startsWith('code') ||
+         key.startsWith('blockquote') ||
+         key.startsWith('info') ||
+         key.startsWith('warning') ||
+         key.startsWith('error') ||
+         key.startsWith('success');
 }
 
 /**
@@ -200,7 +254,7 @@ function toHexColor(value: string): string {
   return '#000000'; // fallback
 }
 
-function createInputField(labelText: string, id: string, key: string): { field: HTMLDivElement; input: HTMLInputElement; textInput?: HTMLInputElement } {
+function createInputField(labelText: string, id: string, key: string): { field: HTMLDivElement; input: HTMLInputElement | HTMLSelectElement; textInput?: HTMLInputElement } {
   const field = document.createElement('div');
   field.className = 'theme-editor-field';
 
@@ -209,13 +263,37 @@ function createInputField(labelText: string, id: string, key: string): { field: 
   label.htmlFor = id;
   label.textContent = labelText;
 
+  const isColor = isColorField(key);
+  
+  // Handle select fields for fonts and specific properties
+  let options: readonly string[] | null = null;
+  if (key === 'fontFamily') options = FONT_FAMILIES;
+  else if (key === 'monoFontFamily') options = MONO_FONT_FAMILIES;
+  else if (key === 'fontSize') options = FONT_SIZES;
+  else if (key === 'fontWeight') options = FONT_WEIGHTS;
+  else if (key === 'lineHeight') options = LINE_HEIGHTS;
+  
+  if (options) {
+    const select = document.createElement('select');
+    select.className = 'theme-editor-input';
+    select.id = id;
+    
+    for (const option of options) {
+      const opt = document.createElement('option');
+      opt.value = option;
+      opt.textContent = option;
+      select.appendChild(opt);
+    }
+    
+    field.append(label, select);
+    return { field, input: select };
+  }
+  
   const input = document.createElement('input');
   input.className = 'theme-editor-input';
   input.id = id;
   input.autocomplete = 'off';
   input.spellcheck = false;
-  
-  const isColor = isColorField(key);
   
   if (isColor) {
     // Create a wrapper for color picker + text input
@@ -305,7 +383,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
   const metaFieldsContainer = document.createElement('div');
   metaFieldsContainer.className = 'theme-editor-fields';
 
-  const inputs = new Map<string, HTMLInputElement>();
+  const inputs = new Map<string, HTMLInputElement | HTMLSelectElement>();
   const textInputs = new Map<string, HTMLInputElement>();
 
   META_FIELDS.forEach((fieldDef, index) => {
@@ -420,7 +498,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
       if (input) {
         const value = configuration.meta[fieldDef.key];
         if (document.activeElement !== input && document.activeElement !== textInput) {
-          if (input.type === 'color') {
+          if (input instanceof HTMLInputElement && input.type === 'color') {
             input.value = toHexColor(value);
             if (textInput) {
               textInput.value = value;
@@ -439,7 +517,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
         if (input) {
           const value = configuration.tokens[fieldDef.key];
           if (document.activeElement !== input && document.activeElement !== textInput) {
-            if (input.type === 'color') {
+            if (input instanceof HTMLInputElement && input.type === 'color') {
               input.value = toHexColor(value);
               if (textInput) {
                 textInput.value = value;
@@ -505,7 +583,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
     return shouldOpen;
   };
 
-  const applyFromInput = (input: HTMLInputElement) => {
+  const applyFromInput = (input: HTMLInputElement | HTMLSelectElement) => {
     const section = input.dataset.section;
     const key = input.dataset.key;
     if (!section || !key) return;
@@ -524,8 +602,8 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
   // Handle color picker changes
   inputs.forEach((input, key) => {
     input.addEventListener('input', (event) => {
-      const target = event.currentTarget as HTMLInputElement;
-      if (target.type === 'color') {
+      const target = event.currentTarget as HTMLInputElement | HTMLSelectElement;
+      if (target instanceof HTMLInputElement && target.type === 'color') {
         // Update the corresponding text input
         const textInput = textInputs.get(key);
         if (textInput) {

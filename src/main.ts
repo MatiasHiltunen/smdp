@@ -184,16 +184,38 @@ function exportAsHtml(view: HtmlView | CanvasView): void {
     })
     .join('\n');
 
+  // Get current theme attribute
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  
+  // Get current CSS custom properties from root
+  const rootStyles = getComputedStyle(document.documentElement);
+  const customProps: string[] = [];
+  
+  // Collect all CSS custom properties
+  for (let i = 0; i < rootStyles.length; i++) {
+    const prop = rootStyles[i];
+    if (prop.startsWith('--')) {
+      const value = rootStyles.getPropertyValue(prop).trim();
+      if (value) {
+        customProps.push(`  ${prop}: ${value};`);
+      }
+    }
+  }
+  
+  const themeOverrides = customProps.length > 0 
+    ? `\n:root {\n${customProps.join('\n')}\n}`
+    : '';
+
   // Create HTML5 document
   const html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="${currentTheme}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="SMDP - Simple Markdown Parser">
   <title>Exported Markdown</title>
   <style>
-${styles}
+${styles}${themeOverrides}
   </style>
 </head>
 <body>
@@ -518,7 +540,7 @@ async function init(): Promise<void> {
   });
   document.body.appendChild(fabMenu);
   
-  applyTheme(initialTheme);
+  // Theme editor already loaded from URL, no need to reapply
 
   if (!themeEditorViewListenerAttached) {
     themeEditor.root.addEventListener("theme-editor-toggle", (event) => {

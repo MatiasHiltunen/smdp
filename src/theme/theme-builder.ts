@@ -22,7 +22,19 @@ export type ThemeTokenKey =
   | 'codeCom'
   | 'codeOp'
   | 'codePunc'
-  | 'codeRx';
+  | 'codeRx'
+  | 'blockquoteBorder'
+  | 'blockquoteBg'
+  | 'blockquoteText'
+  | 'blockquoteAccent'
+  | 'infoBorder'
+  | 'infoBg'
+  | 'warningBorder'
+  | 'warningBg'
+  | 'errorBorder'
+  | 'errorBg'
+  | 'successBorder'
+  | 'successBg';
 
 export type ThemeTokens = Record<ThemeTokenKey, string>;
 
@@ -90,6 +102,18 @@ const CSS_VARIABLES: Record<ThemeTokenKey, `--${string}`> = {
   codeOp: '--code-op',
   codePunc: '--code-punc',
   codeRx: '--code-rx',
+  blockquoteBorder: '--blockquote-border',
+  blockquoteBg: '--blockquote-bg',
+  blockquoteText: '--blockquote-text',
+  blockquoteAccent: '--blockquote-accent',
+  infoBorder: '--info-border',
+  infoBg: '--info-bg',
+  warningBorder: '--warning-border',
+  warningBg: '--warning-bg',
+  errorBorder: '--error-border',
+  errorBg: '--error-bg',
+  successBorder: '--success-border',
+  successBg: '--success-bg',
 };
 
 const DEFAULT_TOKENS: ThemeTokens = {
@@ -105,9 +129,9 @@ const DEFAULT_TOKENS: ThemeTokens = {
   accentStrong: '#0ea5e9',
   shadowSoft: '0 24px 80px rgba(15, 23, 42, 0.55)',
   shadowButton: '0 18px 40px rgba(14, 165, 233, 0.25)',
-  radiusLg: '28px',
-  radiusMd: '18px',
-  radiusSm: '10px',
+  radiusLg: '12px',
+  radiusMd: '8px',
+  radiusSm: '4px',
   codeKw: '#38bdf8',
   codeId: 'rgba(248, 250, 252, 0.92)',
   codeNum: '#facc15',
@@ -117,6 +141,18 @@ const DEFAULT_TOKENS: ThemeTokens = {
   codeOp: '#f472b6',
   codePunc: 'rgba(226, 232, 240, 0.7)',
   codeRx: '#f97316',
+  blockquoteBorder: 'rgba(94, 234, 212, 0.3)',
+  blockquoteBg: 'rgba(45, 212, 191, 0.06)',
+  blockquoteText: 'rgba(226, 232, 240, 0.85)',
+  blockquoteAccent: 'rgba(94, 234, 212, 0.4)',
+  infoBorder: 'rgba(59, 130, 246, 0.45)',
+  infoBg: 'rgba(59, 130, 246, 0.16)',
+  warningBorder: 'rgba(245, 158, 11, 0.45)',
+  warningBg: 'rgba(245, 158, 11, 0.16)',
+  errorBorder: 'rgba(239, 68, 68, 0.5)',
+  errorBg: 'rgba(239, 68, 68, 0.16)',
+  successBorder: 'rgba(16, 185, 129, 0.45)',
+  successBg: 'rgba(16, 185, 129, 0.16)',
 };
 
 const DEFAULT_META: ThemeMeta = {
@@ -131,10 +167,6 @@ const DEFAULT_META: ThemeMeta = {
 const DEFAULT_CUSTOM_PROPERTIES: Record<string, string> = {
   '--bg-glow-a': 'rgba(56, 189, 248, 0.12)',
   '--bg-glow-b': 'rgba(94, 234, 212, 0.12)',
-  '--blockquote-border': 'rgba(94, 234, 212, 0.3)',
-  '--blockquote-bg': 'rgba(45, 212, 191, 0.06)',
-  '--blockquote-text': 'rgba(226, 232, 240, 0.85)',
-  '--blockquote-accent': 'rgba(94, 234, 212, 0.4)',
 };
 
 const LIGHT_TOKENS: ThemeTokens = {
@@ -150,9 +182,9 @@ const LIGHT_TOKENS: ThemeTokens = {
   accentStrong: '#1d4ed8',
   shadowSoft: '0 18px 48px rgba(15, 23, 42, 0.15)',
   shadowButton: '0 16px 30px rgba(37, 99, 235, 0.25)',
-  radiusLg: '28px',
-  radiusMd: '18px',
-  radiusSm: '10px',
+  radiusLg: '12px',
+  radiusMd: '8px',
+  radiusSm: '4px',
   codeKw: '#2563eb',
   codeId: 'rgba(30, 41, 59, 0.92)',
   codeNum: '#ca8a04',
@@ -162,6 +194,18 @@ const LIGHT_TOKENS: ThemeTokens = {
   codeOp: '#9333ea',
   codePunc: 'rgba(51, 65, 85, 0.75)',
   codeRx: '#c2410c',
+  blockquoteBorder: 'rgba(59, 130, 246, 0.45)',
+  blockquoteBg: 'rgba(59, 130, 246, 0.12)',
+  blockquoteText: 'rgba(30, 41, 59, 0.85)',
+  blockquoteAccent: 'rgba(37, 99, 235, 0.55)',
+  infoBorder: 'rgba(59, 130, 246, 0.5)',
+  infoBg: 'rgba(59, 130, 246, 0.12)',
+  warningBorder: 'rgba(234, 179, 8, 0.55)',
+  warningBg: 'rgba(234, 179, 8, 0.12)',
+  errorBorder: 'rgba(220, 38, 38, 0.55)',
+  errorBg: 'rgba(220, 38, 38, 0.12)',
+  successBorder: 'rgba(34, 197, 94, 0.55)',
+  successBg: 'rgba(34, 197, 94, 0.12)',
 };
 
 const LIGHT_META: ThemeMeta = {
