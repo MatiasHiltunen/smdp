@@ -428,10 +428,9 @@ export async function renderHTMLFromBlocks(
       out.writeAscii("</ol></div>");
     }
 
-    bus.finalize();
-
     return out.toString();
   } finally {
+    bus.finalize();
     releaseHtmlArena(out);
   }
 }

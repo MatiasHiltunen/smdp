@@ -2199,6 +2199,7 @@ export function renderToCanvasFromBlocks(
   const prevState = canvasStates.get(canvas);
   if (prevState?.onScroll) {
     prevState.scrollEl.removeEventListener("scroll", prevState.onScroll);
+    prevState.bus?.finalize();
   }
 
   const scrollHandler = () => requestAnimationFrame(renderViewport);
