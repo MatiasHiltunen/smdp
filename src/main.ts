@@ -1,8 +1,6 @@
 import { u8 } from "./parser/index";
 import { createThemeBuilder, defaultTheme, lightTheme } from "./theme";
-import { StreamBuilder } from "./stream/fetch";
 import { StreamHTMLRenderer, StreamCanvasRenderer } from "./stream/parser";
-import { tapChunks } from "./stream/utils";
 
 import {
   initializeThemeEditor,
@@ -165,18 +163,11 @@ async function fetchMarkdownStreaming(
     ...(externalUrl ? {} : { cache: "no-cache" as RequestCache }),
   };
 
-  // Build streaming pipeline
-  const stream = StreamBuilder.fromFetch(target, requestInit)
-    .withAbort(controller.signal)
-    .through(tapChunks((chunk) => renderer.push(chunk)))
-    .build();
-
   // Collect bytes for textarea while streaming to renderer
   const bytes: Uint8Array[] = [];
-  let baseUrl = "";
 
   try {
-    // First fetch to get the response URL
+    // Fetch once and get both the URL and the stream
     const response = await fetch(target, requestInit);
     
     if (controller.signal.aborted) {
@@ -189,18 +180,47 @@ async function fetchMarkdownStreaming(
       );
     }
 
-    baseUrl = response.url
+    const baseUrl = response.url
       ? new URL(response.url).toString()
       : (externalUrl?.toString() ??
         new URL(target, window.location.href).toString());
 
-    // Consume the stream
-    for await (const chunk of stream) {
-      if (controller.signal.aborted) {
-        throw new DOMException("Fetch aborted", "AbortError");
-      }
-      bytes.push(chunk);
+    // Stream from the response body
+    if (!response.body) {
+      throw new Error("ReadableStream not supported in this browser");
     }
+
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        if (controller.signal.aborted) {
+          throw new DOMException("Fetch aborted", "AbortError");
+        }
+        
+        if (value) {
+          // Push to renderer for streaming processing
+          renderer.push(value);
+          // Collect for textarea
+          bytes.push(value);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    // Combine all chunks
+    const totalLength = bytes.reduce((sum, chunk) => sum + chunk.length, 0);
+    const combined = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of bytes) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    return { bytes: combined, baseUrl };
   } catch (error) {
     if (controller.signal.aborted) {
       throw new DOMException("Fetch aborted", "AbortError");
@@ -213,17 +233,6 @@ async function fetchMarkdownStreaming(
       activeFetchController = null;
     }
   }
-
-  // Combine all chunks
-  const totalLength = bytes.reduce((sum, chunk) => sum + chunk.length, 0);
-  const combined = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of bytes) {
-    combined.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return { bytes: combined, baseUrl };
 }
 
 type BaseView = {
