@@ -190,10 +190,17 @@ async function fetchMarkdownStreaming(
       throw new Error("ReadableStream not supported in this browser");
     }
 
-    const reader = response.body.getReader();
+    const [streamBody, streamEditor] = response.body.tee()
+
+    const reader = streamBody.getReader();
+    const readerEditor = streamEditor.getReader()
+
+  
+
     try {
       while (true) {
         const { done, value } = await reader.read();
+        const editorStatus = await readerEditor.read()
         if (done) break;
         
         if (controller.signal.aborted) {
@@ -204,11 +211,12 @@ async function fetchMarkdownStreaming(
           // Push to renderer for streaming processing
           renderer.push(value);
           // Collect for textarea
-          bytes.push(value);
+          bytes.push(editorStatus.value);
         }
       }
     } finally {
       reader.releaseLock();
+      readerEditor.releaseLock()
     }
 
     // Combine all chunks
