@@ -1,26 +1,12 @@
-import type { AuthorLanguageSpec } from './language-core';
-import { CompiledLanguageSpec, GenericHighlighter, compileLanguage, BinaryReader } from './language-core';
-import { LANGUAGE_BINARY, fromBase64 } from './precompiled';
-
-// Lazy import for HtmlArena (only needed in browser contexts)
-let HtmlArena: any;
-async function getHtmlArena() {
-  if (!HtmlArena) {
-    try {
-      // Dynamic import for browser environments
-      const arenaModule = await import('../parser/arena');
-      HtmlArena = arenaModule.HtmlArena;
-    } catch (e) {
-      // Fallback for environments where arena might not be available
-      HtmlArena = class {
-        writeAscii() {}
-        writeEscaped() {}
-        toUint8Array() { return new Uint8Array(); }
-      };
-    }
-  }
-  return HtmlArena;
-}
+import type { AuthorLanguageSpec } from "./language-core";
+import {
+  CompiledLanguageSpec,
+  GenericHighlighter,
+  compileLanguage,
+  BinaryReader,
+} from "./language-core";
+import { LANGUAGE_BINARY, fromBase64 } from "./precompiled";
+import { borrowHtmlArena, releaseHtmlArena } from "../common/arena.ts";
 
 const NON_CLASS_RE = /[^a-z0-9+#-]+/g;
 
@@ -34,26 +20,50 @@ function normalizeLanguage(lang?: string): NormalizedLang | undefined {
   const trimmed = lang.trim();
   if (!trimmed) return undefined;
   const lower = trimmed.toLowerCase();
-  const className = lower.replace(NON_CLASS_RE, '-');
+  const className = lower.replace(NON_CLASS_RE, "-");
   if (!className) return undefined;
   return { key: lower, className };
 }
 
-async function basicHighlight(bytes: Uint8Array, className?: string): Promise<Uint8Array> {
-  const ArenaClass = await getHtmlArena();
-  const arena = new ArenaClass();
-  arena.writeAscii('<pre class="code-block"><code');
-  if (className) {
-    arena.writeAscii(' class="language-');
-    arena.writeAscii(className);
-    arena.writeAscii('"');
+type HighlightTokenInfo = {
+  lang?: string;
+  type: number;
+  text: string;
+  line: number;
+};
+
+async function basicHighlight(
+  bytes: Uint8Array,
+  className?: string,
+  lang?: string,
+  onToken?: (info: HighlightTokenInfo) => void,
+): Promise<Uint8Array> {
+  const arena = borrowHtmlArena();
+  try {
+    arena.writeAscii('<pre class="code-block"><code');
+    if (className) {
+      arena.writeAscii(' class="language-');
+      arena.writeAscii(className);
+      arena.writeAscii('"');
+    }
+    arena.writeAscii('>');
+    if (bytes.length) {
+      arena.writeEscaped(bytes, 0, bytes.length);
+      if (onToken) {
+        const decoded = new TextDecoder().decode(bytes);
+        decoded.split('\n').forEach((line, idx) => {
+          if (line.length) {
+            onToken({ ...(lang !== undefined && { lang }), type: -1, text: line, line: idx });
+          }
+        });
+      }
+    }
+    arena.writeAscii('</code></pre>\n');
+    const out = arena.toUint8Array().slice();
+    return out;
+  } finally {
+    releaseHtmlArena(arena);
   }
-  arena.writeAscii('>');
-  if (bytes.length) {
-    arena.writeEscaped(bytes, 0, bytes.length);
-  }
-  arena.writeAscii('</code></pre>\n');
-  return arena.toUint8Array();
 }
 
 type LanguageEntry = {
@@ -65,7 +75,10 @@ const aliasRegistry = new Map<string, LanguageEntry>();
 const aliasSet = new Set<string>();
 const specSet = new Set<CompiledLanguageSpec>();
 
-function registerEntry(entry: LanguageEntry, aliasList: readonly string[]): void {
+function registerEntry(
+  entry: LanguageEntry,
+  aliasList: readonly string[],
+): void {
   specSet.add(entry.spec);
   for (const alias of aliasList) {
     const lower = alias.toLowerCase();
@@ -79,8 +92,13 @@ export interface RegisterLanguageOptions {
   aliases?: readonly string[];
 }
 
-export function registerHighlightLanguage(options: RegisterLanguageOptions): CompiledLanguageSpec {
-  const compiled = options.spec instanceof CompiledLanguageSpec ? options.spec : compileLanguage(options.spec);
+export function registerHighlightLanguage(
+  options: RegisterLanguageOptions,
+): CompiledLanguageSpec {
+  const compiled =
+    options.spec instanceof CompiledLanguageSpec
+      ? options.spec
+      : compileLanguage(options.spec);
   const entry: LanguageEntry = {
     spec: compiled,
     highlighter: new GenericHighlighter(compiled),
@@ -107,16 +125,29 @@ function ensurePrecompiledLoaded(): void {
   precompiledLoaded = true;
 }
 
-export async function highlightCodeBlock(bytes: Uint8Array, lang?: string): Promise<Uint8Array> {
+export async function highlightCodeBlock(
+  bytes: Uint8Array,
+  lang?: string,
+  onToken?: (info: HighlightTokenInfo) => void,
+): Promise<Uint8Array> {
   ensurePrecompiledLoaded();
   const normalized = normalizeLanguage(lang);
   if (normalized) {
     const entry = aliasRegistry.get(normalized.key);
     if (entry) {
-      return entry.highlighter.highlight(bytes, normalized.className);
+      return entry.highlighter.highlight(
+        bytes,
+        normalized.className,
+        info => onToken?.({ ...info, lang: info.lang ?? entry.spec.name }),
+      );
     }
   }
-  return await basicHighlight(bytes, normalized?.className ?? (lang ? lang.toLowerCase() : undefined));
+  return await basicHighlight(
+    bytes,
+    normalized?.className ?? (lang ? lang.toLowerCase() : undefined),
+    lang,
+    onToken,
+  );
 }
 
 export function getRegisteredHighlightLanguages(): string[] {
@@ -124,12 +155,20 @@ export function getRegisteredHighlightLanguages(): string[] {
   return Array.from(aliasSet.values()).sort();
 }
 
-export function getRegisteredHighlightSpecs(): { name: string; aliases: readonly string[] }[] {
+export function getRegisteredHighlightSpecs(): {
+  name: string;
+  aliases: readonly string[];
+}[] {
   ensurePrecompiledLoaded();
-  return Array.from(specSet.values()).map((spec) => ({ name: spec.name, aliases: spec.aliases ?? [spec.name] }));
+  return Array.from(specSet.values()).map((spec) => ({
+    name: spec.name,
+    aliases: spec.aliases ?? [spec.name],
+  }));
 }
 
-export function getLanguageSpec(lang?: string): CompiledLanguageSpec | undefined {
+export function getLanguageSpec(
+  lang?: string,
+): CompiledLanguageSpec | undefined {
   ensurePrecompiledLoaded();
   const normalized = normalizeLanguage(lang);
   if (normalized) {
@@ -138,3 +177,5 @@ export function getLanguageSpec(lang?: string): CompiledLanguageSpec | undefined
   }
   return undefined;
 }
+
+export type { HighlightTokenInfo };

@@ -35,6 +35,10 @@
     "./theme": {
       "types": "./src/theme/index.ts",
       "import": "./src/theme/index.ts"
+    },
+    "./stream": {
+      "types": "./src/stream/index.ts",
+      "import": "./src/stream/index.ts"
     }
   },
   "sideEffects": false,

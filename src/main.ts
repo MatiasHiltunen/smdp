@@ -1,5 +1,7 @@
-import { MDParser, u8 } from "./parser/index";
+import { u8 } from "./parser/index";
 import { createThemeBuilder, defaultTheme, lightTheme } from "./theme";
+import { StreamHTMLRenderer, StreamCanvasRenderer } from "./stream/parser";
+
 import {
   initializeThemeEditor,
   loadThemeFromUrl,
@@ -11,11 +13,6 @@ const themeBuilder = createThemeBuilder();
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
-
-const parser = new MDParser({
-  // Security: disable raw HTML blocks by default
-  allowRawHtml: false,
-});
 
 const createElement = <T extends keyof HTMLElementTagNameMap>(tag: T) =>
   document.createElement(tag) as HTMLElementTagNameMap[T];
@@ -146,23 +143,96 @@ type MarkdownFetchResult = {
   baseUrl: string;
 };
 
-async function fetchMarkdown(
+const markdownAcceptHeader =
+  "text/markdown, text/plain;q=0.8, text/*;q=0.6, */*;q=0.1";
+
+let activeFetchController: AbortController | null = null;
+
+async function fetchMarkdownStreaming(
   externalUrl: URL | null,
+  renderer: StreamHTMLRenderer | StreamCanvasRenderer,
 ): Promise<MarkdownFetchResult> {
   const target = externalUrl?.toString() ?? "/test.md";
-  const response = await fetch(target);
+  const controller = new AbortController();
+  activeFetchController?.abort();
+  activeFetchController = controller;
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch markdown: ${response.status} ${response.statusText}`,
-    );
+  const requestInit: RequestInit = {
+    headers: { Accept: markdownAcceptHeader },
+    signal: controller.signal,
+    ...(externalUrl ? {} : { cache: "no-cache" as RequestCache }),
+  };
+
+  // Collect bytes for textarea while streaming to renderer
+  const bytes: Uint8Array[] = [];
+
+  try {
+    // Fetch once and get both the URL and the stream
+    const response = await fetch(target, requestInit);
+    
+    if (controller.signal.aborted) {
+      throw new DOMException("Fetch aborted", "AbortError");
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch markdown: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const baseUrl = response.url
+      ? new URL(response.url).toString()
+      : (externalUrl?.toString() ??
+        new URL(target, window.location.href).toString());
+
+    // Stream from the response body
+    if (!response.body) {
+      throw new Error("ReadableStream not supported in this browser");
+    }
+
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        if (controller.signal.aborted) {
+          throw new DOMException("Fetch aborted", "AbortError");
+        }
+        
+        if (value) {
+          // Push to renderer for streaming processing
+          renderer.push(value);
+          // Collect for textarea
+          bytes.push(value);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    // Combine all chunks
+    const totalLength = bytes.reduce((sum, chunk) => sum + chunk.length, 0);
+    const combined = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of bytes) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    return { bytes: combined, baseUrl };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new DOMException("Fetch aborted", "AbortError");
+    }
+    throw new Error(`Failed to fetch markdown: ${(error as Error).message}`, {
+      cause: error,
+    });
+  } finally {
+    if (activeFetchController === controller) {
+      activeFetchController = null;
+    }
   }
-
-  const buffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const baseUrl =
-    externalUrl?.toString() ?? new URL(target, window.location.href).toString();
-  return { bytes, baseUrl };
 }
 
 type BaseView = {
@@ -540,18 +610,27 @@ async function applyMarkdownToHtml(
   bytes: Uint8Array,
   baseUrl?: string,
 ): Promise<void> {
-  const overrides = baseUrl ? { baseUrl } : undefined;
-  const html = await parser.parse(bytes, overrides);
-  view.viewer.innerHTML = html;
+  const renderer = new StreamHTMLRenderer({
+    ...(baseUrl && { options: { baseUrl } }),
+    onHTML: (html) => {
+      view.viewer.innerHTML = html;
+    },
+  });
+  renderer.push(bytes);
+  await renderer.finalize();
 }
 
-function applyMarkdownToCanvas(
+async function applyMarkdownToCanvas(
   view: CanvasView,
   bytes: Uint8Array,
   baseUrl?: string,
-): void {
-  const overrides = baseUrl ? { baseUrl } : undefined;
-  parser.renderToCanvas(bytes, view.canvas, overrides);
+): Promise<void> {
+  const renderer = new StreamCanvasRenderer({
+    canvas: view.canvas,
+    ...(baseUrl && { options: { baseUrl } }),
+  });
+  renderer.push(bytes);
+  await renderer.finalize();
 }
 
 function enableRealtimeUpdates(
@@ -592,9 +671,7 @@ async function init(): Promise<void> {
   if (route.mode === "canvas") {
     const canvasView = createCanvasView();
     view = canvasView;
-    apply = async (bytes, baseUrl) => {
-      applyMarkdownToCanvas(canvasView, bytes, baseUrl);
-    };
+    apply = (bytes, baseUrl) => applyMarkdownToCanvas(canvasView, bytes, baseUrl);
   } else {
     const htmlView = createHtmlView();
     view = htmlView;
@@ -636,9 +713,51 @@ async function init(): Promise<void> {
   let resolvedText: string | null = null;
   let currentBaseUrl: string | undefined;
 
+  // Defer rendering to avoid blocking LCP - allow browser to paint shell first
+  const deferredRender = async (
+    renderer: StreamHTMLRenderer | StreamCanvasRenderer,
+    url: URL | null
+  ): Promise<MarkdownFetchResult> => {
+    // Use requestIdleCallback if available, otherwise setTimeout
+    await new Promise<void>((resolve) => {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(() => resolve(), { timeout: 50 });
+      } else {
+        setTimeout(resolve, 0);
+      }
+    });
+    
+    return fetchMarkdownStreaming(url, renderer);
+  };
+
+  // Create temporary renderer for streaming fetch
+  const tempRenderer = route.mode === "canvas"
+    ? new StreamCanvasRenderer({ canvas: (view as CanvasView).canvas })
+    : new StreamHTMLRenderer({
+        onHTML: (html) => {
+          (view as HtmlView).viewer.innerHTML = html;
+        },
+      });
+
   try {
-    resolved = await fetchMarkdown(route.externalUrl);
+    resolved = await deferredRender(tempRenderer, route.externalUrl);
     resolvedText = new TextDecoder().decode(resolved.bytes);
+    currentBaseUrl = resolved.baseUrl;
+    
+    // Finalize the streaming render in idle time
+    await new Promise<void>((resolve) => {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(async () => {
+          await tempRenderer.finalize();
+          resolve();
+        }, { timeout: 100 });
+      } else {
+        setTimeout(async () => {
+          await tempRenderer.finalize();
+          resolve();
+        }, 0);
+      }
+    });
   } catch (error) {
     console.error(error);
     displayError(
@@ -646,8 +765,17 @@ async function init(): Promise<void> {
     );
     if (route.externalUrl) {
       try {
-        resolved = await fetchMarkdown(null);
+        const fallbackRenderer = route.mode === "canvas"
+          ? new StreamCanvasRenderer({ canvas: (view as CanvasView).canvas })
+          : new StreamHTMLRenderer({
+              onHTML: (html) => {
+                (view as HtmlView).viewer.innerHTML = html;
+              },
+            });
+        resolved = await deferredRender(fallbackRenderer, null);
         resolvedText = new TextDecoder().decode(resolved.bytes);
+        currentBaseUrl = resolved.baseUrl;
+        await fallbackRenderer.finalize();
       } catch (fallbackError) {
         console.error("Unable to load fallback markdown", fallbackError);
       }
@@ -660,11 +788,6 @@ async function init(): Promise<void> {
     view.textarea.value = resolvedText;
   } else {
     view.textarea.value = "";
-  }
-
-  if (resolved) {
-    currentBaseUrl = resolved.baseUrl;
-    await apply(resolved.bytes, currentBaseUrl);
   }
 
   enableRealtimeUpdates(view, apply, () => currentBaseUrl);
