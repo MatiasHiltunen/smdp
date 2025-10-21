@@ -7,7 +7,6 @@ import { ByteStream } from "../common/byte-stream.ts";
 import type { BlockEvent, BlockState } from "./types";
 import { lineSpans } from "./line-parser";
 import {
-  isBlank,
   isHr,
   detectFence,
   parseListMarker,

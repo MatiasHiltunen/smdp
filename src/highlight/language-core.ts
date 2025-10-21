@@ -10,7 +10,7 @@ import {
 import {
   borrowHtmlArena,
   releaseHtmlArena,
-  type WritableArena,
+  type HtmlArena,
 } from "../common/arena.ts";
 
 const TE = new TextEncoder();
@@ -990,7 +990,7 @@ export class GenericHighlighter {
       line: number;
     }) => void,
   ): Promise<Uint8Array> {
-    const arena: WritableArena = borrowHtmlArena();
+    const arena: HtmlArena = borrowHtmlArena();
     try {
       const langClass = languageClass ?? this.spec.name.toLowerCase();
 

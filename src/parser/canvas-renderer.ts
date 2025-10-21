@@ -462,7 +462,7 @@ interface CanvasRenderState {
   scrollEl: HTMLElement;
   spacer?: HTMLElement | null;
   onScroll?: () => void;
-  bus?: RenderBus;
+  bus: RenderBus | undefined;
 }
 
 const canvasStates = new WeakMap<HTMLCanvasElement, CanvasRenderState>();
@@ -529,7 +529,7 @@ function renderHighlightedCode(
           }
           if (bus && tokenText.length) {
             bus.emitHighlight({
-              lang,
+              ...(lang !== undefined && { lang }),
               type,
               text: tokenText,
               line: lineIndex,
@@ -572,7 +572,7 @@ function renderHighlightedCode(
         }
         if (bus && line.length) {
           bus.emitHighlight({
-            lang,
+            ...(lang !== undefined && { lang }),
             type: TokenType.Identifier,
             text: line,
             line: lineIndex,
@@ -1079,6 +1079,7 @@ function renderCanvas(
     skipClear?: boolean;
     onImageLoad?: () => void;
     parserOptions?: ParserOptions;
+    bus?: RenderBus;
   } = {},
 ): number {
   const parserOptions = opts.parserOptions ?? {};
@@ -1182,6 +1183,7 @@ function renderCanvas(
             y: blockquoteY,
             width: maxWidth - (indent - INDENT) + bqPadding * 2,
             height: y - blockquoteY,
+            indent: indent - INDENT,
           });
           inBlockquote = false;
         }
@@ -1773,6 +1775,7 @@ function renderCanvas(
       y: blockquoteY,
       width: maxWidth - (indent - INDENT) + 10,
       height: y - blockquoteY,
+      indent: indent - INDENT,
     });
   }
 
@@ -2084,7 +2087,7 @@ export function renderToCanvasFromBlocks(
     renderCanvas(u8, ctx, false, {
       onImageLoad: rerender,
       parserOptions: options,
-      bus,
+      ...(bus !== undefined && { bus }),
     });
     canvas.dataset.virtualized = "false";
     canvas.dataset.renderReady = "ready";
@@ -2123,7 +2126,7 @@ export function renderToCanvasFromBlocks(
   renderCanvas(u8, offscreenCtx, false, {
     onImageLoad: rerender,
     parserOptions: options,
-    bus,
+    ...(bus !== undefined && { bus }),
   });
 
   canvas.width = styleWidth * dpr;

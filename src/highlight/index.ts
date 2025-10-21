@@ -53,7 +53,7 @@ async function basicHighlight(
         const decoded = new TextDecoder().decode(bytes);
         decoded.split('\n').forEach((line, idx) => {
           if (line.length) {
-            onToken({ lang, type: -1, text: line, line: idx });
+            onToken({ ...(lang !== undefined && { lang }), type: -1, text: line, line: idx });
           }
         });
       }
