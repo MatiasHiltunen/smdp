@@ -215,23 +215,37 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
     }
 
     // Lists
+    const leadingIndent = i - start;
     const li = parseListMarker(u8, i, end);
     if (li) {
-      // Close lists at higher/equal indent with different kind
+      li.indent += leadingIndent;
+
+      // Step back up the stack until we reach a matching indent
       while (
         st.listStack.length &&
-        st.listStack[st.listStack.length - 1].indent >= li.indent &&
-        st.listStack[st.listStack.length - 1].kind !== li.type
+        st.listStack[st.listStack.length - 1].indent > li.indent
       ) {
         const item = st.listStack.pop()!;
         yield { type: 'listClose', kind: item.kind };
       }
-      
+
+      // Replace list at the same indent when the marker kind changes
+      while (st.listStack.length) {
+        const top = st.listStack[st.listStack.length - 1];
+        if (top.indent === li.indent && top.kind !== li.type) {
+          const item = st.listStack.pop()!;
+          yield { type: 'listClose', kind: item.kind };
+          continue;
+        }
+        break;
+      }
+
       const top = st.listStack[st.listStack.length - 1];
       if (!top || top.indent !== li.indent || top.kind !== li.type) {
         st.listStack.push({ kind: li.type, indent: li.indent });
         yield { type: 'listOpen', kind: li.type, indent: li.indent };
       }
+
       // Detect GFM task list prefix [ ] or [x]
       let task = false;
       let checked = false;
@@ -247,7 +261,7 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
           }
         }
       }
-      
+
       yield { type: 'listItem', s: afterStart, e: li.afterEnd, task, checked };
       continue;
     }

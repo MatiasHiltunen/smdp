@@ -1,19 +1,19 @@
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = join(__filename, '..');
+const __dirname = join(__filename, "..");
 
 async function renderMarkdownToHtml(markdown: string): Promise<string> {
-  const { MDParser, u8 } = await import('../src/parser/index.ts');
+  const { MDParser, u8 } = await import("../src/parser/index.ts");
   const parser = new MDParser();
   return await parser.parse(u8(markdown), {});
 }
 
-test('golden: basic markdown elements', async () => {
+test("golden: basic markdown elements", async () => {
   const markdown = `
 # Heading 1
 
@@ -103,14 +103,16 @@ End of content`;
   assert.equal(actual.trim(), expected.trim());
 });
 
-test('golden: complex inline formatting', async () => {
-  const markdown = 'Text with **bold** and *italic* and `code` and ~~strikethrough~~ and [link](url) text.';
-  const expected = '<p>Text with <strong>bold</strong> and <em>italic</em> and <code>code</code> and <del>strikethrough</del> and <a href="url">link</a> text.</p>';
+test("golden: complex inline formatting", async () => {
+  const markdown =
+    "Text with **bold** and *italic* and `code` and ~~strikethrough~~ and [link](url) text.";
+  const expected =
+    '<p>Text with <strong>bold</strong> and <em>italic</em> and <code>code</code> and <del>strikethrough</del> and <a href="url">link</a> text.</p>';
   const actual = await renderMarkdownToHtml(markdown);
   assert.equal(actual.trim(), expected.trim());
 });
 
-test('golden: nested lists with tasks', async () => {
+test("golden: nested lists with tasks", async () => {
   const markdown = `
 - [x] Top level task
   - [ ] Nested item
@@ -120,10 +122,12 @@ test('golden: nested lists with tasks', async () => {
 
   const expected = `<ul>
 <li><input type="checkbox" disabled checked> Top level task
-</li>
+<ul>
 <li><input type="checkbox" disabled> Nested item
 </li>
 <li><input type="checkbox" disabled checked> Completed nested item
+</li>
+</ul>
 </li>
 <li><input type="checkbox" disabled> Another top level task
 </li>
@@ -133,7 +137,37 @@ test('golden: nested lists with tasks', async () => {
   assert.equal(actual.trim(), expected.trim());
 });
 
-test('golden: table alignment', async () => {
+test("golden: mixed nested lists", async () => {
+  const markdown = `
+1. Ordered root
+   - Bullet child
+     1. Deep ordered
+   - Second bullet
+2. Second root
+`;
+
+  const expected = `<ol>
+<li>Ordered root
+<ul>
+<li>Bullet child
+<ol>
+<li>Deep ordered
+</li>
+</ol>
+</li>
+<li>Second bullet
+</li>
+</ul>
+</li>
+<li>Second root
+</li>
+</ol>`;
+
+  const actual = await renderMarkdownToHtml(markdown.trim());
+  assert.equal(actual.trim(), expected.trim());
+});
+
+test("golden: table alignment", async () => {
   const markdown = `
 | Left | Center | Right |
 |:-----|:------:|------:|
@@ -157,7 +191,7 @@ End of table`;
   assert.equal(actual.trim(), expected.trim());
 });
 
-test('golden: URL allowlist', async () => {
+test("golden: URL allowlist", async () => {
   const markdown = `
 [Valid HTTP link](http://example.com)
 [Valid HTTPS link](https://example.com)
