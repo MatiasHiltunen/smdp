@@ -605,6 +605,8 @@ function createCanvasView(): CanvasView {
   };
 }
 
+let debugCount = 0
+
 async function applyMarkdownToHtml(
   view: HtmlView,
   bytes: Uint8Array,
@@ -613,6 +615,7 @@ async function applyMarkdownToHtml(
   const renderer = new StreamHTMLRenderer({
     ...(baseUrl && { options: { baseUrl } }),
     onHTML: (html) => {
+      console.log(debugCount++)
       view.viewer.innerHTML = html;
     },
   });
