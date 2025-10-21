@@ -361,6 +361,9 @@ body.is-editing .floating-toggle {
   font-family: var(--font-mono, "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace);
   line-height: 1.65;
   white-space: pre;
+  /* Optimize rendering for large code blocks */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 500px;
   tab-size: 2;
 }
 

@@ -704,6 +704,23 @@ async function init(): Promise<void> {
   let resolvedText: string | null = null;
   let currentBaseUrl: string | undefined;
 
+  // Defer rendering to avoid blocking LCP - allow browser to paint shell first
+  const deferredRender = async (
+    renderer: StreamHTMLRenderer | StreamCanvasRenderer,
+    url: URL | null
+  ): Promise<MarkdownFetchResult> => {
+    // Use requestIdleCallback if available, otherwise setTimeout
+    await new Promise<void>((resolve) => {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(() => resolve(), { timeout: 50 });
+      } else {
+        setTimeout(resolve, 0);
+      }
+    });
+    
+    return fetchMarkdownStreaming(url, renderer);
+  };
+
   // Create temporary renderer for streaming fetch
   const tempRenderer = route.mode === "canvas"
     ? new StreamCanvasRenderer({ canvas: (view as CanvasView).canvas })
@@ -714,12 +731,24 @@ async function init(): Promise<void> {
       });
 
   try {
-    resolved = await fetchMarkdownStreaming(route.externalUrl, tempRenderer);
+    resolved = await deferredRender(tempRenderer, route.externalUrl);
     resolvedText = new TextDecoder().decode(resolved.bytes);
     currentBaseUrl = resolved.baseUrl;
     
-    // Finalize the streaming render
-    await tempRenderer.finalize();
+    // Finalize the streaming render in idle time
+    await new Promise<void>((resolve) => {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(async () => {
+          await tempRenderer.finalize();
+          resolve();
+        }, { timeout: 100 });
+      } else {
+        setTimeout(async () => {
+          await tempRenderer.finalize();
+          resolve();
+        }, 0);
+      }
+    });
   } catch (error) {
     console.error(error);
     displayError(
@@ -734,7 +763,7 @@ async function init(): Promise<void> {
                 (view as HtmlView).viewer.innerHTML = html;
               },
             });
-        resolved = await fetchMarkdownStreaming(null, fallbackRenderer);
+        resolved = await deferredRender(fallbackRenderer, null);
         resolvedText = new TextDecoder().decode(resolved.bytes);
         currentBaseUrl = resolved.baseUrl;
         await fallbackRenderer.finalize();

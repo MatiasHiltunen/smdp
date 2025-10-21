@@ -1003,6 +1003,33 @@ export class GenericHighlighter {
       arena.writeAscii(">");
 
       let lineIndex = 0;
+      
+      // Batch consecutive tokens of same type to reduce DOM nodes
+      let pendingType: number | null = null;
+      let pendingStart = 0;
+      
+      const flushPending = () => {
+        if (pendingType === null) return;
+        
+        const spanTag = 
+          pendingType === TokenType.Keyword ? SPAN_BYTES.kw :
+          pendingType === TokenType.LiteralNum ? SPAN_BYTES.num :
+          pendingType === TokenType.LiteralStr ? SPAN_BYTES.str :
+          pendingType === TokenType.LiteralTpl ? SPAN_BYTES.tpl :
+          pendingType === TokenType.Comment ? SPAN_BYTES.com :
+          pendingType === TokenType.Regex ? SPAN_BYTES.rx :
+          pendingType === TokenType.Operator ? SPAN_BYTES.op :
+          null;
+        
+        if (spanTag) {
+          arena.writeBytes(spanTag);
+          arena.writeEscaped(u8, pendingStart, pendingStart + 1); // flush accumulated
+          arena.writeBytes(SPAN_BYTES.close);
+        }
+        
+        pendingType = null;
+      };
+      
       const emit: EmitFn = (type, s, e) => {
         const tokenText = TD.decode(u8.subarray(s, e));
         if (type !== TokenType.Newline && tokenText.length) {
@@ -1013,65 +1040,63 @@ export class GenericHighlighter {
             line: lineIndex,
           });
         }
+        
+        // Types that should be wrapped in spans
+        const shouldWrap = 
+          type === TokenType.Keyword ||
+          type === TokenType.LiteralNum ||
+          type === TokenType.LiteralStr ||
+          type === TokenType.LiteralTpl ||
+          type === TokenType.Comment ||
+          type === TokenType.Regex ||
+          type === TokenType.Operator;
+        
         switch (type) {
           case TokenType.Whitespace:
+            flushPending();
             arena.writeEscaped(u8, s, e);
             return;
           case TokenType.Newline:
+            flushPending();
             arena.writeByte(0x0a);
             lineIndex++;
             return;
           case TokenType.Identifier:
-            arena.writeBytes(SPAN_BYTES.id);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
-          case TokenType.Keyword:
-            arena.writeBytes(SPAN_BYTES.kw);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
-          case TokenType.LiteralNum:
-            arena.writeBytes(SPAN_BYTES.num);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
-          case TokenType.LiteralStr:
-            arena.writeBytes(SPAN_BYTES.str);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
-          case TokenType.LiteralTpl:
-            arena.writeBytes(SPAN_BYTES.tpl);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
-          case TokenType.Comment:
-            arena.writeBytes(SPAN_BYTES.com);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
-          case TokenType.Regex:
-            arena.writeBytes(SPAN_BYTES.rx);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
           case TokenType.Punct:
-            arena.writeBytes(SPAN_BYTES.p);
+            // Don't wrap common tokens to reduce DOM nodes
+            flushPending();
             arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
-            return;
-          case TokenType.Operator:
-            arena.writeBytes(SPAN_BYTES.op);
-            arena.writeEscaped(u8, s, e);
-            arena.writeBytes(SPAN_BYTES.close);
             return;
           default:
-            arena.writeEscaped(u8, s, e);
+            if (shouldWrap) {
+              // Wrap important tokens individually
+              flushPending();
+              const spanTag = 
+                type === TokenType.Keyword ? SPAN_BYTES.kw :
+                type === TokenType.LiteralNum ? SPAN_BYTES.num :
+                type === TokenType.LiteralStr ? SPAN_BYTES.str :
+                type === TokenType.LiteralTpl ? SPAN_BYTES.tpl :
+                type === TokenType.Comment ? SPAN_BYTES.com :
+                type === TokenType.Regex ? SPAN_BYTES.rx :
+                type === TokenType.Operator ? SPAN_BYTES.op :
+                null;
+              
+              if (spanTag) {
+                arena.writeBytes(spanTag);
+                arena.writeEscaped(u8, s, e);
+                arena.writeBytes(SPAN_BYTES.close);
+              } else {
+                arena.writeEscaped(u8, s, e);
+              }
+            } else {
+              flushPending();
+              arena.writeEscaped(u8, s, e);
+            }
         }
       };
 
       this.tokenizer.tokenize(u8, emit);
+      flushPending();
 
       arena.writeAscii("</code></pre>\n");
       const out = arena.toUint8Array().slice();
