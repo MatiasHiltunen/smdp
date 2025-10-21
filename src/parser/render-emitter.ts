@@ -13,7 +13,7 @@ export interface RenderEmitter {
   finalize(): void;
 }
 
-export abstract class BaseRenderEmitter implements RenderEmitter {
+export class BaseRenderEmitter implements RenderEmitter {
   onBlock(_event: BlockEvent): void {}
   onInline(_tokens: Iterable<InlineToken>): void {}
   onCanvasCommand(_command: CanvasCommand): void {}
@@ -60,7 +60,11 @@ export class CollectingRenderEmitter extends BaseRenderEmitter {
 }
 
 export class RenderBus {
-  constructor(private readonly emitter?: RenderEmitter | null) {}
+  private readonly emitter: RenderEmitter | null | undefined;
+  
+  constructor(emitter?: RenderEmitter | null) {
+    this.emitter = emitter;
+  }
 
   emitBlock(ev: BlockEvent): void {
     this.emitter?.onBlock(ev);
