@@ -2,8 +2,9 @@
  * Inline token generator for parsing emphasis, code, links, images, etc.
  */
 
-import type { InlineToken } from './types';
-import { findBracket, matchHttp, matchWww, scanUrl } from './utils';
+import { ByteStream } from "../common/byte-stream.ts";
+import type { InlineToken } from "./types";
+import { findBracket, matchHttp, matchWww, scanUrl } from "./utils";
 
 /**
  * Yields inline tokens:
@@ -20,166 +21,157 @@ export function* inlineTokens(
   s: number,
   e: number,
 ): Generator<InlineToken> {
+  const cursor = new ByteStream(u8, s, e);
+  const end = e;
+
   const emStack: Array<{ char: number; pos: number }> = [];
   const strongStack: Array<{ char: number; pos: number }> = [];
   const strikeStack: number[] = [];
-  let i = s;
+
   let inCode = false;
   let codeTicks = 0;
   let codeStart = -1;
 
-  while (i < e) {
-    const c = u8[i];
+  while (!cursor.eof) {
+    const i = cursor.pos;
+    const c = cursor.peek();
 
-    // `code`
-    if (c === 0x60) { // backtick
+    if (c === 0x60) {
+      const runStart = cursor.pos;
       let t = 0;
-      while (i < e && u8[i] === 0x60) {
+      while (!cursor.eof && cursor.peek() === 0x60) {
+        cursor.advance();
         t++;
-        i++;
       }
-      
+
       if (!inCode) {
         inCode = true;
         codeTicks = t;
-        codeStart = i;
+        codeStart = cursor.pos;
         continue;
       }
-      
+
       if (t === codeTicks) {
-        yield { kind: 'code', s: codeStart, e: i - t };
+        yield { kind: "code", s: codeStart, e: runStart };
         inCode = false;
         codeTicks = 0;
         codeStart = -1;
         continue;
       }
-      
-      for (; t > 0; t--) {
-        yield { kind: 'text', s: i - t, e: i - t + 1 };
+
+      for (let k = 0; k < t; k++) {
+        const pos = runStart + k;
+        yield { kind: "text", s: pos, e: pos + 1 };
       }
       continue;
     }
-    
+
     if (inCode) {
-      // Skip characters inside code spans - they'll be yielded as a single 'code' token
-      i++;
+      cursor.advance();
       continue;
     }
 
-    // ![alt](src)
-    if (c === 0x21 && i + 1 < e && u8[i + 1] === 0x5b) { // ![ 
-      const altClose = findBracket(u8, i + 2, e, 0x5d);
-      if (altClose !== -1 && altClose + 1 < e && u8[altClose + 1] === 0x28) { // ](
-        const srcClose = findBracket(u8, altClose + 2, e, 0x29); // )
+    if (c === 0x21 && i + 1 < end && u8[i + 1] === 0x5b) {
+      const altClose = findBracket(u8, i + 2, end, 0x5d);
+      if (altClose !== -1 && altClose + 1 < end && u8[altClose + 1] === 0x28) {
+        const srcClose = findBracket(u8, altClose + 2, end, 0x29);
         if (srcClose !== -1) {
           yield {
-            kind: 'img',
+            kind: "img",
             altS: i + 2,
             altE: altClose,
             srcS: altClose + 2,
             srcE: srcClose,
           };
-          i = srcClose + 1;
+          cursor.pos = srcClose + 1;
           continue;
         }
       }
     }
 
-    // [text](url) or [^footnote]
-    if (c === 0x5b) { // [
-      // Check for footnote reference [^id]
-      if (i + 2 < e && u8[i + 1] === 0x5e) { // [^
-        const close = findBracket(u8, i + 2, e, 0x5d); // ]
+    if (c === 0x5b) {
+      if (i + 2 < end && u8[i + 1] === 0x5e) {
+        const close = findBracket(u8, i + 2, end, 0x5d);
         if (close !== -1) {
           yield {
-            kind: 'footnoteRef',
+            kind: "footnoteRef",
             idS: i + 2,
             idE: close,
           };
-          i = close + 1;
+          cursor.pos = close + 1;
           continue;
         }
       }
-      
-      // Regular link [text](url)
-      const close = findBracket(u8, i + 1, e, 0x5d); // ]
-      if (close !== -1 && close + 1 < e && u8[close + 1] === 0x28) { // (
-        const endParen = findBracket(u8, close + 2, e, 0x29); // )
+
+      const close = findBracket(u8, i + 1, end, 0x5d);
+      if (close !== -1 && close + 1 < end && u8[close + 1] === 0x28) {
+        const endParen = findBracket(u8, close + 2, end, 0x29);
         if (endParen !== -1) {
           yield {
-            kind: 'link',
+            kind: "link",
             hrefS: close + 2,
             hrefE: endParen,
             textS: i + 1,
             textE: close,
           };
-          i = endParen + 1;
+          cursor.pos = endParen + 1;
           continue;
         }
       }
     }
 
-    // Autolinks: http(s)://... OR www....
     if (
-      (c === 0x68 && matchHttp(u8, i, e)) || // h (http)
-      (c === 0x77 && matchWww(u8, i, e))     // w (www)
+      (c === 0x68 && matchHttp(u8, i, end)) ||
+      (c === 0x77 && matchWww(u8, i, end))
     ) {
       const isWww = c === 0x77;
-      const { hrefStart, hrefEnd } = scanUrl(u8, i, e);
-      yield { kind: 'autolink', s: hrefStart, e: hrefEnd, isWww };
-      i = hrefEnd;
+      const { hrefStart, hrefEnd } = scanUrl(u8, i, end);
+      yield { kind: "autolink", s: hrefStart, e: hrefEnd, isWww };
+      cursor.pos = hrefEnd;
       continue;
     }
 
-    // Strikethrough ~~text~~
-    if (c === 0x7e) { // ~
+    if (c === 0x7e) {
       let j = i;
-      while (j < e && u8[j] === 0x7e) j++;
+      while (j < end && u8[j] === 0x7e) j++;
       const runLen = j - i;
       if (runLen >= 2) {
         if (strikeStack.length > 0) {
           strikeStack.pop();
-          yield { kind: 'strikeClose' };
+          yield { kind: "strikeClose" };
         } else {
           strikeStack.push(i);
-          yield { kind: 'strikeOpen' };
+          yield { kind: "strikeOpen" };
         }
-        i = j;
+        cursor.pos = j;
         continue;
       }
     }
 
-    // Emphasis (simple toggling for * and _, with separate handling for singles/doubles)
-    if (c === 0x2a || c === 0x5f) { // * or _
+    if (c === 0x2a || c === 0x5f) {
       let j = i;
-      while (j < e && u8[j] === c) j++;
+      while (j < end && u8[j] === c) j++;
       const runLen = j - i;
-      
+
       if (runLen === 1 || runLen === 2) {
         const isStrong = runLen === 2;
-        const stk = isStrong ? strongStack : emStack;
-        
-        // Check if this closes an existing emphasis
-        const matchIdx = stk.findIndex(item => item.char === c);
+        const stack = isStrong ? strongStack : emStack;
+        const matchIdx = stack.findIndex((item) => item.char === c);
+
         if (matchIdx !== -1) {
-          // Close the emphasis
-          stk.splice(matchIdx, 1);
-          yield { kind: isStrong ? 'strongClose' : 'emClose' };
+          stack.splice(matchIdx, 1);
+          yield { kind: isStrong ? "strongClose" : "emClose" };
         } else {
-          // Open new emphasis
-          stk.push({ char: c, pos: i });
-          yield { kind: isStrong ? 'strongOpen' : 'emOpen' };
+          stack.push({ char: c, pos: i });
+          yield { kind: isStrong ? "strongOpen" : "emOpen" };
         }
       } else {
-        // Treat long runs as literal text
-        yield { kind: 'text', s: i, e: j };
+        yield { kind: "text", s: i, e: j };
       }
-      
-      i = j;
+      cursor.pos = j;
       continue;
     }
 
-    // Text byte (may be part of a multibyte UTF-8 sequence)
     const byte = u8[i];
     let advance = 1;
     if ((byte & 0b11100000) === 0b11000000) {
@@ -189,24 +181,22 @@ export function* inlineTokens(
     } else if ((byte & 0b11111000) === 0b11110000) {
       advance = 4;
     }
-    const end = Math.min(i + advance, e);
-    yield { kind: 'text', s: i, e: end };
-    i = end;
+
+    const textEnd = Math.min(i + advance, end);
+    yield { kind: "text", s: i, e: textEnd };
+    cursor.advance(textEnd - i);
   }
 
-  // Close any unclosed emphasis markers at the end of the span
-  // This prevents deeply nested tags from cascading through the document
   while (strongStack.length > 0) {
     strongStack.pop();
-    yield { kind: 'strongClose' };
+    yield { kind: "strongClose" };
   }
   while (emStack.length > 0) {
     emStack.pop();
-    yield { kind: 'emClose' };
+    yield { kind: "emClose" };
   }
   while (strikeStack.length > 0) {
     strikeStack.pop();
-    yield { kind: 'strikeClose' };
+    yield { kind: "strikeClose" };
   }
 }
-

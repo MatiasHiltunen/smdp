@@ -1,3 +1,18 @@
+import {
+  bytesMatch as matches,
+  createBitset,
+  isAsciiDigit as isDigit,
+  isAsciiHexDigit as isHex,
+  isAsciiLineBreak as isNL,
+  isAsciiWhitespace as isWS,
+  toLowerAscii,
+} from "../common/char-class.ts";
+import {
+  borrowHtmlArena,
+  releaseHtmlArena,
+  type WritableArena,
+} from "../common/arena.ts";
+
 const TE = new TextEncoder();
 const TD = new TextDecoder();
 
@@ -17,7 +32,12 @@ export const TokenType = {
 
 export type TokenTypeValue = (typeof TokenType)[keyof typeof TokenType];
 
-type EmitFn = (type: TokenTypeValue, s: number, e: number, meta?: number) => void;
+type EmitFn = (
+  type: TokenTypeValue,
+  s: number,
+  e: number,
+  meta?: number,
+) => void;
 
 type LineCommentDef = Uint8Array;
 
@@ -80,52 +100,12 @@ export interface AuthorLanguageSpec {
   strings?: Array<{ quote: string; escape?: string; allowMultiline?: boolean }>;
   numbers?: NumberOptions;
   regex?: { enabled?: boolean };
-  templates?: { enabled?: boolean; quote?: string; interpOpen?: string; interpClose?: string };
-}
-
-function createBitset(ranges: Array<[number, number]> | undefined, fallback?: Array<[number, number]>): Uint8Array {
-  const bits = new Uint8Array(32); // 256 bits
-  const apply = (lo: number, hi: number): void => {
-    const start = Math.max(0, lo);
-    const end = Math.min(255, hi);
-    for (let v = start; v <= end; v++) {
-      bits[v >> 3] |= 1 << (v & 7);
-    }
+  templates?: {
+    enabled?: boolean;
+    quote?: string;
+    interpOpen?: string;
+    interpClose?: string;
   };
-  const source = ranges && ranges.length ? ranges : fallback;
-  if (source) {
-    for (const [lo, hi] of source) apply(lo, hi);
-  }
-  return bits;
-}
-
-function matches(bytes: Uint8Array, pos: number, needle: Uint8Array): boolean {
-  if (pos + needle.length > bytes.length) return false;
-  for (let i = 0; i < needle.length; i++) {
-    if (bytes[pos + i] !== needle[i]) return false;
-  }
-  return true;
-}
-
-function isWS(c: number): boolean {
-  return c === 0x20 || c === 0x09 || c === 0x0b || c === 0x0c;
-}
-
-function isNL(c: number): boolean {
-  return c === 0x0a || c === 0x0d;
-}
-
-function isHex(c: number): boolean {
-  return (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x46) || (c >= 0x61 && c <= 0x66);
-}
-
-function isDigit(c: number): boolean {
-  return c >= 0x30 && c <= 0x39;
-}
-
-function toLowerAscii(b: number): number {
-  if (b >= 0x41 && b <= 0x5a) return b | 0x20;
-  return b;
 }
 
 /**
@@ -212,7 +192,10 @@ export class CompiledLanguageSpec {
     ];
     const defaultIdentPart = defaultIdentStart.concat([[0x30, 0x39]]);
 
-    this.identStartBits = createBitset(author.identStartRanges, defaultIdentStart);
+    this.identStartBits = createBitset(
+      author.identStartRanges,
+      defaultIdentStart,
+    );
     this.identPartBits = createBitset(author.identPartRanges, defaultIdentPart);
 
     this.keywords = (author.keywords ?? []).map((kw) => ({
@@ -234,11 +217,11 @@ export class CompiledLanguageSpec {
     this.regexEnabled = !!author.regex?.enabled;
 
     if (author.templates?.enabled) {
-      const quote = (author.templates.quote ?? '`').charCodeAt(0);
+      const quote = (author.templates.quote ?? "`").charCodeAt(0);
       this.template = {
         start: quote,
-        interpOpen: TE.encode(author.templates.interpOpen ?? '${'),
-        interpClose: (author.templates.interpClose ?? '}').charCodeAt(0),
+        interpOpen: TE.encode(author.templates.interpOpen ?? "${"),
+        interpClose: (author.templates.interpClose ?? "}").charCodeAt(0),
       };
     }
 
@@ -265,8 +248,8 @@ export class CompiledLanguageSpec {
 
     this.stringLookup = new Map();
     for (const str of author.strings ?? [
-      { quote: "'", escape: '\\' },
-      { quote: '"', escape: '\\' },
+      { quote: "'", escape: "\\" },
+      { quote: '"', escape: "\\" },
     ]) {
       const start = TE.encode(str.quote);
       if (!start.length) continue;
@@ -452,21 +435,32 @@ export class CompiledLanguageSpec {
     let j = i;
     if (u8[i] === 0x30 && j + 1 < n) {
       const next = u8[j + 1];
-      if ((flags & NumberFlags.HEX) && (next === 0x78 || next === 0x58)) {
-        j += 2;
-        while (j < n && (isHex(u8[j]) || ((flags & NumberFlags.UNDERSCORE) && u8[j] === 0x5f))) j++;
-        return j;
-      }
-      if ((flags & NumberFlags.BIN) && (next === 0x62 || next === 0x42)) {
-        j += 2;
-        while (j < n && (u8[j] === 0x30 || u8[j] === 0x31 || ((flags & NumberFlags.UNDERSCORE) && u8[j] === 0x5f))) j++;
-        return j;
-      }
-      if ((flags & NumberFlags.OCT) && (next === 0x6f || next === 0x4f)) {
+      if (flags & NumberFlags.HEX && (next === 0x78 || next === 0x58)) {
         j += 2;
         while (
           j < n &&
-          ((u8[j] >= 0x30 && u8[j] <= 0x37) || ((flags & NumberFlags.UNDERSCORE) && u8[j] === 0x5f))
+          (isHex(u8[j]) || (flags & NumberFlags.UNDERSCORE && u8[j] === 0x5f))
+        )
+          j++;
+        return j;
+      }
+      if (flags & NumberFlags.BIN && (next === 0x62 || next === 0x42)) {
+        j += 2;
+        while (
+          j < n &&
+          (u8[j] === 0x30 ||
+            u8[j] === 0x31 ||
+            (flags & NumberFlags.UNDERSCORE && u8[j] === 0x5f))
+        )
+          j++;
+        return j;
+      }
+      if (flags & NumberFlags.OCT && (next === 0x6f || next === 0x4f)) {
+        j += 2;
+        while (
+          j < n &&
+          ((u8[j] >= 0x30 && u8[j] <= 0x37) ||
+            (flags & NumberFlags.UNDERSCORE && u8[j] === 0x5f))
         )
           j++;
         return j;
@@ -475,26 +469,46 @@ export class CompiledLanguageSpec {
 
     if (u8[i] === 0x2e) {
       j++;
-      while (j < n && (isDigit(u8[j]) || ((flags & NumberFlags.UNDERSCORE) && u8[j] === 0x5f))) j++;
+      while (
+        j < n &&
+        (isDigit(u8[j]) || (flags & NumberFlags.UNDERSCORE && u8[j] === 0x5f))
+      )
+        j++;
     } else {
-      while (j < n && (isDigit(u8[j]) || ((flags & NumberFlags.UNDERSCORE) && u8[j] === 0x5f))) j++;
+      while (
+        j < n &&
+        (isDigit(u8[j]) || (flags & NumberFlags.UNDERSCORE && u8[j] === 0x5f))
+      )
+        j++;
 
       if (j < n && u8[j] === 0x2e) {
         j++;
-        while (j < n && (isDigit(u8[j]) || ((flags & NumberFlags.UNDERSCORE) && u8[j] === 0x5f))) j++;
+        while (
+          j < n &&
+          (isDigit(u8[j]) || (flags & NumberFlags.UNDERSCORE && u8[j] === 0x5f))
+        )
+          j++;
       }
     }
 
-    if ((flags & NumberFlags.EXP) && j < n && (u8[j] === 0x65 || u8[j] === 0x45)) {
+    if (
+      flags & NumberFlags.EXP &&
+      j < n &&
+      (u8[j] === 0x65 || u8[j] === 0x45)
+    ) {
       let k = j + 1;
       if (k < n && (u8[k] === 0x2b || u8[k] === 0x2d)) k++;
       if (k < n && isDigit(u8[k])) {
         j = k + 1;
-        while (j < n && (isDigit(u8[j]) || ((flags & NumberFlags.UNDERSCORE) && u8[j] === 0x5f))) j++;
+        while (
+          j < n &&
+          (isDigit(u8[j]) || (flags & NumberFlags.UNDERSCORE && u8[j] === 0x5f))
+        )
+          j++;
       }
     }
 
-    if ((flags & NumberFlags.BIGINT) && j < n && u8[j] === 0x6e) j++;
+    if (flags & NumberFlags.BIGINT && j < n && u8[j] === 0x6e) j++;
 
     return j;
   }
@@ -503,7 +517,12 @@ export class CompiledLanguageSpec {
     return (this.numbersFlags & NumberFlags.LEADING_DOT) !== 0;
   }
 
-  scanString(u8: Uint8Array, i: number, n: number, def: StringDelimiter): number {
+  scanString(
+    u8: Uint8Array,
+    i: number,
+    n: number,
+    def: StringDelimiter,
+  ): number {
     let j = i + def.start.length;
     while (j < n) {
       const ch = u8[j];
@@ -534,7 +553,10 @@ export class CompiledLanguageSpec {
         j++;
         continue;
       }
-      if (ch === this.template.interpOpen[0] && matches(u8, j - 1, this.template.interpOpen)) {
+      if (
+        ch === this.template.interpOpen[0] &&
+        matches(u8, j - 1, this.template.interpOpen)
+      ) {
         let depth = 1;
         while (j < n && depth > 0) {
           const x = u8[j++];
@@ -550,7 +572,10 @@ export class CompiledLanguageSpec {
             j = this.scanTemplate(u8, j, n);
             continue;
           }
-          if (x === this.template.interpOpen[0] && matches(u8, j - 1, this.template.interpOpen)) {
+          if (
+            x === this.template.interpOpen[0] &&
+            matches(u8, j - 1, this.template.interpOpen)
+          ) {
             depth++;
             j += this.template.interpOpen.length - 1;
             continue;
@@ -564,7 +589,12 @@ export class CompiledLanguageSpec {
     return j;
   }
 
-  canStartRegex(prevType: TokenTypeValue | null, prevCode: number, lastSig: number, lastTwo: number): boolean {
+  canStartRegex(
+    prevType: TokenTypeValue | null,
+    prevCode: number,
+    lastSig: number,
+    lastTwo: number,
+  ): boolean {
     if (!this.regexEnabled) return false;
     if (prevType == null) return true;
     switch (prevType) {
@@ -593,21 +623,39 @@ export class CompiledLanguageSpec {
         }
       case TokenType.Punct:
         // `/` can start regex after punctuation like `)`, `]`, `}`, `,`, `;`, `:`
-        if (lastSig === 0x29 || lastSig === 0x5d || lastSig === 0x7d ||
-            lastSig === 0x2c || lastSig === 0x3b || lastSig === 0x3a) {
+        if (
+          lastSig === 0x29 ||
+          lastSig === 0x5d ||
+          lastSig === 0x7d ||
+          lastSig === 0x2c ||
+          lastSig === 0x3b ||
+          lastSig === 0x3a
+        ) {
           return true;
         }
         return false; // Don't start regex after other punctuation
       case TokenType.Operator:
         // `/` should NOT start regex after arithmetic operators
         // This prevents `a / b` from being interpreted as regex
-        if (lastSig === 0x2b || lastSig === 0x2d || lastSig === 0x2a ||
-            lastSig === 0x2f || lastSig === 0x25 || lastSig === 0x2a) {
+        if (
+          lastSig === 0x2b ||
+          lastSig === 0x2d ||
+          lastSig === 0x2a ||
+          lastSig === 0x2f ||
+          lastSig === 0x25 ||
+          lastSig === 0x2a
+        ) {
           return false; // Arithmetic operators - don't start regex
         }
         // `/` can start regex after other operators like `=`, `!`, `?`, etc.
-        if (lastSig === 0x3d || lastSig === 0x21 || lastSig === 0x3f ||
-            lastSig === 0x7c || lastSig === 0x26 || lastSig === 0x5e) {
+        if (
+          lastSig === 0x3d ||
+          lastSig === 0x21 ||
+          lastSig === 0x3f ||
+          lastSig === 0x7c ||
+          lastSig === 0x26 ||
+          lastSig === 0x5e
+        ) {
           return true;
         }
         // Check for `++` and `--`
@@ -649,13 +697,23 @@ export class CompiledLanguageSpec {
     return j;
   }
 
-  scanLineComment(u8: Uint8Array, i: number, n: number, seq: LineCommentDef): number {
+  scanLineComment(
+    u8: Uint8Array,
+    i: number,
+    n: number,
+    seq: LineCommentDef,
+  ): number {
     let j = i + seq.length;
     while (j < n && !isNL(u8[j])) j++;
     return j;
   }
 
-  scanBlockComment(u8: Uint8Array, i: number, n: number, seq: BlockCommentDef): number {
+  scanBlockComment(
+    u8: Uint8Array,
+    i: number,
+    n: number,
+    seq: BlockCommentDef,
+  ): number {
     let j = i + seq.open.length;
     while (j + seq.close.length <= n) {
       if (matches(u8, j, seq.close)) {
@@ -682,13 +740,22 @@ export class GenericTokenizer {
     let lastSig = 0;
     let lastTwo = 0;
 
-    const push = (type: TokenTypeValue, s: number, e: number, meta?: number): void => {
+    const push = (
+      type: TokenTypeValue,
+      s: number,
+      e: number,
+      meta?: number,
+    ): void => {
       emit(type, s, e, meta);
       if (type !== TokenType.Whitespace) {
         prevType = type;
-        prevCode = type === TokenType.Keyword ? meta ?? 0 : 0;
+        prevCode = type === TokenType.Keyword ? (meta ?? 0) : 0;
       }
-      if (type !== TokenType.Whitespace && type !== TokenType.Newline && type !== TokenType.Comment) {
+      if (
+        type !== TokenType.Whitespace &&
+        type !== TokenType.Newline &&
+        type !== TokenType.Comment
+      ) {
         lastSig = u8[e - 1];
         lastTwo = ((lastTwo & 0xff) << 8) | lastSig;
       }
@@ -761,7 +828,13 @@ export class GenericTokenizer {
         continue;
       }
 
-      if (isDigit(c) || (c === 0x2e && this.spec.allowsLeadingDot() && i + 1 < n && isDigit(u8[i + 1]))) {
+      if (
+        isDigit(c) ||
+        (c === 0x2e &&
+          this.spec.allowsLeadingDot() &&
+          i + 1 < n &&
+          isDigit(u8[i + 1]))
+      ) {
         const s = i;
         i = this.spec.scanNumber(u8, i, n);
         push(TokenType.LiteralNum, s, i);
@@ -783,7 +856,10 @@ export class GenericTokenizer {
         continue;
       }
 
-      if (c === 0x2f && this.spec.canStartRegex(prevType, prevCode, lastSig, lastTwo)) {
+      if (
+        c === 0x2f &&
+        this.spec.canStartRegex(prevType, prevCode, lastSig, lastTwo)
+      ) {
         const s = i;
         i = this.spec.scanRegex(u8, i, n);
         push(TokenType.Regex, s, i);
@@ -848,7 +924,7 @@ export class GenericTokenizer {
         a === 0x5e || // ^
         a === 0x7e || // ~
         a === 0x3c || // <
-        a === 0x3e   // >
+        a === 0x3e // >
       ) {
         push(TokenType.Operator, s, i);
         continue;
@@ -870,7 +946,7 @@ export class GenericTokenizer {
   }
 }
 
-import { SPAN_BINARY, fromBase64 as fromBase64Span } from './precompiled';
+import { SPAN_BINARY, fromBase64 as fromBase64Span } from "./precompiled";
 
 // Read span bytes from binary using arena-style reading
 const spanBuf = fromBase64Span(SPAN_BINARY);
@@ -904,97 +980,110 @@ export class GenericHighlighter {
     this.tokenizer = new GenericTokenizer(spec);
   }
 
-  async highlight(u8: Uint8Array, languageClass?: string): Promise<Uint8Array> {
-    // Dynamic import for HtmlArena (only needed in browser contexts)
-    let ArenaClass: any;
+  async highlight(
+    u8: Uint8Array,
+    languageClass?: string,
+    onToken?: (info: {
+      lang?: string;
+      type: number;
+      text: string;
+      line: number;
+    }) => void,
+  ): Promise<Uint8Array> {
+    const arena: WritableArena = borrowHtmlArena();
     try {
-      const arenaModule = await import('../parser/arena');
-      ArenaClass = arenaModule.HtmlArena;
-    } catch (e) {
-      // Fallback for environments where arena might not be available
-      ArenaClass = class {
-        writeAscii() {}
-        writeEscaped() {}
-        toUint8Array() { return new Uint8Array(); }
-      };
-    }
+      const langClass = languageClass ?? this.spec.name.toLowerCase();
 
-    const arena = new ArenaClass();
-    const langClass = languageClass ?? this.spec.name.toLowerCase();
-
-    arena.writeAscii('<pre class="code-block"><code');
-    if (langClass) {
-      arena.writeAscii(' class="language-');
-      arena.writeAscii(langClass);
-      arena.writeAscii('"');
-    }
-    arena.writeAscii('>');
-
-    const emit: EmitFn = (type, s, e) => {
-      switch (type) {
-        case TokenType.Whitespace:
-          arena.writeEscaped(u8, s, e);
-          return;
-        case TokenType.Newline:
-          arena.writeByte(0x0a);
-          return;
-        case TokenType.Identifier:
-          arena.writeBytes(SPAN_BYTES.id);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.Keyword:
-          arena.writeBytes(SPAN_BYTES.kw);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.LiteralNum:
-          arena.writeBytes(SPAN_BYTES.num);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.LiteralStr:
-          arena.writeBytes(SPAN_BYTES.str);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.LiteralTpl:
-          arena.writeBytes(SPAN_BYTES.tpl);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.Comment:
-          arena.writeBytes(SPAN_BYTES.com);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.Regex:
-          arena.writeBytes(SPAN_BYTES.rx);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.Punct:
-          arena.writeBytes(SPAN_BYTES.p);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        case TokenType.Operator:
-          arena.writeBytes(SPAN_BYTES.op);
-          arena.writeEscaped(u8, s, e);
-          arena.writeBytes(SPAN_BYTES.close);
-          return;
-        default:
-          arena.writeEscaped(u8, s, e);
+      arena.writeAscii('<pre class="code-block"><code');
+      if (langClass) {
+        arena.writeAscii(' class="language-');
+        arena.writeAscii(langClass);
+        arena.writeAscii('"');
       }
-    };
+      arena.writeAscii(">");
 
-    this.tokenizer.tokenize(u8, emit);
+      let lineIndex = 0;
+      const emit: EmitFn = (type, s, e) => {
+        const tokenText = TD.decode(u8.subarray(s, e));
+        if (type !== TokenType.Newline && tokenText.length) {
+          onToken?.({
+            lang: this.spec.name,
+            type,
+            text: tokenText,
+            line: lineIndex,
+          });
+        }
+        switch (type) {
+          case TokenType.Whitespace:
+            arena.writeEscaped(u8, s, e);
+            return;
+          case TokenType.Newline:
+            arena.writeByte(0x0a);
+            lineIndex++;
+            return;
+          case TokenType.Identifier:
+            arena.writeBytes(SPAN_BYTES.id);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.Keyword:
+            arena.writeBytes(SPAN_BYTES.kw);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.LiteralNum:
+            arena.writeBytes(SPAN_BYTES.num);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.LiteralStr:
+            arena.writeBytes(SPAN_BYTES.str);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.LiteralTpl:
+            arena.writeBytes(SPAN_BYTES.tpl);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.Comment:
+            arena.writeBytes(SPAN_BYTES.com);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.Regex:
+            arena.writeBytes(SPAN_BYTES.rx);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.Punct:
+            arena.writeBytes(SPAN_BYTES.p);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          case TokenType.Operator:
+            arena.writeBytes(SPAN_BYTES.op);
+            arena.writeEscaped(u8, s, e);
+            arena.writeBytes(SPAN_BYTES.close);
+            return;
+          default:
+            arena.writeEscaped(u8, s, e);
+        }
+      };
 
-    arena.writeAscii('</code></pre>\n');
-    return arena.toUint8Array();
+      this.tokenizer.tokenize(u8, emit);
+
+      arena.writeAscii("</code></pre>\n");
+      const out = arena.toUint8Array().slice();
+      return out;
+    } finally {
+      releaseHtmlArena(arena);
+    }
   }
 }
 
-export function compileLanguage(author: AuthorLanguageSpec): CompiledLanguageSpec {
+export function compileLanguage(
+  author: AuthorLanguageSpec,
+): CompiledLanguageSpec {
   return new CompiledLanguageSpec(author);
 }

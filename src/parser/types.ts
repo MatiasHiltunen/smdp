@@ -20,7 +20,7 @@ export interface FenceMeta {
 }
 
 export interface ListMarker {
-  type: 'ul' | 'ol';
+  type: "ul" | "ol";
   indent: number;
   afterStart: number;
   afterEnd: number;
@@ -33,49 +33,68 @@ export interface UrlScan {
 
 // Inline token types
 export type InlineToken =
-  | { kind: 'text'; s: number; e: number }
-  | { kind: 'code'; s: number; e: number }
-  | { kind: 'img'; altS: number; altE: number; srcS: number; srcE: number }
-  | { kind: 'link'; hrefS: number; hrefE: number; textS: number; textE: number }
-  | { kind: 'autolink'; s: number; e: number; isWww: boolean }
-  | { kind: 'footnoteRef'; idS: number; idE: number }
-  | { kind: 'emOpen' }
-  | { kind: 'emClose' }
-  | { kind: 'strongOpen' }
-  | { kind: 'strongClose' }
-  | { kind: 'strikeOpen' }
-  | { kind: 'strikeClose' };
+  | { kind: "text"; s: number; e: number }
+  | { kind: "code"; s: number; e: number }
+  | { kind: "img"; altS: number; altE: number; srcS: number; srcE: number }
+  | { kind: "link"; hrefS: number; hrefE: number; textS: number; textE: number }
+  | { kind: "autolink"; s: number; e: number; isWww: boolean }
+  | { kind: "footnoteRef"; idS: number; idE: number }
+  | { kind: "emOpen" }
+  | { kind: "emClose" }
+  | { kind: "strongOpen" }
+  | { kind: "strongClose" }
+  | { kind: "strikeOpen" }
+  | { kind: "strikeClose" };
 
 // Block event types
 export type BlockEvent =
-  | { type: 'bqOpen' }
-  | { type: 'bqClose' }
-  | { type: 'hr' }
-  | { type: 'heading'; level: number; s: number; e: number }
-  | { type: 'listOpen'; kind: 'ul' | 'ol'; indent: number }
-  | { type: 'listItem'; s: number; e: number; task?: boolean; checked?: boolean }
-  | { type: 'listClose'; kind: 'ul' | 'ol' }
-  | { type: 'paraLine'; s: number; e: number }
-  | { type: 'codeOpen'; info?: FenceMeta }
-  | { type: 'codeText'; s: number; e: number }
-  | { type: 'codeClose' }
-  | { type: 'tableOpen' }
-  | { type: 'tableHeader'; cells: Array<{ s: number; e: number; align: 'left' | 'center' | 'right' }> }
-  | { type: 'tableRow'; cells: Array<{ s: number; e: number }> }
-  | { type: 'tableClose' }
-  | { type: 'infoOpen'; infoType: 'info' | 'warning' | 'error' | 'success' }
-  | { type: 'infoClose' }
-  | { type: 'footnoteDef'; idS: number; idE: number; contentS: number; contentE: number };
+  | { type: "bqOpen" }
+  | { type: "bqClose" }
+  | { type: "hr" }
+  | { type: "heading"; level: number; s: number; e: number }
+  | { type: "listOpen"; kind: "ul" | "ol"; indent: number }
+  | {
+      type: "listItem";
+      s: number;
+      e: number;
+      task?: boolean;
+      checked?: boolean;
+    }
+  | { type: "listClose"; kind: "ul" | "ol" }
+  | { type: "paraLine"; s: number; e: number }
+  | { type: "codeOpen"; info?: FenceMeta }
+  | { type: "codeText"; s: number; e: number }
+  | { type: "codeClose" }
+  | { type: "tableOpen" }
+  | {
+      type: "tableHeader";
+      cells: Array<{
+        s: number;
+        e: number;
+        align: "left" | "center" | "right";
+      }>;
+    }
+  | { type: "tableRow"; cells: Array<{ s: number; e: number }> }
+  | { type: "tableClose" }
+  | { type: "infoOpen"; infoType: "info" | "warning" | "error" | "success" }
+  | { type: "infoClose" }
+  | {
+      type: "footnoteDef";
+      idS: number;
+      idE: number;
+      contentS: number;
+      contentE: number;
+    };
 
 export interface BlockState {
   bqLevel: number;
-  listStack: Array<{ kind: 'ul' | 'ol'; indent: number }>;
+  listStack: Array<{ kind: "ul" | "ol"; indent: number }>;
   inFence: boolean;
   fenceCh: number;
   fenceLen: number;
   fenceInfo: FenceMeta | undefined;
   inTable: boolean;
-  tableAlignments: Array<'left' | 'center' | 'right'>;
+  tableAlignments: Array<"left" | "center" | "right">;
   inInfo: boolean;
   infoType?: string;
 }
@@ -101,12 +120,12 @@ export interface DrawResult {
 }
 
 export interface ListStackItem {
-  kind: 'ul' | 'ol';
+  kind: "ul" | "ol";
   liOpen: boolean;
 }
 
 export interface CanvasListItem {
-  kind: 'ul' | 'ol';
+  kind: "ul" | "ol";
   counter: number;
 }
 
@@ -132,11 +151,52 @@ export interface RenderSegment {
 }
 
 export type CanvasCommand =
-  | { type: 'text'; text: string; x: number; y: number; font: string; fill: string; baseline: CanvasTextBaseline }
-  | { type: 'linkUnderline'; x1: number; y: number; x2: number; stroke: string; width: number }
-  | { type: 'fillRect'; x: number; y: number; w: number; h: number; color: string }
-  | { type: 'roundedRect'; x: number; y: number; w: number; h: number; radius: number; color: string }
-  | { type: 'bullet'; x: number; y: number; radius: number; color: string };
+  | {
+      type: "text";
+      text: string;
+      x: number;
+      y: number;
+      font: string;
+      fill: string;
+      baseline: CanvasTextBaseline;
+    }
+  | {
+      type: "linkUnderline";
+      x1: number;
+      y: number;
+      x2: number;
+      stroke: string;
+      width: number;
+    }
+  | {
+      type: "fillRect";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      color: string;
+    }
+  | {
+      type: "roundedRect";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      radius: number;
+      color: string;
+    }
+  | { type: "bullet"; x: number; y: number; radius: number; color: string }
+  | {
+      type: "blit";
+      sx: number;
+      sy: number;
+      sw: number;
+      sh: number;
+      dx: number;
+      dy: number;
+      dw: number;
+      dh: number;
+    };
 
 export interface RenderChunkMetadata {
   totalHeight: number;
@@ -144,4 +204,3 @@ export interface RenderChunkMetadata {
   blockquotes: BlockquoteInfo[];
   segments: RenderSegment[];
 }
-
