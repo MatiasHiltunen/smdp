@@ -79,6 +79,7 @@ type RenderMode = "html" | "canvas";
 type RouteDetails = {
   mode: RenderMode;
   externalUrl: URL | null;
+  shared: boolean;
 };
 
 function safeParseUrl(value: string | null): URL | null {
@@ -97,11 +98,30 @@ function safeParseUrl(value: string | null): URL | null {
 function parseRoute(): RouteDetails {
   const rawPath = decodeURIComponent(window.location.pathname);
 
+  // Shared (embed) mode: no FABs, no editor/theme UI, HTML render
+  if (rawPath.startsWith("/shared/")) {
+    const externalPart = rawPath.slice("/shared/".length);
+    return {
+      mode: "html",
+      externalUrl: safeParseUrl(externalPart || null),
+      shared: true,
+    };
+  }
+
+  if (rawPath === "/shared") {
+    return {
+      mode: "html",
+      externalUrl: null,
+      shared: true,
+    };
+  }
+
   if (rawPath.startsWith("/canvas/")) {
     const externalPart = rawPath.slice("/canvas/".length);
     return {
       mode: "canvas",
       externalUrl: safeParseUrl(externalPart || null),
+      shared: false,
     };
   }
 
@@ -109,6 +129,7 @@ function parseRoute(): RouteDetails {
     return {
       mode: "canvas",
       externalUrl: null,
+      shared: false,
     };
   }
 
@@ -117,6 +138,7 @@ function parseRoute(): RouteDetails {
     return {
       mode: "html",
       externalUrl: safeParseUrl(externalPart || null),
+      shared: false,
     };
   }
 
@@ -124,6 +146,7 @@ function parseRoute(): RouteDetails {
     return {
       mode: "html",
       externalUrl: null,
+      shared: false,
     };
   }
 
@@ -131,6 +154,7 @@ function parseRoute(): RouteDetails {
     return {
       mode: "html",
       externalUrl: null,
+      shared: false,
     };
   }
 
@@ -138,6 +162,7 @@ function parseRoute(): RouteDetails {
   return {
     mode: "html",
     externalUrl: safeParseUrl(externalPart || null),
+    shared: false,
   };
 }
 
@@ -588,6 +613,7 @@ async function init(): Promise<void> {
 
   let view: HtmlView | CanvasView;
   let apply: (bytes: Uint8Array, baseUrl?: string) => Promise<void>;
+  let themeEditorLocal: ThemeEditorHandle | null = null;
 
   if (route.mode === "canvas") {
     const canvasView = createCanvasView();
@@ -603,26 +629,31 @@ async function init(): Promise<void> {
 
   document.body.classList.remove("is-editing");
   document.body.replaceChildren(view.shell);
-  const themeEditor = ensureThemeEditor();
-  document.body.appendChild(themeEditor.root);
+  if (route.shared) {
+    // Remove editor pane entirely for shared/embed mode
+    try { view.editorPane.remove(); } catch {}
+  } else {
+    themeEditorLocal = ensureThemeEditor();
+    document.body.appendChild(themeEditorLocal.root);
 
-  // Create FAB menu with editor toggle callback
-  const fabMenu = createFabMenu(view, themeEditor, () => {
-    const isEditing = document.body.classList.toggle("is-editing");
-    view.shell.classList.toggle("show-editor", isEditing);
-    view.editorPane.setAttribute("aria-hidden", String(!isEditing));
-    view.editorPane.toggleAttribute("inert", !isEditing);
-    if (isEditing) {
-      view.textarea.focus();
-      themeEditor.close();
-    }
-  });
-  document.body.appendChild(fabMenu);
+    // Create FAB menu with editor toggle callback
+    const fabMenu = createFabMenu(view, themeEditorLocal, () => {
+      const isEditing = document.body.classList.toggle("is-editing");
+      view.shell.classList.toggle("show-editor", isEditing);
+      view.editorPane.setAttribute("aria-hidden", String(!isEditing));
+      view.editorPane.toggleAttribute("inert", !isEditing);
+      if (isEditing) {
+        view.textarea.focus();
+        themeEditorLocal?.close();
+      }
+    });
+    document.body.appendChild(fabMenu);
+  }
 
   // Theme editor already loaded from URL, no need to reapply
 
-  if (!themeEditorViewListenerAttached) {
-    themeEditor.root.addEventListener("theme-editor-toggle", (event) => {
+  if (!route.shared && !themeEditorViewListenerAttached && themeEditorLocal) {
+    themeEditorLocal.root.addEventListener("theme-editor-toggle", (event) => {
       const open = (event as CustomEvent<{ open: boolean }>).detail.open;
       if (open) {
         document.body.classList.remove("is-editing");
@@ -656,10 +687,12 @@ async function init(): Promise<void> {
     document.body.classList.remove("hydrating");
   }
 
-  if (resolvedText !== null) {
-    view.textarea.value = resolvedText;
-  } else {
-    view.textarea.value = "";
+  if (!route.shared) {
+    if (resolvedText !== null) {
+      view.textarea.value = resolvedText;
+    } else {
+      view.textarea.value = "";
+    }
   }
 
   if (resolved) {
@@ -667,7 +700,9 @@ async function init(): Promise<void> {
     await apply(resolved.bytes, currentBaseUrl);
   }
 
-  enableRealtimeUpdates(view, apply, () => currentBaseUrl);
+  if (!route.shared) {
+    enableRealtimeUpdates(view, apply, () => currentBaseUrl);
+  }
 }
 
 void init();

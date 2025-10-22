@@ -1,5 +1,6 @@
 import type { AuthorLanguageSpec } from './language-core';
 import { CompiledLanguageSpec, GenericHighlighter, compileLanguage, BinaryReader } from './language-core';
+import { htmlLanguageSpec } from './builtins';
 import { LANGUAGE_BINARY, fromBase64 } from './precompiled';
 
 // Lazy import for HtmlArena (only needed in browser contexts)
@@ -56,9 +57,13 @@ async function basicHighlight(bytes: Uint8Array, className?: string): Promise<Ui
   return arena.toUint8Array();
 }
 
+type HighlighterLike = {
+  highlight: (bytes: Uint8Array, className?: string) => Promise<Uint8Array>;
+};
+
 type LanguageEntry = {
   spec: CompiledLanguageSpec;
-  highlighter: GenericHighlighter;
+  highlighter: HighlighterLike;
 };
 
 const aliasRegistry = new Map<string, LanguageEntry>();
@@ -104,6 +109,11 @@ function ensurePrecompiledLoaded(): void {
     };
     registerEntry(entry, compiled.aliases);
   }
+  // Ensure html is available even if precompiled blob is stale
+  try {
+    const compiledHtml = compileLanguage(htmlLanguageSpec);
+    registerEntry({ spec: compiledHtml, highlighter: new GenericHighlighter(compiledHtml) }, compiledHtml.aliases);
+  } catch {}
   precompiledLoaded = true;
 }
 

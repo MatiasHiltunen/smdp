@@ -566,6 +566,10 @@ export class CompiledLanguageSpec {
 
   canStartRegex(prevType: TokenTypeValue | null, prevCode: number, lastSig: number, lastTwo: number): boolean {
     if (!this.regexEnabled) return false;
+    // Heuristic: avoid starting a regex right after '<' or '>'
+    // This prevents misclassifying JSX/HTML closing tags like </div>
+    // as a single regex token when using the JS tokenizer for JSX.
+    if (lastSig === 0x3c /* '<' */ || lastSig === 0x3e /* '>' */) return false;
     if (prevType == null) return true;
     switch (prevType) {
       case TokenType.Identifier:
