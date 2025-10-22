@@ -294,8 +294,8 @@ export function createFabMenu(
       try {
         const base64 = await encodeMarkdownToBase64(markdown);
         const shareUrl = new URL(window.location.href);
-        shareUrl.pathname = `/data/${encodeURIComponent(base64)}`;
-        shareUrl.hash = "";
+        shareUrl.pathname = "/data";
+        shareUrl.hash = base64;
         
         // Preserve theme customizations from current URL
         const currentParams = new URLSearchParams(window.location.search);

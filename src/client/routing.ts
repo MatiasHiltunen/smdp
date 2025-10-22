@@ -20,8 +20,28 @@ function safeParseUrl(value: string | null): URL | null {
   }
 }
 
+function extractHashPayload(): string | null {
+  const rawHash = window.location.hash || "";
+  if (!rawHash || rawHash === "#") {
+    return null;
+  }
+
+  const trimmed = rawHash.startsWith("#") ? rawHash.slice(1) : rawHash;
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(trimmed);
+  } catch (error) {
+    console.warn("Unable to decode hash payload", error);
+    return trimmed;
+  }
+}
+
 export function parseRoute(): RouteDetails {
   const rawPath = decodeURIComponent(window.location.pathname);
+  const hashPayload = extractHashPayload();
 
   // Shared (embed) mode: no FABs, no editor/theme UI, HTML render
   if (rawPath.startsWith("/shared/")) {
@@ -43,8 +63,11 @@ export function parseRoute(): RouteDetails {
     };
   }
 
-  if (rawPath.startsWith("/data/")) {
-    const payload = rawPath.slice("/data/".length) || null;
+  if (rawPath === "/data" || rawPath.startsWith("/data/")) {
+    const payloadFromPath = rawPath.startsWith("/data/")
+      ? rawPath.slice("/data/".length) || null
+      : null;
+    const payload = payloadFromPath || hashPayload;
     return {
       mode: "html",
       externalUrl: null,
