@@ -49,6 +49,7 @@ export const TAG = {
     enc('</h6>\n'),
   ],
   lf: enc('\n'),
+  br: enc('</br></br>\n'),
   // Table tags
   tableOpen: enc('<table>\n'),
   tableClose: enc('</table>\n'),
