@@ -144,3 +144,37 @@ test('exposes a sorted list of registered highlight aliases', async () => {
   const sorted = [...aliases].sort();
   assert.deepEqual(aliases, sorted);
 });
+
+test('highlights basic HTML with tags, strings and comments', async () => {
+  const source = '<div class="x">Hello <!-- note --> </div>';
+  const html = await highlightToHtml(source, 'html');
+
+  assert.ok(html.includes('<code class="language-html">'));
+  // Tag name highlighted as keyword
+  assert.ok(html.includes('<span class="tok-kw">div</span>'));
+  // Attribute value highlighted as string
+  assert.ok(html.includes('<span class="tok-str">&quot;x&quot;</span>'));
+  // HTML comment highlighted
+  assert.ok(html.includes('<span class="tok-com">&lt;!-- note --&gt;</span>'));
+});
+
+test('highlights JSX alias using JavaScript tokenizer', async () => {
+  const source = 'const el = <div className="x">{1 + 2}</div>';
+  const html = await highlightToHtml(source, 'jsx');
+
+  assert.ok(html.includes('<code class="language-jsx">'));
+  // JS keyword present
+  assert.ok(html.includes('<span class="tok-kw">const</span>'));
+  // Numbers are highlighted inside JSX expression
+  assert.ok(html.includes('<span class="tok-num">1</span>'));
+  assert.ok(html.includes('<span class="tok-num">2</span>'));
+});
+
+test('highlights TSX alias with TypeScript keywords', async () => {
+  const source = 'type X = { a: number }; const el = <X a={1} />';
+  const html = await highlightToHtml(source, 'tsx');
+
+  assert.ok(html.includes('<code class="language-tsx">'));
+  assert.ok(html.includes('<span class="tok-kw">type</span>'));
+  assert.ok(html.includes('<span class="tok-kw">number</span>'));
+});

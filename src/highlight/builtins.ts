@@ -123,6 +123,32 @@ function hashComment(
   return spec;
 }
 
+// Minimal HTML/XML-like support: comments, strings, attributes and common tags
+// Note: tag names and some common elements are added as keywords for better emphasis.
+export const htmlLanguageSpec: AuthorLanguageSpec = {
+  name: 'html',
+  aliases: ['html', 'htm', 'xhtml', 'xml', 'svg'],
+  keywords: kw([
+    // common tags
+    'html','head','body','script','style','link','meta','title','base','noscript',
+    'header','footer','nav','main','section','article','aside','h1','h2','h3','h4','h5','h6',
+    'div','span','a','p','ul','ol','li','dl','dt','dd','blockquote','pre','code','hr','br',
+    'table','thead','tbody','tfoot','tr','th','td','caption','col','colgroup',
+    'form','input','textarea','select','option','optgroup','label','button','fieldset','legend',
+    'img','picture','source','figure','figcaption','video','audio','track','canvas','svg','path','circle','rect','g','defs','symbol','use',
+    '!doctype'
+  ]),
+  // HTML comments <!-- --> as block comments
+  blockComments: [['<!--', '-->']],
+  // Attribute strings
+  strings: [
+    { quote: '"', escape: '\\', allowMultiline: false },
+    { quote: '\'', escape: '\\', allowMultiline: false },
+  ],
+  // Numbers not especially used, keep simple defaults
+  numbers: SIMPLE_NUMBERS,
+};
+
 export const builtinLanguageSpecs: readonly AuthorLanguageSpec[] = [
   {
     name: 'python',
@@ -1221,5 +1247,6 @@ export const builtinLanguageSpecs: readonly AuthorLanguageSpec[] = [
     'with',
     'yield',
   ], { aliases: ['fsharp', 'fs'] }),
+  htmlLanguageSpec,
 ];
 

@@ -275,7 +275,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
           out.writeBytes(TAG.pOpen);
           paraOpen = true;
         } else {
-          out.writeBytes(TAG.lf);
+          out.writeBytes(TAG.br);
         }
         renderInline(u8, ev.s, ev.e, out, options);
         break;

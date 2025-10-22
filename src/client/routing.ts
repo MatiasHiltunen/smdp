@@ -3,6 +3,8 @@ export type RenderMode = "html" | "canvas";
 export type RouteDetails = {
   mode: RenderMode;
   externalUrl: URL | null;
+  shared: boolean;
+  dataPayload: string | null;
 };
 
 function safeParseUrl(value: string | null): URL | null {
@@ -21,11 +23,43 @@ function safeParseUrl(value: string | null): URL | null {
 export function parseRoute(): RouteDetails {
   const rawPath = decodeURIComponent(window.location.pathname);
 
+  // Shared (embed) mode: no FABs, no editor/theme UI, HTML render
+  if (rawPath.startsWith("/shared/")) {
+    const externalPart = rawPath.slice("/shared/".length);
+    return {
+      mode: "html",
+      externalUrl: safeParseUrl(externalPart || null),
+      shared: true,
+      dataPayload: null,
+    };
+  }
+
+  if (rawPath === "/shared") {
+    return {
+      mode: "html",
+      externalUrl: null,
+      shared: true,
+      dataPayload: null,
+    };
+  }
+
+  if (rawPath.startsWith("/data/")) {
+    const payload = rawPath.slice("/data/".length) || null;
+    return {
+      mode: "html",
+      externalUrl: null,
+      shared: true,
+      dataPayload: payload,
+    };
+  }
+
   if (rawPath.startsWith("/canvas/")) {
     const externalPart = rawPath.slice("/canvas/".length);
     return {
       mode: "canvas",
       externalUrl: safeParseUrl(externalPart || null),
+      shared: false,
+      dataPayload: null,
     };
   }
 
@@ -33,6 +67,8 @@ export function parseRoute(): RouteDetails {
     return {
       mode: "canvas",
       externalUrl: null,
+      shared: false,
+      dataPayload: null,
     };
   }
 
@@ -41,6 +77,8 @@ export function parseRoute(): RouteDetails {
     return {
       mode: "html",
       externalUrl: safeParseUrl(externalPart || null),
+      shared: false,
+      dataPayload: null,
     };
   }
 
@@ -48,6 +86,8 @@ export function parseRoute(): RouteDetails {
     return {
       mode: "html",
       externalUrl: null,
+      shared: false,
+      dataPayload: null,
     };
   }
 
@@ -55,6 +95,8 @@ export function parseRoute(): RouteDetails {
     return {
       mode: "html",
       externalUrl: null,
+      shared: false,
+      dataPayload: null,
     };
   }
 
@@ -62,5 +104,7 @@ export function parseRoute(): RouteDetails {
   return {
     mode: "html",
     externalUrl: safeParseUrl(externalPart || null),
+    shared: false,
+    dataPayload: null,
   };
 }

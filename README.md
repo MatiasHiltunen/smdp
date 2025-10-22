@@ -97,6 +97,7 @@ So far built-in basic syntax highlighters cover the following languages:
 - Dockerfile
 - Make / Makefile
 - F#
+- HTML / XML / SVG
 
 Additional languages can be registered at runtime with `registerHighlightLanguage`.
 

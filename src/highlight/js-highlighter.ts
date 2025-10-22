@@ -37,6 +37,18 @@ const JS_KEYWORDS: AuthorLanguageSpec['keywords'] = [
   { word: 'in', code: 7 },
   { word: 'instanceof', code: 8 },
   { word: 'interface' },
+  // TypeScript additions
+  { word: 'type' },
+  { word: 'readonly' },
+  { word: 'abstract' },
+  { word: 'declare' },
+  { word: 'namespace' },
+  { word: 'keyof' },
+  { word: 'infer' },
+  { word: 'satisfies' },
+  { word: 'override' },
+  { word: 'asserts' },
+  { word: 'is' },
   { word: 'let' },
   { word: 'new', code: 9 },
   { word: 'package' },
@@ -60,6 +72,18 @@ const JS_KEYWORDS: AuthorLanguageSpec['keywords'] = [
   { word: 'as' },
   { word: 'from' },
   { word: 'of' },
+  // Common primitive/type names treated as keywords for highlighting
+  { word: 'any' },
+  { word: 'unknown' },
+  { word: 'never' },
+  { word: 'boolean' },
+  { word: 'number' },
+  { word: 'string' },
+  { word: 'symbol' },
+  { word: 'bigint' },
+  { word: 'undefined' },
+  { word: 'null' },
+  { word: 'object' },
 ];
 
 const JS_SPEC: AuthorLanguageSpec = {
