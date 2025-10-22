@@ -111,8 +111,7 @@ Switch to `/canvas` to see the same Markdown buffered into an offscreen canvas a
   - With nested items
     - And resilient spacing
 
-Term
-: Definition lists render using standard Markdown extensions.
+Term: Definition lists render using standard Markdown extensions.
 
 ### Embedded Image
 ![Processing pipeline diagram from placeholder service](https://picsum.photos/960/480?blur=2)

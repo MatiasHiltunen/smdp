@@ -609,6 +609,16 @@ async function init(): Promise<void> {
   const initialTheme = getCurrentTheme();
   applyTheme(initialTheme);
 
+  // Apply theme overrides from URL for both shared and normal modes.
+  // Ensures shared/embed pages pick up style params supplied in the query string.
+  const hasUrlTheme = loadThemeFromUrl(themeBuilder);
+  if (hasUrlTheme) {
+    themeBuilder.apply();
+    // If a theme editor exists, refresh it; otherwise it's a no-op and
+    // when the editor is later created it will reflect current builder state.
+    themeEditorHandle?.refresh();
+  }
+
   const route = parseRoute();
 
   let view: HtmlView | CanvasView;
