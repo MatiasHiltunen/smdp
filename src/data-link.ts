@@ -187,11 +187,7 @@ export async function encodeMarkdownToBase64(
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
   const bytes = encoder.encode(markdown);
-
-  console.log("Encoded bytes:", bytes);
-
   const compressed = await compressBytes(bytes, format);
-  console.log("Compressed bytes:", compressed);
   return bytesToBase64(compressed);
 }
 

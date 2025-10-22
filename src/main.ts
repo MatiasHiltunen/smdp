@@ -15,6 +15,7 @@ import {
   type HtmlView,
 } from "./client/views";
 import { fetchMarkdown, type MarkdownFetchResult } from "./client/fetch";
+import { sanitizeSharedDataBaseUrl } from "./client/shared-data";
 import { createFabMenu, displayError } from "./client/ui";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
@@ -145,9 +146,10 @@ async function init(): Promise<void> {
   try {
     if (route.dataPayload) {
       const decoded = await decodeBase64Markdown(route.dataPayload);
+      const baseUrl = sanitizeSharedDataBaseUrl(window.location.href);
       resolved = {
         bytes: decoded,
-        baseUrl: window.location.href,
+        baseUrl,
       };
       resolvedText = new TextDecoder().decode(decoded);
     } else {

@@ -288,13 +288,11 @@ export function createFabMenu(
       alert("No content to share. Please add some markdown content first.");
       return;
     }
-    console.log("Sharing markdown:", markdown);
     void (async () => {
       shareButton.disabled = true;
       shareButton.setAttribute("aria-busy", "true");
       try {
         const base64 = await encodeMarkdownToBase64(markdown);
-        console.log("Encoded base64:", base64);
         const shareUrl = new URL(window.location.href);
         shareUrl.pathname = `/data/${encodeURIComponent(base64)}`;
         shareUrl.hash = "";
