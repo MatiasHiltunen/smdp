@@ -4,6 +4,7 @@ import {
   type ThemeMeta,
   defaultTheme,
 } from './theme-builder';
+import { serializeTheme, deserializeTheme } from './theme-serializer';
 
 export type ThemeEditorHandle = {
   root: HTMLElement;
@@ -135,42 +136,26 @@ const TOKEN_GROUPS: ReadonlyArray<{ title: string; fields: readonly TokenField[]
 ] as const;
 
 /**
- * Save theme configuration to URL search parameters
+ * Save theme configuration to URL search parameters using compact serialization
  */
 function saveThemeToUrl(builder: ThemeBuilder): void {
   const config = builder.build();
   const params = new URLSearchParams(window.location.search);
   
   // Determine current theme mode
-  const currentMode = document.documentElement.getAttribute('data-theme') || 'dark';
-  const prefix = currentMode === 'light' ? 'l_' : 'd_';
+  const currentMode = (document.documentElement.getAttribute('data-theme') || 'dark') as 'light' | 'dark';
+  const modeKey = currentMode === 'light' ? 'l' : 'd';
   
-  // Remove existing theme params for current mode only
-  const keysToDelete: string[] = [];
-  params.forEach((_, key) => {
-    if (key.startsWith(`${prefix}m_`) || key.startsWith(`${prefix}t_`) || key.startsWith(`${prefix}c_`)) {
-      keysToDelete.push(key);
-    }
-  });
-  keysToDelete.forEach(key => params.delete(key));
+  // Remove existing theme param for current mode
+  params.delete(modeKey);
   
-  // Save meta fields with mode prefix
-  Object.entries(config.meta).forEach(([key, value]) => {
-    // Skip colorScheme as it's determined by the mode itself
-    if (key !== 'colorScheme') {
-      params.set(`${prefix}m_${key}`, value);
-    }
-  });
+  // Serialize theme using compact format (only diffs from default)
+  const serialized = serializeTheme(config, currentMode);
   
-  // Save token fields with mode prefix
-  Object.entries(config.tokens).forEach(([key, value]) => {
-    params.set(`${prefix}t_${key}`, value);
-  });
-  
-  // Save custom properties with mode prefix
-  Object.entries(config.customProperties).forEach(([key, value]) => {
-    params.set(`${prefix}c_${key.replace(/^--/, '')}`, value);
-  });
+  // Only add param if there are customizations
+  if (serialized) {
+    params.set(modeKey, serialized);
+  }
   
   // Update URL without reload
   const newUrl = params.toString() 
@@ -181,49 +166,37 @@ function saveThemeToUrl(builder: ThemeBuilder): void {
 
 /**
  * Load theme configuration from URL search parameters for the current mode
+ * using compact serialization format
  */
 export function loadThemeFromUrl(builder: ThemeBuilder): boolean {
   const params = new URLSearchParams(window.location.search);
-  let hasThemeParams = false;
   
   // Determine current theme mode
-  const currentMode = document.documentElement.getAttribute('data-theme') || 'dark';
-  const prefix = currentMode === 'light' ? 'l_' : 'd_';
+  const currentMode = (document.documentElement.getAttribute('data-theme') || 'dark') as 'light' | 'dark';
+  const modeKey = currentMode === 'light' ? 'l' : 'd';
   
-  const meta: Partial<ThemeMeta> = {};
-  const tokens: Partial<Record<ThemeTokenKey, string>> = {};
-  const customProperties: Record<string, string> = {};
+  // Get compact serialized theme for current mode
+  const serialized = params.get(modeKey);
   
-  // Load meta fields for current mode
-  params.forEach((value, key) => {
-    if (key.startsWith(`${prefix}m_`)) {
-      const metaKey = key.slice(prefix.length + 2); // Remove prefix + 'm_'
-      (meta as Record<string, string>)[metaKey] = value;
-      hasThemeParams = true;
-    } else if (key.startsWith(`${prefix}t_`)) {
-      const tokenKey = key.slice(prefix.length + 2) as ThemeTokenKey; // Remove prefix + 't_'
-      tokens[tokenKey] = value;
-      hasThemeParams = true;
-    } else if (key.startsWith(`${prefix}c_`)) {
-      const propKey = `--${key.slice(prefix.length + 2)}`; // Remove prefix + 'c_'
-      customProperties[propKey] = value;
-      hasThemeParams = true;
-    }
-  });
-  
-  if (hasThemeParams) {
-    if (Object.keys(meta).length > 0) {
-      builder.withMeta(meta);
-    }
-    if (Object.keys(tokens).length > 0) {
-      builder.withTokens(tokens);
-    }
-    if (Object.keys(customProperties).length > 0) {
-      builder.withCustomProperties(customProperties);
-    }
+  if (!serialized) {
+    return false;
   }
   
-  return hasThemeParams;
+  // Deserialize theme configuration
+  const config = deserializeTheme(serialized, currentMode);
+  
+  // Apply to builder
+  if (config.meta) {
+    builder.withMeta(config.meta);
+  }
+  if (config.tokens) {
+    builder.withTokens(config.tokens);
+  }
+  if (config.customProperties) {
+    builder.withCustomProperties(config.customProperties);
+  }
+  
+  return true;
 }
 
 /**

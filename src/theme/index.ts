@@ -9,3 +9,10 @@ export {
   type ThemeTokens,
   type ThemeTokenKey,
 } from './theme-builder';
+
+export {
+  serializeTheme,
+  deserializeTheme,
+  serializeThemes,
+  deserializeThemes,
+} from './theme-serializer';

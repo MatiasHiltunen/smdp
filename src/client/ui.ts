@@ -5,6 +5,7 @@ import { createElement } from "./dom";
 import { loadThemeFromUrl } from "../theme/theme-editor";
 import { getThemeBuilder } from "./theme";
 import { encodeMarkdownToBase64 } from "../data-link";
+import { deserializeTheme } from "../theme/theme-serializer";
 
 /**
  * Export the rendered HTML as a self-contained HTML5 file
@@ -34,56 +35,48 @@ export function exportAsHtml(view: HtmlView | CanvasView): void {
   const currentTheme =
     document.documentElement.getAttribute("data-theme") || "dark";
 
-  // Parse URL parameters to extract mode-specific customizations
+  // Parse URL parameters to extract compact theme customizations
   const params = new URLSearchParams(window.location.search);
   const darkCustomProps: string[] = [];
   const lightCustomProps: string[] = [];
 
-  // Helper to convert theme params to CSS properties
-  const convertParamsToCss = (prefix: string, targetArray: string[]) => {
-    const meta: Record<string, string> = {};
-    const tokens: Record<string, string> = {};
-    const customs: Record<string, string> = {};
-
-    params.forEach((value, key) => {
-      if (key.startsWith(`${prefix}m_`)) {
-        const metaKey = key.slice(prefix.length + 2);
-        meta[metaKey] = value;
-      } else if (key.startsWith(`${prefix}t_`)) {
-        const tokenKey = key.slice(prefix.length + 2);
-        tokens[tokenKey] = value;
-      } else if (key.startsWith(`${prefix}c_`)) {
-        const propKey = `--${key.slice(prefix.length + 2)}`;
-        customs[propKey] = value;
-      }
-    });
-
+  // Helper to convert deserialized theme config to CSS properties
+  const convertThemeToCss = (serialized: string | null, mode: 'light' | 'dark', targetArray: string[]) => {
+    if (!serialized) return;
+    
+    const config = deserializeTheme(serialized, mode);
+    
     // Add meta properties
-    if (meta.fontFamily) targetArray.push(`  font-family: ${meta.fontFamily};`);
-    if (meta.fontSize) targetArray.push(`  font-size: ${meta.fontSize};`);
-    if (meta.fontWeight) targetArray.push(`  font-weight: ${meta.fontWeight};`);
-    if (meta.lineHeight) targetArray.push(`  line-height: ${meta.lineHeight};`);
-    if (meta.monoFontFamily)
-      targetArray.push(`  --font-mono: ${meta.monoFontFamily};`);
+    if (config.meta) {
+      if (config.meta.fontFamily) targetArray.push(`  font-family: ${config.meta.fontFamily};`);
+      if (config.meta.fontSize) targetArray.push(`  font-size: ${config.meta.fontSize};`);
+      if (config.meta.fontWeight) targetArray.push(`  font-weight: ${config.meta.fontWeight};`);
+      if (config.meta.lineHeight) targetArray.push(`  line-height: ${config.meta.lineHeight};`);
+      if (config.meta.monoFontFamily) targetArray.push(`  --font-mono: ${config.meta.monoFontFamily};`);
+    }
 
     // Add token properties (converted to CSS variables)
-    Object.entries(tokens).forEach(([key, value]) => {
-      // Convert camelCase token names to kebab-case CSS variable names
-      const cssVarName = `--${key.replace(/([A-Z])/g, "-$1").toLowerCase()}`;
-      targetArray.push(`  ${cssVarName}: ${value};`);
-    });
+    if (config.tokens) {
+      Object.entries(config.tokens).forEach(([key, value]) => {
+        // Convert camelCase token names to kebab-case CSS variable names
+        const cssVarName = `--${key.replace(/([A-Z])/g, "-$1").toLowerCase()}`;
+        targetArray.push(`  ${cssVarName}: ${value};`);
+      });
+    }
 
     // Add custom properties
-    Object.entries(customs).forEach(([key, value]) => {
-      targetArray.push(`  ${key}: ${value};`);
-    });
+    if (config.customProperties) {
+      Object.entries(config.customProperties).forEach(([key, value]) => {
+        targetArray.push(`  ${key}: ${value};`);
+      });
+    }
   };
 
   // Extract dark mode customizations
-  convertParamsToCss("d_", darkCustomProps);
+  convertThemeToCss(params.get('d'), 'dark', darkCustomProps);
 
   // Extract light mode customizations
-  convertParamsToCss("l_", lightCustomProps);
+  convertThemeToCss(params.get('l'), 'light', lightCustomProps);
 
   // Build theme override styles
   let themeOverrides = "";
@@ -305,7 +298,18 @@ export function createFabMenu(
         const shareUrl = new URL(window.location.href);
         shareUrl.pathname = `/data/${encodeURIComponent(base64)}`;
         shareUrl.hash = "";
-        shareUrl.search = ""; // Clear query params for clean sharing
+        
+        // Preserve theme customizations from current URL
+        const currentParams = new URLSearchParams(window.location.search);
+        const newParams = new URLSearchParams();
+        
+        // Copy theme params (d and l) to shared URL
+        const darkTheme = currentParams.get('d');
+        const lightTheme = currentParams.get('l');
+        if (darkTheme) newParams.set('d', darkTheme);
+        if (lightTheme) newParams.set('l', lightTheme);
+        
+        shareUrl.search = newParams.toString();
         
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(shareUrl.toString());
