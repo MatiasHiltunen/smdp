@@ -1,3 +1,4 @@
+import { decodeBase64Markdown, encodeMarkdownToBase64 } from "./data-link";
 import { MDParser, u8 } from "./parser/index";
 import { createThemeBuilder, defaultTheme, lightTheme } from "./theme";
 import {
@@ -80,6 +81,7 @@ type RouteDetails = {
   mode: RenderMode;
   externalUrl: URL | null;
   shared: boolean;
+  dataPayload: string | null;
 };
 
 function safeParseUrl(value: string | null): URL | null {
@@ -105,6 +107,7 @@ function parseRoute(): RouteDetails {
       mode: "html",
       externalUrl: safeParseUrl(externalPart || null),
       shared: true,
+      dataPayload: null,
     };
   }
 
@@ -113,6 +116,17 @@ function parseRoute(): RouteDetails {
       mode: "html",
       externalUrl: null,
       shared: true,
+      dataPayload: null,
+    };
+  }
+
+  if (rawPath.startsWith("/data/")) {
+    const payload = rawPath.slice("/data/".length) || null;
+    return {
+      mode: "html",
+      externalUrl: null,
+      shared: true,
+      dataPayload: payload,
     };
   }
 
@@ -122,6 +136,7 @@ function parseRoute(): RouteDetails {
       mode: "canvas",
       externalUrl: safeParseUrl(externalPart || null),
       shared: false,
+      dataPayload: null,
     };
   }
 
@@ -130,6 +145,7 @@ function parseRoute(): RouteDetails {
       mode: "canvas",
       externalUrl: null,
       shared: false,
+      dataPayload: null,
     };
   }
 
@@ -139,6 +155,7 @@ function parseRoute(): RouteDetails {
       mode: "html",
       externalUrl: safeParseUrl(externalPart || null),
       shared: false,
+      dataPayload: null,
     };
   }
 
@@ -147,6 +164,7 @@ function parseRoute(): RouteDetails {
       mode: "html",
       externalUrl: null,
       shared: false,
+      dataPayload: null,
     };
   }
 
@@ -155,6 +173,7 @@ function parseRoute(): RouteDetails {
       mode: "html",
       externalUrl: null,
       shared: false,
+      dataPayload: null,
     };
   }
 
@@ -163,6 +182,7 @@ function parseRoute(): RouteDetails {
     mode: "html",
     externalUrl: safeParseUrl(externalPart || null),
     shared: false,
+    dataPayload: null,
   };
 }
 
@@ -420,8 +440,24 @@ function createFabMenu(
     </svg>
   `;
 
+  const shareButton = createElement("button");
+  shareButton.className = "fab-action";
+  shareButton.type = "button";
+  shareButton.setAttribute("data-tooltip", "Share as Data Link");
+  shareButton.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+      <path d="M18 3a3 3 0 1 1-2.668 4.301l-6.01 3.004a3 3 0 0 1 0 2.39l6.01 3.004a3 3 0 1 1-.898 1.79l-6.01-3.004a3 3 0 1 1 0-4.98l6.01-3.004A3 3 0 0 1 18 3Z" fill="currentColor"/>
+    </svg>
+  `;
+
   // Event handlers
   let isMenuOpen = false;
+
+  const closeMenu = () => {
+    isMenuOpen = false;
+    menu.classList.remove("is-open");
+    mainButton.setAttribute("aria-expanded", "false");
+  };
 
   mainButton.addEventListener("click", () => {
     isMenuOpen = !isMenuOpen;
@@ -431,16 +467,12 @@ function createFabMenu(
 
   editButton.addEventListener("click", () => {
     onToggleEditor?.();
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    closeMenu();
   });
 
   themeButton.addEventListener("click", () => {
     themeEditor.toggle();
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    closeMenu();
   });
 
   themeToggleButton.addEventListener("click", () => {
@@ -454,28 +486,58 @@ function createFabMenu(
       themeEditorHandle?.refresh();
     }
     updateThemeIcon(next);
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    closeMenu();
   });
 
   exportButton.addEventListener("click", () => {
     exportAsHtml(view);
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    closeMenu();
+  });
+
+  shareButton.addEventListener("click", () => {
+   // closeMenu();
+    const markdown = view.textarea.value;
+    if(!markdown) alert("Nice, you found a bug! Now go and submit an issue :) ...or pr!")
+    void (async () => {
+      shareButton.disabled = true;
+      shareButton.setAttribute("aria-busy", "true");
+      try {
+        const base64 = await encodeMarkdownToBase64(markdown);
+        const shareUrl = new URL(window.location.href);
+        shareUrl.pathname = `/data/${encodeURIComponent(base64)}`;
+        shareUrl.hash = "";
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(shareUrl.toString());
+          alert("Shareable link copied to clipboard.");
+        } else {
+          window.prompt("Copy this shareable link:", shareUrl.toString());
+        }
+
+        console.log(shareUrl.toString());
+      } catch (error) {
+        console.error("Failed to create shareable link", error);
+        displayError("Unable to generate shareable data link");
+      } finally {
+        shareButton.disabled = false;
+        shareButton.removeAttribute("aria-busy");
+      }
+    })();
   });
 
   // Close menu when clicking outside
   document.addEventListener("click", (e) => {
     if (isMenuOpen && !menu.contains(e.target as Node)) {
-      isMenuOpen = false;
-      menu.classList.remove("is-open");
-      mainButton.setAttribute("aria-expanded", "false");
+      closeMenu();
     }
   });
 
-  actions.append(editButton, themeButton, themeToggleButton, exportButton);
+  actions.append(
+    editButton,
+    themeButton,
+    themeToggleButton,
+    exportButton,
+    shareButton,
+  );
   menu.append(mainButton, actions);
 
   return menu;
@@ -678,14 +740,27 @@ async function init(): Promise<void> {
   let currentBaseUrl: string | undefined;
 
   try {
-    resolved = await fetchMarkdown(route.externalUrl);
-    resolvedText = new TextDecoder().decode(resolved.bytes);
+    if (route.dataPayload) {
+      const decoded = await decodeBase64Markdown(route.dataPayload);
+      resolved = {
+        bytes: decoded,
+        baseUrl: window.location.href,
+      };
+      resolvedText = new TextDecoder().decode(decoded);
+    } else {
+      resolved = await fetchMarkdown(route.externalUrl);
+      resolvedText = new TextDecoder().decode(resolved.bytes);
+    }
   } catch (error) {
     console.error(error);
-    displayError(
-      error instanceof Error ? error.message : "Unable to load markdown",
-    );
-    if (route.externalUrl) {
+    const message =
+      route.dataPayload && error instanceof Error
+        ? "Unable to decode shared markdown link"
+        : error instanceof Error
+          ? error.message
+          : "Unable to load markdown";
+    displayError(message);
+    if (!route.dataPayload && route.externalUrl) {
       try {
         resolved = await fetchMarkdown(null);
         resolvedText = new TextDecoder().decode(resolved.bytes);
