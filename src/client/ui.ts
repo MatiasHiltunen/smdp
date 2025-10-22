@@ -4,6 +4,7 @@ import type { CanvasView, HtmlView } from "./views";
 import { createElement } from "./dom";
 import { loadThemeFromUrl } from "../theme/theme-editor";
 import { getThemeBuilder } from "./theme";
+import { encodeMarkdownToBase64 } from "../data-link";
 
 /**
  * Export the rendered HTML as a self-contained HTML5 file
@@ -225,6 +226,17 @@ export function createFabMenu(
     </svg>
   `;
 
+  // Share button
+  const shareButton = createElement("button");
+  shareButton.className = "fab-action";
+  shareButton.type = "button";
+  shareButton.setAttribute("data-tooltip", "Share as Data Link");
+  shareButton.innerHTML = `
+    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+      <path d="M18 3a3 3 0 1 1-2.668 4.301l-6.01 3.004a3 3 0 0 1 0 2.39l6.01 3.004a3 3 0 1 1-.898 1.79l-6.01-3.004a3 3 0 1 1 0-4.98l6.01-3.004A3 3 0 0 1 18 3Z" fill="currentColor"/>
+    </svg>
+  `;
+
   // Event handlers
   let isMenuOpen = false;
 
@@ -272,6 +284,57 @@ export function createFabMenu(
     mainButton.setAttribute("aria-expanded", "false");
   });
 
+  shareButton.addEventListener("click", () => {
+    const markdown = view.textarea.value;
+    if (!markdown) {
+      alert("No content to share. Please add some markdown content first.");
+      return;
+    }
+    
+    void (async () => {
+      shareButton.disabled = true;
+      shareButton.setAttribute("aria-busy", "true");
+      try {
+        const base64 = await encodeMarkdownToBase64(markdown);
+        const shareUrl = new URL(window.location.href);
+        shareUrl.pathname = `/data/${encodeURIComponent(base64)}`;
+        shareUrl.hash = "";
+        shareUrl.search = ""; // Clear query params for clean sharing
+        
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(shareUrl.toString());
+          alert("Shareable link copied to clipboard!");
+        } else {
+          // Fallback for browsers without clipboard API
+          const textArea = createElement("textarea");
+          textArea.value = shareUrl.toString();
+          textArea.style.position = "fixed";
+          textArea.style.left = "-999999px";
+          textArea.style.top = "-999999px";
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          try {
+            document.execCommand("copy");
+            alert("Shareable link copied to clipboard!");
+          } catch (err) {
+            window.prompt("Copy this shareable link:", shareUrl.toString());
+          }
+          document.body.removeChild(textArea);
+        }
+      } catch (error) {
+        console.error("Failed to create shareable link", error);
+        displayError("Unable to generate shareable data link");
+      } finally {
+        shareButton.disabled = false;
+        shareButton.removeAttribute("aria-busy");
+        isMenuOpen = false;
+        menu.classList.remove("is-open");
+        mainButton.setAttribute("aria-expanded", "false");
+      }
+    })();
+  });
+
   // Close menu when clicking outside
   document.addEventListener("click", (e) => {
     if (isMenuOpen && !menu.contains(e.target as Node)) {
@@ -281,7 +344,7 @@ export function createFabMenu(
     }
   });
 
-  actions.append(editButton, themeButton, themeToggleButton, exportButton);
+  actions.append(editButton, themeButton, themeToggleButton, exportButton, shareButton);
   menu.append(mainButton, actions);
 
   return menu;
