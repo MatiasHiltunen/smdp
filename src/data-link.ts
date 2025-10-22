@@ -78,9 +78,15 @@ async function compressBytes(
   ensureCompressionStreamsAvailable();
   const stream = new CompressionStream(resolveCompressionFormat(format));
   const writer = stream.writable.getWriter();
+  
+  // Start reading from the readable stream before closing the writer
+  // to avoid race conditions with the stream's internal buffering
+  const readPromise = streamToUint8Array(stream.readable);
+  
   await writer.write(input as BufferSource);
   await writer.close();
-  return await streamToUint8Array(stream.readable);
+  
+  return await readPromise;
 }
 
 /**
@@ -94,9 +100,15 @@ async function decompressBytes(
   ensureCompressionStreamsAvailable();
   const stream = new DecompressionStream(resolveCompressionFormat(format));
   const writer = stream.writable.getWriter();
+  
+  // Start reading from the readable stream before closing the writer
+  // to avoid race conditions with the stream's internal buffering
+  const readPromise = streamToUint8Array(stream.readable);
+  
   await writer.write(input as BufferSource);
   await writer.close();
-  return await streamToUint8Array(stream.readable);
+  
+  return await readPromise;
 }
 
 /**
@@ -175,7 +187,11 @@ export async function encodeMarkdownToBase64(
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
   const bytes = encoder.encode(markdown);
+
+  console.log("Encoded bytes:", bytes);
+
   const compressed = await compressBytes(bytes, format);
+  console.log("Compressed bytes:", compressed);
   return bytesToBase64(compressed);
 }
 
