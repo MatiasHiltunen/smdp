@@ -246,21 +246,24 @@ export function createFabMenu(
     mainButton.setAttribute("aria-expanded", String(isMenuOpen));
   });
 
-  editButton.addEventListener("click", () => {
+  editButton.addEventListener("click", (e) => {
+    e.stopPropagation();
     onToggleEditor?.();
     isMenuOpen = false;
     menu.classList.remove("is-open");
     mainButton.setAttribute("aria-expanded", "false");
   });
 
-  themeButton.addEventListener("click", () => {
+  themeButton.addEventListener("click", (e) => {
+    e.stopPropagation();
     themeEditor.toggle();
     isMenuOpen = false;
     menu.classList.remove("is-open");
     mainButton.setAttribute("aria-expanded", "false");
   });
 
-  themeToggleButton.addEventListener("click", () => {
+  themeToggleButton.addEventListener("click", (e) => {
+    e.stopPropagation();
     const themeBuilder = getThemeBuilder();
     const current = getCurrentTheme();
     const next = current === "dark" ? "light" : "dark";
@@ -277,14 +280,16 @@ export function createFabMenu(
     mainButton.setAttribute("aria-expanded", "false");
   });
 
-  exportButton.addEventListener("click", () => {
+  exportButton.addEventListener("click", (e) => {
+    e.stopPropagation();
     exportAsHtml(view);
     isMenuOpen = false;
     menu.classList.remove("is-open");
     mainButton.setAttribute("aria-expanded", "false");
   });
 
-  shareButton.addEventListener("click", () => {
+  shareButton.addEventListener("click", (e) => {
+    e.stopPropagation(); // Prevent click from bubbling to document
     const markdown = view.textarea.value;
     if (!markdown) {
       alert("No content to share. Please add some markdown content first.");
