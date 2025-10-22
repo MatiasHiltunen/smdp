@@ -12,15 +12,18 @@ import type { ThemeConfiguration, ThemeTokenKey, ThemeMeta } from './theme-build
 import { defaultTheme, lightTheme } from './theme-builder';
 
 /**
- * Predefined font family presets (matching theme-editor.ts)
+ * Predefined font family presets (must match theme-editor.ts FONT_FAMILIES exactly)
  */
 const FONT_FAMILY_PRESETS = [
-  '"Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+  '"Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif', // Default
+  '"Inter", system-ui, -apple-system, sans-serif',
+  '"Segoe UI", system-ui, -apple-system, sans-serif',
   'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-  '"Roboto", "Helvetica Neue", Arial, sans-serif',
-  '"Lato", "Helvetica Neue", Arial, sans-serif',
-  'Georgia, "Times New Roman", serif',
-  '"Merriweather", Georgia, serif',
+  '"Helvetica Neue", Helvetica, Arial, sans-serif',
+  'Georgia, "Times New Roman", Times, serif',
+  '"Arial", Helvetica, sans-serif',
+  'Verdana, Geneva, Tahoma, sans-serif',
+  '"Trebuchet MS", sans-serif',
 ] as const;
 
 const MONO_FONT_FAMILY_PRESETS = [

@@ -35,6 +35,7 @@ const META_FIELDS: readonly MetaField[] = [
 ] as const;
 
 const FONT_FAMILIES = [
+  '"Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif', // Default
   '"Inter", system-ui, -apple-system, sans-serif',
   '"Segoe UI", system-ui, -apple-system, sans-serif',
   'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
