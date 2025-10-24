@@ -6,10 +6,12 @@ import { HtmlArena } from './arena';
 import { TAG, TE } from './constants';
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
-import type { ListStackItem } from './types';
+import type { BlockEvent, ListStackItem } from './types';
 import { highlightCodeBlock } from '../highlight';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
+import { decodeBlockSection } from './block-serializer';
+import { createRenderPipeline } from './render-pipeline';
 
 /**
  * Renders inline tokens to HTML
@@ -143,28 +145,54 @@ function renderInline(
 /**
  * Renders blocks to HTML string
  */
-export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOptions = {}): Promise<string> {
+async function renderHTMLFromEventStream(
+  u8: Uint8Array,
+  events: Iterable<BlockEvent>,
+  options: ParserOptions = {},
+): Promise<string> {
   const out = new HtmlArena();
-  // Heuristic: output is usually within ~1.2x of input plus tags
   const reserveApprox = (u8.length + (u8.length >>> 2) + 1024) | 0;
   out.reserve(reserveApprox);
-  // Lightweight list/bq tracking to add structure around items
+
   const listStack: ListStackItem[] = [];
+  const footnotes: Array<{ idS: number; idE: number; contentS: number; contentE: number }> = [];
   let paraOpen = false;
-  let bqDepth = 0;
+  let lastParaEnd: number | null = null;
+  let blockquoteDepth = 0;
   let inCode = false;
   let codeBuffer: Array<{ s: number; e: number }> | null = null;
   let codeLang: string | undefined;
-  const footnotes: Array<{ idS: number; idE: number; contentS: number; contentE: number }> = [];
 
-  const closePara = (): void => {
+  const closePara = () => {
     if (paraOpen) {
       out.writeBytes(TAG.pClose);
       paraOpen = false;
     }
+    lastParaEnd = null;
   };
 
-  const flushCodeBlock = async (): Promise<void> => {
+  const closeListsAll = () => {
+    while (listStack.length) {
+      const top = listStack.pop()!;
+      if (top.liOpen) out.writeBytes(TAG.liClose);
+      out.writeBytes(top.kind === 'ul' ? TAG.ulClose : TAG.olClose);
+    }
+  };
+
+  const openList = (kind: 'ul' | 'ol') => {
+    listStack.push({ kind, liOpen: false });
+    out.writeBytes(kind === 'ul' ? TAG.ulOpen : TAG.olOpen);
+  };
+
+  const startLi = () => {
+    const top = listStack[listStack.length - 1];
+    if (!top) return;
+    if (top.liOpen) out.writeBytes(TAG.liClose);
+    out.writeBytes(TAG.liOpen);
+    top.liOpen = true;
+  };
+
+  const flushCodeBlock = async () => {
     if (!codeBuffer) return;
 
     let totalLen = 0;
@@ -184,70 +212,47 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         codeBytes[offset++] = 0x0a;
       }
     }
+
     const highlighted = await highlightCodeBlock(codeBytes, codeLang);
     out.writeBytes(highlighted);
 
     codeBuffer = null;
     codeLang = undefined;
   };
-  
-  const closeListsAll = (): void => {
-    while (listStack.length) {
-      const top = listStack.pop()!;
-      if (top.liOpen) out.writeBytes(TAG.liClose);
-      out.writeBytes(top.kind === 'ul' ? TAG.ulClose : TAG.olClose);
-    }
-  };
-  
-  const openList = (kind: 'ul' | 'ol'): void => {
-    listStack.push({ kind, liOpen: false });
-    out.writeBytes(kind === 'ul' ? TAG.ulOpen : TAG.olOpen);
-  };
-  
-  const startLi = (): void => {
-    const top = listStack[listStack.length - 1];
-    if (!top) return;
-    if (top.liOpen) out.writeBytes(TAG.liClose);
-    out.writeBytes(TAG.liOpen);
-    top.liOpen = true;
-  };
 
-  for (const ev of blocks(u8)) {
-    switch (ev.type) {
-      case 'bqOpen':
+  const pipeline = createRenderPipeline([
+    {
+      bqOpen() {
         closePara();
         closeListsAll();
         out.writeBytes(TAG.bqOpen);
-        bqDepth++;
-        break;
-
-      case 'bqClose':
+        blockquoteDepth++;
+      },
+      bqClose() {
         closePara();
         closeListsAll();
-        out.writeBytes(TAG.bqClose);
-        bqDepth = Math.max(0, bqDepth - 1);
-        break;
-
-      case 'hr':
+        if (blockquoteDepth > 0) {
+          out.writeBytes(TAG.bqClose);
+          blockquoteDepth--;
+        }
+      },
+      hr() {
         closePara();
         closeListsAll();
         out.writeBytes(TAG.hr);
-        break;
-
-      case 'heading':
+      },
+      heading(ev) {
         closePara();
         closeListsAll();
         out.writeBytes(TAG.hPre[ev.level - 1]);
         renderInline(u8, ev.s, ev.e, out, options);
         out.writeBytes(TAG.hClose[ev.level - 1]);
-        break;
-
-      case 'listOpen':
+      },
+      listOpen(ev) {
         closePara();
         openList(ev.kind);
-        break;
-
-      case 'listItem':
+      },
+      listItem(ev) {
         startLi();
         if (ev.task) {
           out.writeAscii('<input type="checkbox" disabled');
@@ -256,70 +261,78 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         }
         renderInline(u8, ev.s, ev.e, out, options);
         out.writeBytes(TAG.lf);
-        break;
-
-      case 'listClose':
+      },
+      listClose(ev) {
         closePara();
-        // Pop until matching kind (blocks() guarantees well-formedness)
         while (listStack.length) {
           const top = listStack.pop()!;
           if (top.liOpen) out.writeBytes(TAG.liClose);
           out.writeBytes(top.kind === 'ul' ? TAG.ulClose : TAG.olClose);
           if (top.kind === ev.kind) break;
         }
-        break;
+      },
+      paraLine(ev) {
+        if (ev.s === ev.e) {
+          closePara();
+          return;
+        }
 
-      case 'paraLine':
+        let newlineCount = 0;
+        if (lastParaEnd !== null) {
+          for (let idx = lastParaEnd; idx < ev.s; idx++) {
+            if (u8[idx] === 0x0a) newlineCount++;
+          }
+        }
+        const hasBlankLine = newlineCount >= 2;
+        if (hasBlankLine) {
+          closePara();
+        }
+
         if (!paraOpen) {
           closeListsAll();
           out.writeBytes(TAG.pOpen);
           paraOpen = true;
-        } else {
+        } else if (!hasBlankLine) {
           out.writeBytes(TAG.br);
         }
-        renderInline(u8, ev.s, ev.e, out, options);
-        break;
 
-      case 'codeOpen':
+        renderInline(u8, ev.s, ev.e, out, options);
+        lastParaEnd = ev.e;
+      },
+      codeOpen(ev) {
         closePara();
         closeListsAll();
         inCode = true;
         codeBuffer = [];
         codeLang = ev.info?.lang ?? ev.info?.rawLang;
-        break;
-
-      case 'codeText':
+      },
+      codeText(ev) {
         if (inCode && codeBuffer) {
           codeBuffer.push({ s: ev.s, e: ev.e });
         }
-        break;
-
-      case 'codeClose':
+      },
+      async codeClose() {
         if (inCode) {
           await flushCodeBlock();
           inCode = false;
         }
-        break;
-
-      case 'tableOpen':
+      },
+      tableOpen() {
         closePara();
         closeListsAll();
         out.writeBytes(TAG.tableOpen);
-        break;
-
-      case 'tableHeader':
+      },
+      tableHeader(ev) {
         out.writeBytes(TAG.theadOpen);
         for (const cell of ev.cells) {
-          const thTag = cell.align === 'center' ? TAG.thCenter : 
-                        cell.align === 'right' ? TAG.thRight : TAG.thLeft;
+          const thTag = cell.align === 'center' ? TAG.thCenter : cell.align === 'right' ? TAG.thRight : TAG.thLeft;
           out.writeBytes(thTag);
           renderInline(u8, cell.s, cell.e, out, options);
           out.writeBytes(TAG.thClose);
         }
         out.writeBytes(TAG.theadClose);
-        break;
-
-      case 'tableRow':
+      },
+      tableRow(ev) {
         out.writeBytes(TAG.trOpen);
         for (const cell of ev.cells) {
           out.writeBytes(TAG.tdOpen);
@@ -327,14 +340,12 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
           out.writeBytes(TAG.tdClose);
         }
         out.writeBytes(TAG.trClose);
-        break;
-
-      case 'tableClose':
+      },
+      tableClose() {
         out.writeBytes(TAG.tbodyClose);
         out.writeBytes(TAG.tableClose);
-        break;
-
-      case 'infoOpen':
+      },
+      infoOpen(ev) {
         closePara();
         closeListsAll();
         switch (ev.infoType) {
@@ -351,46 +362,67 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
             out.writeBytes(TAG.infoBlockSuccess);
             break;
         }
-        break;
-
-      case 'infoClose':
+      },
+      infoClose() {
         closePara();
         out.writeBytes(TAG.infoBlockClose);
-        break;
-
-      case 'footnoteDef':
-        // Collect footnote definitions to render at the end
+      },
+      footnoteDef(ev) {
         footnotes.push({
           idS: ev.idS,
           idE: ev.idE,
           contentS: ev.contentS,
           contentE: ev.contentE,
         });
-        break;
-    }
-  }
+      },
+      async finalize() {
+        closePara();
+        closeListsAll();
+        while (blockquoteDepth > 0) {
+          out.writeBytes(TAG.bqClose);
+          blockquoteDepth--;
+        }
+        if (inCode) {
+          await flushCodeBlock();
+          inCode = false;
+        }
+        if (footnotes.length > 0) {
+          out.writeAscii('<div class="footnotes"><hr><ol>');
+          for (const fn of footnotes) {
+            out.writeAscii('<li id="fn-');
+            out.writeEscaped(u8, fn.idS, fn.idE);
+            out.writeAscii('">');
+            renderInline(u8, fn.contentS, fn.contentE, out, options);
+            out.writeAscii(' <a href="#fnref-');
+            out.writeEscaped(u8, fn.idS, fn.idE);
+            out.writeAscii('" class="footnote-backref">↩</a></li>');
+          }
+          out.writeAscii('</ol></div>');
+        }
+      },
+    },
+  ]);
 
-  closePara();
-  closeListsAll();
-  if (inCode) {
-    await flushCodeBlock();
-    inCode = false;
-  }
-
-  // Render footnotes section if any exist
-  if (footnotes.length > 0) {
-    out.writeAscii('<div class="footnotes"><hr><ol>');
-    for (const fn of footnotes) {
-      out.writeAscii('<li id="fn-');
-      out.writeEscaped(u8, fn.idS, fn.idE);
-      out.writeAscii('">');
-      renderInline(u8, fn.contentS, fn.contentE, out, options);
-      out.writeAscii(' <a href="#fnref-');
-      out.writeEscaped(u8, fn.idS, fn.idE);
-      out.writeAscii('" class="footnote-backref">↩</a></li>');
-    }
-    out.writeAscii('</ol></div>');
-  }
-
+  await pipeline.run(events, { source: u8 });
   return out.toString();
+}
+export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOptions = {}): Promise<string> {
+  return renderHTMLFromEventStream(u8, blocks(u8), options);
+}
+
+export async function renderHTMLFromBlockEvents(
+  u8: Uint8Array,
+  events: Iterable<BlockEvent>,
+  options: ParserOptions = {},
+): Promise<string> {
+  return renderHTMLFromEventStream(u8, events, options);
+}
+
+export async function renderHTMLFromSerializedBlocks(
+  u8: Uint8Array,
+  blockBytes: Uint8Array,
+  options: ParserOptions = {},
+): Promise<string> {
+  const events = decodeBlockSection(blockBytes);
+  return renderHTMLFromEventStream(u8, events, options);
 }

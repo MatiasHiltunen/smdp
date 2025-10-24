@@ -9,8 +9,8 @@
  */
 
 import { TE } from './constants';
-import { renderHTMLFromBlocks } from './html-renderer';
-import { renderToCanvasFromBlocks } from './canvas-renderer';
+import { renderHTMLFromBlocks, renderHTMLFromSerializedBlocks } from './html-renderer';
+import { renderToCanvasFromBlocks, renderToCanvasFromSerializedBlocks } from './canvas-renderer';
 import { defaultUrlAllowlist } from './utils';
 
 export interface ParserOptions {
@@ -62,6 +62,20 @@ export class MDParser {
     return renderHTMLFromBlocks(u8arr, effective);
   }
 
+  async parseFromBlocks(
+    u8arr: Uint8Array,
+    blockBytes: Uint8Array,
+    overrides: ParserOptions = {},
+  ): Promise<string> {
+    const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
+    const effective: ResolvedParserOptions = {
+      allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
+      urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+    };
+    return renderHTMLFromSerializedBlocks(u8arr, blockBytes, effective);
+  }
+
   /**
    * Renders Markdown (as Uint8Array) to an HTML5 Canvas
    */
@@ -73,6 +87,21 @@ export class MDParser {
       ...(baseUrl !== undefined ? { baseUrl } : {}),
     };
     renderToCanvasFromBlocks(u8arr, canvas, effective);
+  }
+
+  renderToCanvasFromBlocksPayload(
+    u8arr: Uint8Array,
+    blockBytes: Uint8Array,
+    canvas: HTMLCanvasElement,
+    overrides: ParserOptions = {},
+  ): void {
+    const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
+    const effective: ResolvedParserOptions = {
+      allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
+      urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+    };
+    renderToCanvasFromSerializedBlocks(u8arr, blockBytes, canvas, effective);
   }
 
   /**
@@ -103,5 +132,5 @@ export { HtmlArena } from './arena';
 export { lineSpans } from './line-parser';
 export { inlineTokens } from './inline-parser';
 export { blocks } from './block-parser';
-export { renderHTMLFromBlocks } from './html-renderer';
-export { renderToCanvasFromBlocks } from './canvas-renderer';
+export { renderHTMLFromBlocks, renderHTMLFromSerializedBlocks } from './html-renderer';
+export { renderToCanvasFromBlocks, renderToCanvasFromSerializedBlocks } from './canvas-renderer';

@@ -1,6 +1,7 @@
 export type MarkdownFetchResult = {
   bytes: Uint8Array;
   baseUrl: string;
+  blocks?: Uint8Array | null;
 };
 
 export async function fetchMarkdown(

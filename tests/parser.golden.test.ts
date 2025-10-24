@@ -79,9 +79,9 @@ End of content`;
 <p>Blockquote here</p>
 </blockquote>
 <hr>
-<p><a href="https://example.com">Link text</a>
-<img alt="Alt text" src="https://example.com/image.png">
-<del>Strikethrough text</del></p>
+<p><a href="https://example.com">Link text</a></p>
+<p><img alt="Alt text" src="https://example.com/image.png"></p>
+<p><del>Strikethrough text</del></p>
 <ul>
 <li><input type="checkbox" disabled> Task list item (unchecked)
 </li>

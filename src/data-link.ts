@@ -1,3 +1,15 @@
+import { base79DecodeWithChecksum, base79EncodeWithChecksum } from "./data-link/base79";
+import {
+  serializeBinaryPayload,
+  deserializeBinaryPayload,
+  encodeBlockSection,
+  FLAG_THEME_DARK,
+  FLAG_THEME_LIGHT,
+  DATA_LINK_MAGIC,
+  DATA_LINK_VERSION,
+  type ThemeSection,
+} from "./data-link/payload";
+
 /**
  * Shared encoder/decoder instances reused across invocations to avoid
  * unnecessary allocations when transforming markdown payloads.
@@ -23,6 +35,30 @@ const UINT8ARRAY_WITH_BASE64 = Uint8Array as unknown as {
 type CompressionAlgorithm = "gzip" | "brotli";
 
 const DEFAULT_COMPRESSION_ALGORITHM: CompressionAlgorithm = "gzip";
+
+export type ThemePayload = Partial<Record<"dark" | "light", string>>;
+
+export type SharePayload = {
+  markdown: string;
+  themes?: ThemePayload;
+};
+
+export type DecodedSharePayload = {
+  markdown: Uint8Array;
+  themes: ThemePayload;
+  format: "structured" | "legacy";
+  blocks?: Uint8Array;
+};
+
+export type ShareEncoding = "base64" | "base79";
+
+export interface ShareEncodeOptions {
+  encoding?: ShareEncoding;
+}
+
+export interface ShareDecodeOptions {
+  encoding?: ShareEncoding;
+}
 
 /**
  * Ensures the Compression Streams API is available before attempting to
@@ -142,7 +178,12 @@ function bytesToBase64(bytes: Uint8Array): string {
 function base64ToBytes(base64: string): Uint8Array {
   const fromBase64 = UINT8ARRAY_WITH_BASE64.fromBase64;
   if (typeof fromBase64 === "function") {
-    return fromBase64(base64, { alphabet: "base64url" });
+    try {
+      return fromBase64(base64, { alphabet: "base64url" });
+    } catch {
+      // Fallback to manual implementation if the native helper throws
+      // (some environments expose experimental helpers without full support).
+    }
   }
   return fallbackBase64ToBytes(base64);
 }
@@ -160,7 +201,10 @@ function fallbackBytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...chunk);
   }
   const base64 = btoa(binary);
-  return base64.replace(/\+/g, "-").replace(/\//g, "_");
+  return base64
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 /**
@@ -181,18 +225,14 @@ function fallbackBase64ToBytes(base64: string): Uint8Array {
 /**
  * Compresses markdown text and returns a URL-safe base64 representation ready
  * to be embedded in a `/data/` route.
+ *
+ * @deprecated Use {@link encodeSharePayload} to embed theme payloads.
  */
 export async function encodeMarkdownToBase64(
   markdown: string,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
-  const bytes = encoder.encode(markdown);
-
-  console.log("Encoded bytes:", bytes);
-
-  const compressed = await compressBytes(bytes, format);
-  console.log("Compressed bytes:", compressed);
-  return bytesToBase64(compressed);
+  return await encodeSharePayload({ markdown }, format, { encoding: "base64" });
 }
 
 /**
@@ -203,8 +243,8 @@ export async function decodeBase64Markdown(
   base64: string,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<Uint8Array> {
-  const compressed = base64ToBytes(base64);
-  return await decompressBytes(compressed, format);
+  const decoded = await decodeSharePayload(base64, format, { encoding: "base64" });
+  return decoded.markdown;
 }
 
 /**
@@ -215,8 +255,100 @@ export async function decodeBase64MarkdownAsText(
   base64: string,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
-  const bytes = await decodeBase64Markdown(base64, format);
-  return decoder.decode(bytes);
+  const decoded = await decodeSharePayload(base64, format, { encoding: "base64" });
+  return decoder.decode(decoded.markdown);
+}
+
+/**
+ * Encode markdown and optional theme payloads into a compressed Base64 string.
+ */
+export async function encodeSharePayload(
+  payload: SharePayload,
+  format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
+  options: ShareEncodeOptions = {},
+): Promise<string> {
+  const markdownBytes = encoder.encode(payload.markdown);
+  const structured = encodeStructuredPayload(markdownBytes, payload.themes ?? {});
+  const compressed = await compressBytes(structured, format);
+  const encoding = options.encoding ?? "base79";
+  if (encoding === "base79") {
+    return base79EncodeWithChecksum(compressed);
+  }
+  return bytesToBase64(compressed);
+}
+
+/**
+ * Decode a previously encoded share payload, returning markdown bytes plus embedded themes.
+ */
+export async function decodeSharePayload(
+  base64: string,
+  format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
+  options: ShareDecodeOptions = {},
+): Promise<DecodedSharePayload> {
+  const encoding = options.encoding ?? "base79";
+  const compressed =
+    encoding === "base79"
+      ? base79DecodeWithChecksum(base64) ?? null
+      : base64ToBytes(base64);
+  if (!compressed || compressed.length === 0) {
+    throw new Error("Unable to decode shared payload");
+  }
+  const decompressed = await decompressBytes(compressed, format);
+  if (isStructuredPayload(decompressed)) {
+    return decodeStructuredPayload(decompressed);
+  }
+  return {
+    markdown: decompressed,
+    themes: {},
+    format: "legacy",
+  };
 }
 
 export type { CompressionAlgorithm };
+
+function encodeStructuredPayload(markdown: Uint8Array, themes: ThemePayload): Uint8Array {
+  const themeSections: ThemeSection[] = [];
+  if (themes.dark) {
+    themeSections.push({ mode: "dark", data: encoder.encode(themes.dark) });
+  }
+  if (themes.light) {
+    themeSections.push({ mode: "light", data: encoder.encode(themes.light) });
+  }
+
+  const blockData = encodeBlockSection(markdown);
+
+  return serializeBinaryPayload({
+    themes: themeSections,
+    blockData,
+    markdown,
+  });
+}
+
+function isStructuredPayload(bytes: Uint8Array): boolean {
+  if (bytes.length < 8) {
+    return false;
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const magic = view.getUint32(0, false);
+  const version = view.getUint8(4);
+  return magic === DATA_LINK_MAGIC && version === DATA_LINK_VERSION;
+}
+
+function decodeStructuredPayload(bytes: Uint8Array): DecodedSharePayload {
+  const payload = deserializeBinaryPayload(bytes);
+  const themes: ThemePayload = {};
+  for (const entry of payload.themes) {
+    const decoded = decoder.decode(entry.data);
+    if (entry.mode === "dark") {
+      themes.dark = decoded;
+    } else if (entry.mode === "light") {
+      themes.light = decoded;
+    }
+  }
+  return {
+    markdown: payload.markdown,
+    themes,
+    format: "structured",
+    blocks: payload.blockData,
+  };
+}

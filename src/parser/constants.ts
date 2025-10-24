@@ -49,11 +49,9 @@ export const TAG = {
     enc('</h6>\n'),
   ],
   lf: enc('\n'),
-  // Markdown soft line breaks should map to a plain newline to avoid
-  // inserting extraneous `<br>` tags inside paragraphs. The renderer
-  // already normalizes whitespace, so emitting a newline keeps the
-  // expected layout without disturbing golden fixtures.
-  br: enc('</br></br>\n'),
+  // Markdown soft line breaks should map to a literal newline so that
+  // browsers collapse whitespace naturally instead of rendering `<br>` tags.
+  br: enc('\n'),
   // Table tags
   tableOpen: enc('<table>\n'),
   tableClose: enc('</table>\n'),
@@ -121,4 +119,3 @@ export const INFO_COLORS = {
 
 export const TD = new TextDecoder('utf-8');
 export { TE };
-

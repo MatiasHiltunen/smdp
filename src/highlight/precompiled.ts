@@ -17,19 +17,10 @@ export const SPAN_BINARY = "CgAAABUAAAA8c3BhbiBjbGFzcz0idG9rLWt3Ij4VAAAAPHNwYW4g
  * Uses atob() as fallback
  */
 export function fromBase64(base64: string): Uint8Array {
-
-  // @ts-ignore
-  if(typeof window !== 'undefined' && window?.Uint8Array?.fromBase64) {
-    console.log('Using browser Uint8Array.fromBase64');
-    // @ts-ignore   
-    return window.Uint8Array.fromBase64(base64);
-  } else {
-    
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
   }
+  return bytes;
 }

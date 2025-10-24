@@ -4,7 +4,7 @@ import type { CanvasView, HtmlView } from "./views";
 import { createElement } from "./dom";
 import { loadThemeFromUrl } from "../theme/theme-editor";
 import { getThemeBuilder } from "./theme";
-import { encodeMarkdownToBase64 } from "../data-link";
+import { encodeSharePayload } from "../data-link";
 import { deserializeTheme } from "../theme/theme-serializer";
 
 /**
@@ -293,19 +293,31 @@ export function createFabMenu(
       shareButton.disabled = true;
       shareButton.setAttribute("aria-busy", "true");
       try {
-        const base64 = await encodeMarkdownToBase64(markdown);
-        console.log("Encoded base64:", base64);
+        const currentParams = new URLSearchParams(window.location.search);
+        const darkTheme = currentParams.get("d") || undefined;
+        const lightTheme = currentParams.get("l") || undefined;
+
+        const themes: { dark?: string; light?: string } = {};
+        if (darkTheme) themes.dark = darkTheme;
+        if (lightTheme) themes.light = lightTheme;
+
+        const encodedPayload = await encodeSharePayload(
+          {
+            markdown,
+            themes,
+          },
+          undefined,
+          { encoding: "base79" },
+        );
+        console.log("Encoded payload:", encodedPayload);
         const shareUrl = new URL(window.location.href);
-        shareUrl.pathname = `/data/${encodeURIComponent(base64)}`;
+        shareUrl.pathname = `/data79/${encodeURIComponent(encodedPayload)}`;
         shareUrl.hash = "";
         
-        // Preserve theme customizations from current URL
-        const currentParams = new URLSearchParams(window.location.search);
+        // Preserve theme customizations from current URL (legacy compatibility)
         const newParams = new URLSearchParams();
         
         // Copy theme params (d and l) to shared URL
-        const darkTheme = currentParams.get('d');
-        const lightTheme = currentParams.get('l');
         if (darkTheme) newParams.set('d', darkTheme);
         if (lightTheme) newParams.set('l', lightTheme);
         

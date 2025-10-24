@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import test from "node:test";
 
-import { decodeBase64Markdown, decodeBase64MarkdownAsText, encodeMarkdownToBase64 } from "../src/data-link";
+import {
+  decodeBase64Markdown,
+  decodeBase64MarkdownAsText,
+  decodeSharePayload,
+  encodeMarkdownToBase64,
+  encodeSharePayload,
+} from "../src/data-link";
 
 function toBase64Url(buffer: Buffer): string {
   return buffer
@@ -132,7 +138,7 @@ test("prefers native Uint8Array base64 helpers when available", { concurrency: f
       };
 
       (Uint8Array as any).fromBase64 = function fromBase64(value: string, options?: { alphabet?: string }) {
-        fromBase64Options.push({ ...options });
+        fromBase64Options.push(options ? { ...options } : {});
         const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
         const padded = padBase64Url(normalized);
         return new Uint8Array(Buffer.from(padded, "base64"));
@@ -171,6 +177,7 @@ test("falls back to manual base64 helpers when Uint8Array extensions are missing
     try {
       delete (Uint8Array.prototype as any).toBase64;
       delete (Uint8Array as any).fromBase64;
+      (Uint8Array as any).fromBase64 = undefined;
 
       const markdown = "Fallback helper coverage";
       const base64 = await encodeMarkdownToBase64(markdown);
@@ -191,5 +198,41 @@ test("falls back to manual base64 helpers when Uint8Array extensions are missing
         (Uint8Array as any).fromBase64 = originalFromBase64;
       }
     }
+  });
+});
+
+test("encodes markdown with embedded theme payloads", { concurrency: false }, async () => {
+  await withCompressionSupport(async () => {
+    const payload = {
+      markdown: "# Title\nSome content",
+      themes: {
+        dark: "dark-theme-serialized",
+        light: "light-theme-serialized",
+      },
+    };
+
+    const encoded = await encodeSharePayload(payload, undefined, { encoding: "base79" });
+    const decoded = await decodeSharePayload(encoded, undefined, { encoding: "base79" });
+
+    const decodedMarkdown = new TextDecoder().decode(decoded.markdown);
+    assert.equal(decodedMarkdown, payload.markdown);
+    assert.equal(decoded.themes.dark, payload.themes?.dark);
+    assert.equal(decoded.themes.light, payload.themes?.light);
+    assert.equal(decoded.format, "structured");
+    assert.ok(decoded.blocks && decoded.blocks.length > 0);
+  });
+});
+
+test("decodes legacy payloads without embedded header", { concurrency: false }, async () => {
+  await withCompressionSupport(async () => {
+    const markdown = "legacy payload content";
+    const legacyBase64 = toBase64Url(Buffer.from(markdown, "utf8"));
+
+    const decoded = await decodeSharePayload(legacyBase64, undefined, { encoding: "base64" });
+    const decodedMarkdown = new TextDecoder().decode(decoded.markdown);
+
+    assert.equal(decodedMarkdown, markdown);
+    assert.deepEqual(decoded.themes, {});
+    assert.equal(decoded.format, "legacy");
   });
 });

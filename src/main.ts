@@ -1,4 +1,4 @@
-import { decodeBase64Markdown } from "./data-link";
+import { decodeSharePayload, type ThemePayload } from "./data-link";
 import { MDParser, u8 } from "./parser/index";
 import {
   initializeThemeEditor,
@@ -33,13 +33,44 @@ function ensureThemeEditor(): ThemeEditorHandle {
   return themeEditorHandle;
 }
 
+function applyEmbeddedThemes(themes: ThemePayload, builder: ReturnType<typeof getThemeBuilder>): void {
+  if (!themes.dark && !themes.light) {
+    return;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (themes.dark) {
+    params.set("d", themes.dark);
+  } else {
+    params.delete("d");
+  }
+  if (themes.light) {
+    params.set("l", themes.light);
+  } else {
+    params.delete("l");
+  }
+
+  const search = params.toString();
+  const newUrl = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
+  window.history.replaceState({}, "", newUrl);
+
+  const applied = loadThemeFromUrl(builder);
+  if (applied) {
+    builder.apply();
+    themeEditorHandle?.refresh();
+  }
+}
+
 async function applyMarkdownToHtml(
   view: HtmlView,
   bytes: Uint8Array,
   baseUrl?: string,
+  blockData?: Uint8Array,
 ): Promise<void> {
-  const overrides = baseUrl ? { baseUrl } : undefined;
-  const html = await parser.parse(bytes, overrides);
+  const overrides = baseUrl ? { baseUrl } : {};
+  const html = blockData
+    ? await parser.parseFromBlocks(bytes, blockData, overrides)
+    : await parser.parse(bytes, overrides);
   view.viewer.innerHTML = html;
 }
 
@@ -47,9 +78,14 @@ function applyMarkdownToCanvas(
   view: CanvasView,
   bytes: Uint8Array,
   baseUrl?: string,
+  blockData?: Uint8Array,
 ): void {
-  const overrides = baseUrl ? { baseUrl } : undefined;
-  parser.renderToCanvas(bytes, view.canvas, overrides);
+  const overrides = baseUrl ? { baseUrl } : {};
+  if (blockData) {
+    parser.renderToCanvasFromBlocksPayload(bytes, blockData, view.canvas, overrides);
+  } else {
+    parser.renderToCanvas(bytes, view.canvas, overrides);
+  }
 }
 
 function enableRealtimeUpdates(
@@ -144,12 +180,18 @@ async function init(): Promise<void> {
 
   try {
     if (route.dataPayload) {
-      const decoded = await decodeBase64Markdown(route.dataPayload);
+      const decoded = await decodeSharePayload(route.dataPayload, undefined, {
+        encoding: route.dataFormat === "binary" ? "base79" : "base64",
+      });
+      if (decoded.themes && (decoded.themes.dark || decoded.themes.light)) {
+        applyEmbeddedThemes(decoded.themes, themeBuilder);
+      }
       resolved = {
-        bytes: decoded,
+        bytes: decoded.markdown,
         baseUrl: window.location.href,
+        blocks: decoded.blocks ?? null,
       };
-      resolvedText = new TextDecoder().decode(decoded);
+      resolvedText = new TextDecoder().decode(decoded.markdown);
     } else {
       resolved = await fetchMarkdown(route.externalUrl);
       resolvedText = new TextDecoder().decode(resolved.bytes);
@@ -185,7 +227,15 @@ async function init(): Promise<void> {
 
   if (resolved) {
     currentBaseUrl = resolved.baseUrl;
-    await apply(resolved.bytes, currentBaseUrl);
+    if (resolved.blocks) {
+      if ("canvas" in view) {
+        applyMarkdownToCanvas(view as CanvasView, resolved.bytes, currentBaseUrl, resolved.blocks);
+      } else {
+        await applyMarkdownToHtml(view as HtmlView, resolved.bytes, currentBaseUrl, resolved.blocks);
+      }
+    } else {
+      await apply(resolved.bytes, currentBaseUrl);
+    }
   }
 
   if (!route.shared) {

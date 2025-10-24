@@ -5,11 +5,13 @@
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD, INFO_COLORS } from './constants';
-import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
+import type { BlockEvent, CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
 import { getLanguageSpec } from '../highlight';
 import { TokenType, GenericTokenizer } from '../highlight/language-core';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
+import { decodeBlockSection } from './block-serializer';
+import { createRenderPipeline } from './render-pipeline';
 
 // Font stacks with comprehensive Unicode support
 const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
@@ -56,7 +58,7 @@ function measureWidth(ctx: CanvasRenderingContext2D, text: string, font?: string
     for (let i = 0; i < Math.min(1000, entries.length); i++) {
       cache.set(entries[i][0], entries[i][1]);
     }
-  }
+  };
   cache.set(key, w);
   return w;
 }
@@ -860,6 +862,7 @@ function renderCanvas(
   ctx: CanvasRenderingContext2D,
   isMeasure: boolean,
   opts: { skipClear?: boolean; onImageLoad?: () => void; parserOptions?: ParserOptions } = {},
+  events: readonly BlockEvent[],
 ): number {
   const parserOptions = opts.parserOptions ?? {};
   const urlAllowlist = parserOptions.urlAllowlist ?? defaultUrlAllowlist;
@@ -925,7 +928,7 @@ function renderCanvas(
     }
   };
 
-  for (const ev of blocks(u8)) {
+  const dispatchEvent = (ev: BlockEvent): void => {
     switch (ev.type) {
       case 'bqOpen':
         closePara();
@@ -1396,6 +1399,30 @@ function renderCanvas(
     }
   }
 
+  const pipeline = createRenderPipeline([
+    {
+      bqOpen: dispatchEvent,
+      bqClose: dispatchEvent,
+      hr: dispatchEvent,
+      heading: dispatchEvent,
+      listOpen: dispatchEvent,
+      listItem: dispatchEvent,
+      listClose: dispatchEvent,
+      paraLine: dispatchEvent,
+      codeOpen: dispatchEvent,
+      codeText: dispatchEvent,
+      codeClose: dispatchEvent,
+      tableOpen: dispatchEvent,
+      tableHeader: dispatchEvent,
+      tableRow: dispatchEvent,
+      tableClose: dispatchEvent,
+      infoOpen: dispatchEvent,
+      infoClose: dispatchEvent,
+    },
+  ]);
+
+  pipeline.runSync(events, { source: u8 });
+
   closePara();
   closeListsAll();
 
@@ -1534,7 +1561,12 @@ function renderCanvas(
   return y;
 }
 
-export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
+function renderToCanvasInternal(
+  u8: Uint8Array,
+  events: BlockEvent[],
+  canvas: HTMLCanvasElement,
+  options: ParserOptions = {},
+): void {
   const dpr = window.devicePixelRatio || 1;
   canvas.dataset.renderReady = 'pending';
   canvas.dataset.virtualized = 'false';
@@ -1546,7 +1578,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   // Set up re-render callback for when images load
   const rerender = () => {
     // Re-render the canvas when an image finishes loading
-    renderToCanvasFromBlocks(u8, canvas, options);
+    renderToCanvasInternal(u8, events.slice(), canvas, options);
   };
 
   const measureCanvas = document.createElement('canvas');
@@ -1570,7 +1602,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   }
   
   measureCtx.scale(dpr, dpr);
-  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender, parserOptions: options }) + MARGIN * 2;
+  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender, parserOptions: options }, events) + MARGIN * 2;
 
   const viewportHeight = scrollEl ? scrollEl.clientHeight : totalHeight;
   // Use a dynamic threshold relative to current viewport height (2x viewport)
@@ -1597,7 +1629,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     }
     
     ctx.scale(dpr, dpr);
-    renderCanvas(u8, ctx, false, { onImageLoad: rerender, parserOptions: options });
+    renderCanvas(u8, ctx, false, { onImageLoad: rerender, parserOptions: options }, events);
     canvas.dataset.virtualized = 'false';
     canvas.dataset.renderReady = 'ready';
     if (spacer) spacer.style.height = '0px';
@@ -1629,7 +1661,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   }
   
   offscreenCtx.scale(dpr, dpr);
-  renderCanvas(u8, offscreenCtx, false, { onImageLoad: rerender, parserOptions: options });
+  renderCanvas(u8, offscreenCtx, false, { onImageLoad: rerender, parserOptions: options }, events);
 
   canvas.width = styleWidth * dpr;
   canvas.height = viewportHeight * dpr;
@@ -1700,4 +1732,28 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   renderViewport();
   canvas.dataset.virtualized = 'true';
   canvas.dataset.renderReady = 'ready';
+}
+
+export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
+  const events = Array.from(blocks(u8));
+  renderToCanvasInternal(u8, events, canvas, options);
+}
+
+export function renderToCanvasFromBlockEvents(
+  u8: Uint8Array,
+  events: Iterable<BlockEvent>,
+  canvas: HTMLCanvasElement,
+  options: ParserOptions = {},
+): void {
+  renderToCanvasInternal(u8, Array.from(events), canvas, options);
+}
+
+export function renderToCanvasFromSerializedBlocks(
+  u8: Uint8Array,
+  blockBytes: Uint8Array,
+  canvas: HTMLCanvasElement,
+  options: ParserOptions = {},
+): void {
+  const events = decodeBlockSection(blockBytes);
+  renderToCanvasInternal(u8, events, canvas, options);
 }
