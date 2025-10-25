@@ -180,8 +180,11 @@ async function init(): Promise<void> {
 
   try {
     if (route.dataPayload) {
+      const encoding =
+        route.dataEncoding ??
+        (route.dataFormat === "binary" ? "base79" : "base64");
       const decoded = await decodeSharePayload(route.dataPayload, undefined, {
-        encoding: route.dataFormat === "binary" ? "base79" : "base64",
+        encoding,
       });
       if (decoded.themes && (decoded.themes.dark || decoded.themes.light)) {
         applyEmbeddedThemes(decoded.themes, themeBuilder);

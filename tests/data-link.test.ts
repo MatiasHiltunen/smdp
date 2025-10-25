@@ -211,13 +211,29 @@ test("encodes markdown with embedded theme payloads", { concurrency: false }, as
       },
     };
 
-    const encoded = await encodeSharePayload(payload, undefined, { encoding: "base79" });
-    const decoded = await decodeSharePayload(encoded, undefined, { encoding: "base79" });
+    const encoded = await encodeSharePayload(payload);
+    const decoded = await decodeSharePayload(encoded);
 
     const decodedMarkdown = new TextDecoder().decode(decoded.markdown);
     assert.equal(decodedMarkdown, payload.markdown);
     assert.equal(decoded.themes.dark, payload.themes?.dark);
     assert.equal(decoded.themes.light, payload.themes?.light);
+    assert.equal(decoded.format, "structured");
+    assert.ok(decoded.blocks && decoded.blocks.length > 0);
+  });
+});
+
+test("supports base79 encoding for backward compatibility", { concurrency: false }, async () => {
+  await withCompressionSupport(async () => {
+    const payload = {
+      markdown: "Base79 payload",
+    };
+
+    const encoded = await encodeSharePayload(payload, undefined, { encoding: "base79" });
+    const decoded = await decodeSharePayload(encoded, undefined, { encoding: "base79" });
+
+    const decodedMarkdown = new TextDecoder().decode(decoded.markdown);
+    assert.equal(decodedMarkdown, payload.markdown);
     assert.equal(decoded.format, "structured");
     assert.ok(decoded.blocks && decoded.blocks.length > 0);
   });

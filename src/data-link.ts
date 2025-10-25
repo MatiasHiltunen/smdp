@@ -270,7 +270,7 @@ export async function encodeSharePayload(
   const markdownBytes = encoder.encode(payload.markdown);
   const structured = encodeStructuredPayload(markdownBytes, payload.themes ?? {});
   const compressed = await compressBytes(structured, format);
-  const encoding = options.encoding ?? "base79";
+  const encoding = options.encoding ?? "base64";
   if (encoding === "base79") {
     return base79EncodeWithChecksum(compressed);
   }
@@ -285,7 +285,7 @@ export async function decodeSharePayload(
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
   options: ShareDecodeOptions = {},
 ): Promise<DecodedSharePayload> {
-  const encoding = options.encoding ?? "base79";
+  const encoding = options.encoding ?? "base64";
   const compressed =
     encoding === "base79"
       ? base79DecodeWithChecksum(base64) ?? null

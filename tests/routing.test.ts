@@ -22,6 +22,7 @@ test("shared embeds accept external markdown URLs", () => {
   assert.equal(route.shared, true);
   assert.equal(route.dataPayload, null);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
   assert.equal(route.externalUrl?.href, "https://example.com/foo.md");
 });
 
@@ -32,6 +33,7 @@ test("shared route without payload hides editor but uses default content", () =>
   assert.equal(route.externalUrl, null);
   assert.equal(route.dataPayload, null);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
 });
 
 test("data routes surface base64 payloads", () => {
@@ -42,6 +44,18 @@ test("data routes surface base64 payloads", () => {
   assert.equal(route.externalUrl, null);
   assert.equal(route.dataPayload, payload);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, "base64");
+});
+
+test("data routes accept fragment payloads", () => {
+  const payload = "fragmentPayload";
+  const route = parseRoute(location("/data", { hash: `#${payload}` }));
+  assert.equal(route.shared, true);
+  assert.equal(route.mode, "html");
+  assert.equal(route.externalUrl, null);
+  assert.equal(route.dataPayload, payload);
+  assert.equal(route.dataFormat, "binary");
+  assert.equal(route.dataEncoding, "base64");
 });
 
 test("data79 routes mark binary payloads", () => {
@@ -52,6 +66,7 @@ test("data79 routes mark binary payloads", () => {
   assert.equal(route.externalUrl, null);
   assert.equal(route.dataPayload, payload);
   assert.equal(route.dataFormat, "binary");
+  assert.equal(route.dataEncoding, "base79");
 });
 
 test("edit/data79 route keeps editor enabled", () => {
@@ -61,6 +76,7 @@ test("edit/data79 route keeps editor enabled", () => {
   assert.equal(route.mode, "html");
   assert.equal(route.dataPayload, payload);
   assert.equal(route.dataFormat, "binary");
+  assert.equal(route.dataEncoding, "base79");
 });
 
 test("edit/data route keeps editor enabled for legacy payloads", () => {
@@ -70,6 +86,17 @@ test("edit/data route keeps editor enabled for legacy payloads", () => {
   assert.equal(route.mode, "html");
   assert.equal(route.dataPayload, payload);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, "base64");
+});
+
+test("edit/data route accepts fragment payloads", () => {
+  const payload = "editFragment";
+  const route = parseRoute(location("/edit/data", { hash: `#${payload}` }));
+  assert.equal(route.shared, false);
+  assert.equal(route.mode, "html");
+  assert.equal(route.dataPayload, payload);
+  assert.equal(route.dataFormat, "binary");
+  assert.equal(route.dataEncoding, "base64");
 });
 
 test("canvas routes select canvas renderer and optional external URL", () => {
@@ -78,6 +105,7 @@ test("canvas routes select canvas renderer and optional external URL", () => {
   assert.equal(route.shared, false);
   assert.equal(route.dataPayload, null);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
   assert.equal(route.externalUrl?.href, "https://cdn.example.org/doc.md");
 });
 
@@ -86,6 +114,7 @@ test("html routes prefer html renderer even when suffix provided", () => {
   assert.equal(route.mode, "html");
   assert.equal(route.shared, false);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
   assert.equal(route.externalUrl?.href, "https://gist.github.com/example");
 });
 
@@ -96,6 +125,7 @@ test("root path loads default html view", () => {
   assert.equal(route.externalUrl, null);
   assert.equal(route.dataPayload, null);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
 });
 
 test("fallback treats remaining path as external url when parsable", () => {
@@ -104,6 +134,7 @@ test("fallback treats remaining path as external url when parsable", () => {
   assert.equal(route.shared, false);
   assert.equal(route.dataPayload, null);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
   assert.equal(route.externalUrl?.href, "https://example.com/notes.md");
 });
 
@@ -114,6 +145,7 @@ test("fallback gracefully handles invalid external url fragments", () => {
   assert.equal(route.shared, false);
   assert.equal(route.dataPayload, null);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
 });
 
 test("percent-encoded paths decode before routing", () => {
@@ -121,5 +153,6 @@ test("percent-encoded paths decode before routing", () => {
   assert.equal(route.mode, "html");
   assert.equal(route.shared, true);
   assert.equal(route.dataFormat, "legacy");
+  assert.equal(route.dataEncoding, null);
   assert.equal(route.externalUrl?.href, "https://example.com/encoded%20path.md");
 });

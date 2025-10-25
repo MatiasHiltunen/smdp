@@ -301,18 +301,14 @@ export function createFabMenu(
         if (darkTheme) themes.dark = darkTheme;
         if (lightTheme) themes.light = lightTheme;
 
-        const encodedPayload = await encodeSharePayload(
-          {
-            markdown,
-            themes,
-          },
-          undefined,
-          { encoding: "base79" },
-        );
+        const encodedPayload = await encodeSharePayload({
+          markdown,
+          themes,
+        });
         console.log("Encoded payload:", encodedPayload);
         const shareUrl = new URL(window.location.href);
-        shareUrl.pathname = `/data79/${encodeURIComponent(encodedPayload)}`;
-        shareUrl.hash = "";
+        shareUrl.pathname = "/data";
+        shareUrl.hash = encodedPayload;
         
         // Preserve theme customizations from current URL (legacy compatibility)
         const newParams = new URLSearchParams();

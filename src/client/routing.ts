@@ -1,6 +1,7 @@
 export type RenderMode = "html" | "canvas";
 
 export type DataPayloadFormat = "legacy" | "binary";
+export type DataPayloadEncoding = "base64" | "base79";
 
 export type RouteDetails = {
   mode: RenderMode;
@@ -8,6 +9,7 @@ export type RouteDetails = {
   shared: boolean;
   dataPayload: string | null;
   dataFormat: DataPayloadFormat;
+  dataEncoding: DataPayloadEncoding | null;
 };
 
 type RouteContext = {
@@ -122,6 +124,7 @@ function createAppRouter(): Router {
       shared: true,
       dataPayload: null,
       dataFormat: "legacy",
+      dataEncoding: null,
     }))
     .whenExact("/shared", () => ({
       mode: "html",
@@ -129,7 +132,19 @@ function createAppRouter(): Router {
       shared: true,
       dataPayload: null,
       dataFormat: "legacy",
+      dataEncoding: null,
     }))
+    .whenExact("/edit/data", (ctx) => {
+      const hashPayload = extractHashPayload(ctx.hash);
+      return {
+        mode: "html",
+        externalUrl: null,
+        shared: false,
+        dataPayload: hashPayload,
+        dataFormat: hashPayload ? "binary" : "legacy",
+        dataEncoding: hashPayload ? "base64" : null,
+      };
+    })
     // Editable binary payload route.
     .whenPrefix("/edit/data79", (_ctx, suffix) => ({
       mode: "html",
@@ -137,6 +152,7 @@ function createAppRouter(): Router {
       shared: false,
       dataPayload: suffix || null,
       dataFormat: "binary",
+      dataEncoding: "base79",
     }))
     // Editable legacy payload route.
     .whenPrefix("/edit/data", (_ctx, suffix) => ({
@@ -145,7 +161,19 @@ function createAppRouter(): Router {
       shared: false,
       dataPayload: suffix || null,
       dataFormat: "legacy",
+      dataEncoding: "base64",
     }))
+    .whenExact("/data", (ctx) => {
+      const hashPayload = extractHashPayload(ctx.hash);
+      return {
+        mode: "html",
+        externalUrl: null,
+        shared: true,
+        dataPayload: hashPayload,
+        dataFormat: hashPayload ? "binary" : "legacy",
+        dataEncoding: hashPayload ? "base64" : null,
+      };
+    })
     // Binary data payload route using Base79 compressed representation.
     .whenPrefix("/data79", (_ctx, suffix) => ({
       mode: "html",
@@ -153,6 +181,7 @@ function createAppRouter(): Router {
       shared: true,
       dataPayload: suffix || null,
       dataFormat: "binary",
+      dataEncoding: "base79",
     }))
     // Data payload route (base64-encoded markdown in the URL path).
     .whenPrefix("/data", (_ctx, suffix) => ({
@@ -161,6 +190,7 @@ function createAppRouter(): Router {
       shared: true,
       dataPayload: suffix || null,
       dataFormat: "legacy",
+      dataEncoding: "base64",
     }))
     // Canvas routes explicitly request the canvas renderer.
     .whenPrefix("/canvas", (_ctx, suffix) => ({
@@ -169,6 +199,7 @@ function createAppRouter(): Router {
       shared: false,
       dataPayload: null,
       dataFormat: "legacy",
+      dataEncoding: null,
     }))
     .whenExact("/canvas", () => ({
       mode: "canvas",
@@ -176,6 +207,7 @@ function createAppRouter(): Router {
       shared: false,
       dataPayload: null,
       dataFormat: "legacy",
+      dataEncoding: null,
     }))
     // HTML routes explicitly request the HTML renderer.
     .whenPrefix("/html", (_ctx, suffix) => ({
@@ -184,6 +216,7 @@ function createAppRouter(): Router {
       shared: false,
       dataPayload: null,
       dataFormat: "legacy",
+      dataEncoding: null,
     }))
     .whenExact("/html", () => ({
       mode: "html",
@@ -191,6 +224,7 @@ function createAppRouter(): Router {
       shared: false,
       dataPayload: null,
       dataFormat: "legacy",
+      dataEncoding: null,
     }))
     // Root landing page.
     .whenExact("/", () => ({
@@ -199,6 +233,7 @@ function createAppRouter(): Router {
       shared: false,
       dataPayload: null,
       dataFormat: "legacy",
+      dataEncoding: null,
     }))
     // Fallback: treat remaining path as an external URL reference.
     .fallback((ctx) => {
@@ -211,6 +246,7 @@ function createAppRouter(): Router {
         shared: false,
         dataPayload: null,
         dataFormat: "legacy",
+        dataEncoding: null,
       };
     })
     .build();
@@ -274,4 +310,12 @@ function safeParseUrl(value: string | null): URL | null {
     console.error("Unable to parse external markdown URL", error);
     return null;
   }
+}
+
+function extractHashPayload(hash: string): string | null {
+  if (!hash) {
+    return null;
+  }
+  const normalized = hash.startsWith("#") ? hash.slice(1) : hash;
+  return normalized.length > 0 ? normalized : null;
 }
