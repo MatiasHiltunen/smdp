@@ -1,6 +1,6 @@
-# SMDP at [https://md2.at](https://md2.at)
+# md2
 
-A fast, byte-oriented Markdown playground that renders HTML _and_ Canvas side by side. This page ships with the library and doubles as a living showcase of what the parser currently supports.
+Experimental byte-oriented client-side Markdown parser and renderer. This page is part of the [smdb](https://github.com/matiashiltunen/smdp) toolset and doubles as a living showcase of what the parser/renderer currently supports.
 
 > We treat this demo as a lab notebook. Expect working examples, rough edges, and the occasional TODO. Shipping early means we also see where the parser still bends.
 
