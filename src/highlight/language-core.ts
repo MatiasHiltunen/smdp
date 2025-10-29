@@ -1,3 +1,5 @@
+import { HtmlArena } from '../parser';
+
 const TE = new TextEncoder();
 const TD = new TextDecoder();
 
@@ -874,6 +876,7 @@ export class GenericTokenizer {
   }
 }
 
+// import { HtmlArena } from '../parser';
 import { SPAN_BINARY, fromBase64 as fromBase64Span } from './precompiled';
 
 // Read span bytes from binary using arena-style reading
@@ -901,38 +904,26 @@ const SPAN_BYTES = {
 
 export class GenericHighlighter {
   private readonly tokenizer: GenericTokenizer;
-  private readonly spec: CompiledLanguageSpec;
+  // private readonly spec: CompiledLanguageSpec;
 
   constructor(spec: CompiledLanguageSpec) {
-    this.spec = spec;
+    // this.spec = spec;
     this.tokenizer = new GenericTokenizer(spec);
   }
 
-  async highlight(u8: Uint8Array, languageClass?: string): Promise<Uint8Array> {
+  highlight(u8: Uint8Array, /*(languageClass?: string*/): Uint8Array {
     // Dynamic import for HtmlArena (only needed in browser contexts)
-    let ArenaClass: any;
-    try {
-      const arenaModule = await import('../parser/arena');
-      ArenaClass = arenaModule.HtmlArena;
-    } catch (e) {
-      // Fallback for environments where arena might not be available
-      ArenaClass = class {
-        writeAscii() {}
-        writeEscaped() {}
-        toUint8Array() { return new Uint8Array(); }
-      };
-    }
 
-    const arena = new ArenaClass();
-    const langClass = languageClass ?? this.spec.name.toLowerCase();
+    const arena = new HtmlArena(1024);
+    // const langClass = languageClass ?? this.spec.name.toLowerCase();
 
-    arena.writeAscii('<pre class="code-block"><code');
-    if (langClass) {
-      arena.writeAscii(' class="language-');
-      arena.writeAscii(langClass);
-      arena.writeAscii('"');
-    }
-    arena.writeAscii('>');
+    arena.writeAscii('<pre class="code-block"><code>');
+    // if (langClass) {
+    //   arena.writeAscii(' class="language-');
+    //   arena.writeAscii(langClass);
+    //   arena.writeAscii('"');
+    // }
+    // arena.writeAscii('>');
 
     const emit: EmitFn = (type, s, e) => {
       switch (type) {

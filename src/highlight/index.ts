@@ -2,26 +2,26 @@ import type { AuthorLanguageSpec } from './language-core';
 import { CompiledLanguageSpec, GenericHighlighter, compileLanguage, BinaryReader } from './language-core';
 /* import { htmlLanguageSpec } from './builtins'; */
 import { LANGUAGE_BINARY, fromBase64 } from './precompiled';
-
+import { HtmlArena } from '../parser';
 // Lazy import for HtmlArena (only needed in browser contexts)
-let HtmlArena: any;
-async function getHtmlArena() {
-  if (!HtmlArena) {
-    try {
-      // Dynamic import for browser environments
-      const arenaModule = await import('../parser/arena');
-      HtmlArena = arenaModule.HtmlArena;
-    } catch (e) {
-      // Fallback for environments where arena might not be available
-      HtmlArena = class {
-        writeAscii() {}
-        writeEscaped() {}
-        toUint8Array() { return new Uint8Array(); }
-      };
-    }
-  }
-  return HtmlArena;
-}
+// let HtmlArena: any;
+// async function getHtmlArena() {
+//   if (!HtmlArena) {
+//     try {
+//       // Dynamic import for browser environments
+//       const arenaModule = await import('../parser/arena');
+//       HtmlArena = arenaModule.HtmlArena;
+//     } catch (e) {
+//       // Fallback for environments where arena might not be available
+//       HtmlArena = class {
+//         writeAscii() {}
+//         writeEscaped() {}
+//         toUint8Array() { return new Uint8Array(); }
+//       };
+//     }
+//   }
+//   return HtmlArena;
+// }
 
 const NON_CLASS_RE = /[^a-z0-9+#-]+/g;
 
@@ -41,8 +41,8 @@ function normalizeLanguage(lang?: string): NormalizedLang | undefined {
 }
 
 async function basicHighlight(bytes: Uint8Array, className?: string): Promise<Uint8Array> {
-  const ArenaClass = await getHtmlArena();
-  const arena = new ArenaClass();
+  // const ArenaClass = await getHtmlArena();
+  const arena = new HtmlArena(1024)
   arena.writeAscii('<pre class="code-block"><code');
   if (className) {
     arena.writeAscii(' class="language-');
@@ -58,7 +58,7 @@ async function basicHighlight(bytes: Uint8Array, className?: string): Promise<Ui
 }
 
 type HighlighterLike = {
-  highlight: (bytes: Uint8Array, className?: string) => Promise<Uint8Array>;
+  highlight: (bytes: Uint8Array, className?: string) => Uint8Array;
 };
 
 type LanguageEntry = {
