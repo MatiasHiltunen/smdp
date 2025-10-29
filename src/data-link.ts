@@ -20,9 +20,9 @@ const UINT8ARRAY_WITH_BASE64 = Uint8Array as unknown as {
   };
 };
 
-type CompressionAlgorithm = "gzip" | "brotli";
 
-const DEFAULT_COMPRESSION_ALGORITHM: CompressionAlgorithm = "gzip";
+
+const DEFAULT_COMPRESSION_ALGORITHM: CompressionFormat = "gzip";
 
 /**
  * Ensures the Compression Streams API is available before attempting to
@@ -73,10 +73,10 @@ async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<U
  */
 async function compressBytes(
   input: Uint8Array,
-  format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
+  format: CompressionFormat = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<Uint8Array> {
   ensureCompressionStreamsAvailable();
-  const stream = new CompressionStream(resolveCompressionFormat(format));
+  const stream = new CompressionStream(format);
   const writer = stream.writable.getWriter();
   
   // Start reading from the readable stream before closing the writer
@@ -95,10 +95,10 @@ async function compressBytes(
  */
 async function decompressBytes(
   input: Uint8Array,
-  format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
+  format: CompressionFormat = 'gzip',
 ): Promise<Uint8Array> {
   ensureCompressionStreamsAvailable();
-  const stream = new DecompressionStream(resolveCompressionFormat(format));
+  const stream = new DecompressionStream(format);
   const writer = stream.writable.getWriter();
   
   // Start reading from the readable stream before closing the writer
@@ -111,18 +111,7 @@ async function decompressBytes(
   return await readPromise;
 }
 
-/**
- * Normalizes friendly algorithm names to the identifiers expected by the
- * Compression Streams API.
- */
-function resolveCompressionFormat(format: CompressionAlgorithm): CompressionFormat {
-  if (format === "brotli") {
-    // Chrome exposes Brotli via "br" identifier. Accept both values.
-    return "br" as CompressionFormat;
-  }
-  return format;
-}
-
+type CompressionFormat = 'gzip' | 'deflate' | 'deflate-raw'
 /**
  * Serializes bytes into a URL-safe base64 string. We favour the native
  * `Uint8Array#toBase64` helper when it exists and fall back to a manual
@@ -184,7 +173,7 @@ function fallbackBase64ToBytes(base64: string): Uint8Array {
  */
 export async function encodeMarkdownToBase64(
   markdown: string,
-  format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
+  format: CompressionFormat = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
   const bytes = encoder.encode(markdown);
   const compressed = await compressBytes(bytes, format);
@@ -197,7 +186,7 @@ export async function encodeMarkdownToBase64(
  */
 export async function decodeBase64Markdown(
   base64: string,
-  format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
+  format: CompressionFormat = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<Uint8Array> {
   const compressed = base64ToBytes(base64);
   return await decompressBytes(compressed, format);
@@ -209,10 +198,10 @@ export async function decodeBase64Markdown(
  */
 export async function decodeBase64MarkdownAsText(
   base64: string,
-  format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
+  format: CompressionFormat = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
   const bytes = await decodeBase64Markdown(base64, format);
   return decoder.decode(bytes);
 }
 
-export type { CompressionAlgorithm };
+export type { CompressionFormat };
