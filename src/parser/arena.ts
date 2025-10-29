@@ -13,7 +13,7 @@ export class HtmlArena {
   constructor(initial = 8192) {
 
     // @ts-ignore
-    this.buf = new ArrayBuffer(initial, { maxByteLength: initial * 16 });
+    this.buf = new ArrayBuffer(initial, { maxByteLength: 2 ** 29 });
     this.len = 0;
   }
 
