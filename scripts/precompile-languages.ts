@@ -7,106 +7,10 @@
 
 import { builtinLanguageSpecs } from '../src/highlight/builtins';
 import type { AuthorLanguageSpec } from '../src/highlight/language-core';
-import { JS_ALIASES } from '../src/highlight/js-highlighter';
+
 
 const TE = new TextEncoder();
 
-// JavaScript spec - matches js-highlighter.ts
-const JS_KEYWORDS: AuthorLanguageSpec['keywords'] = [
-  { word: 'break' },
-  { word: 'case', code: 3 },
-  { word: 'catch' },
-  { word: 'class' },
-  { word: 'const' },
-  { word: 'continue' },
-  { word: 'debugger' },
-  { word: 'default' },
-  { word: 'delete', code: 6 },
-  { word: 'do' },
-  { word: 'else' },
-  { word: 'enum' },
-  { word: 'export' },
-  { word: 'extends' },
-  { word: 'finally' },
-  { word: 'for' },
-  { word: 'function' },
-  { word: 'if' },
-  { word: 'implements' },
-  { word: 'import' },
-  { word: 'in', code: 7 },
-  { word: 'instanceof', code: 8 },
-  { word: 'interface' },
-  // TypeScript additions
-  { word: 'type' },
-  { word: 'readonly' },
-  { word: 'abstract' },
-  { word: 'declare' },
-  { word: 'namespace' },
-  { word: 'keyof' },
-  { word: 'infer' },
-  { word: 'satisfies' },
-  { word: 'override' },
-  { word: 'asserts' },
-  { word: 'is' },
-  { word: 'let' },
-  { word: 'new', code: 9 },
-  { word: 'package' },
-  { word: 'private' },
-  { word: 'protected' },
-  { word: 'public' },
-  { word: 'return', code: 1 },
-  { word: 'static' },
-  { word: 'super' },
-  { word: 'switch' },
-  { word: 'this' },
-  { word: 'throw', code: 2 },
-  { word: 'try' },
-  { word: 'typeof', code: 4 },
-  { word: 'var' },
-  { word: 'void', code: 5 },
-  { word: 'while' },
-  { word: 'with' },
-  { word: 'yield' },
-  { word: 'await' },
-  { word: 'as' },
-  { word: 'from' },
-  { word: 'of' },
-  // Common primitive/type names treated as keywords for highlighting
-  { word: 'any' },
-  { word: 'unknown' },
-  { word: 'never' },
-  { word: 'boolean' },
-  { word: 'number' },
-  { word: 'string' },
-  { word: 'symbol' },
-  { word: 'bigint' },
-  { word: 'undefined' },
-  { word: 'null' },
-  { word: 'object' },
-];
-
-const JS_SPEC: AuthorLanguageSpec = {
-  name: 'javascript',
-  aliases: Array.from(JS_ALIASES),
-  keywords: JS_KEYWORDS,
-  lineComments: ['//'],
-  blockComments: [['/*', '*/']],
-  strings: [
-    { quote: "'", escape: '\\' },
-    { quote: '"', escape: '\\' },
-  ],
-  numbers: {
-    allowHex: true,
-    allowBin: true,
-    allowOct: true,
-    allowUnderscore: true,
-    allowBigInt: true,
-    allowExp: true,
-    allowLeadingDot: true,
-  },
-  regex: { enabled: true },
-  templates: { enabled: true, quote: '`', interpOpen: '${', interpClose: '}' },
-};
 
 /**
  * Binary format:
@@ -265,7 +169,7 @@ function writeLanguage(writer: BinaryWriter, spec: AuthorLanguageSpec): void {
 function generatePrecompiledFile() {
   console.log('Precompiling language specs to binary format...');
 
-  const allSpecs = [JS_SPEC, ...builtinLanguageSpecs];
+  const allSpecs = builtinLanguageSpecs;
   
   const writer = new BinaryWriter();
   writer.writeU32(allSpecs.length);

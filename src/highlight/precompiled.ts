@@ -20,7 +20,7 @@ export function fromBase64(base64: string): Uint8Array {
 
   // @ts-ignore
   if(typeof window !== 'undefined' && window?.Uint8Array?.fromBase64) {
-    console.log('Using browser Uint8Array.fromBase64');
+  /*   console.log('Using browser Uint8Array.fromBase64'); */
     // @ts-ignore   
     return window.Uint8Array.fromBase64(base64);
   } else {

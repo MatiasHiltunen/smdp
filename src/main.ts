@@ -17,6 +17,7 @@ import {
 import { fetchMarkdown, type MarkdownFetchResult } from "./client/fetch";
 import { sanitizeSharedDataBaseUrl } from "./client/shared-data";
 import { createFabMenu, displayError } from "./client/ui";
+import { TD } from "./parser/constants";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -140,7 +141,6 @@ async function init(): Promise<void> {
   }
 
   let resolved: MarkdownFetchResult | null = null;
-  let resolvedText: string | null = null;
   let currentBaseUrl: string | undefined;
 
   try {
@@ -151,10 +151,9 @@ async function init(): Promise<void> {
         bytes: decoded,
         baseUrl,
       };
-      resolvedText = new TextDecoder().decode(decoded);
+
     } else {
       resolved = await fetchMarkdown(route.externalUrl);
-      resolvedText = new TextDecoder().decode(resolved.bytes);
     }
   } catch (error) {
     console.error(error);
@@ -168,7 +167,7 @@ async function init(): Promise<void> {
     if (!route.dataPayload && route.externalUrl) {
       try {
         resolved = await fetchMarkdown(null);
-        resolvedText = new TextDecoder().decode(resolved.bytes);
+        //resolvedText = new TextDecoder().decode(resolved.bytes);
       } catch (fallbackError) {
         console.error("Unable to load fallback markdown", fallbackError);
       }
@@ -177,20 +176,18 @@ async function init(): Promise<void> {
     document.body.classList.remove("hydrating");
   }
 
-  if (!route.shared) {
-    if (resolvedText !== null) {
-      view.textarea.value = resolvedText;
-    } else {
-      view.textarea.value = "";
-    }
-  }
 
   if (resolved) {
     currentBaseUrl = resolved.baseUrl;
     await apply(resolved.bytes, currentBaseUrl);
+
+    view.textarea.value = TD.decode(resolved.bytes);
   }
 
   if (!route.shared) {
+
+    
+
     enableRealtimeUpdates(view, apply, () => currentBaseUrl);
   }
 }

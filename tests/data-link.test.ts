@@ -194,21 +194,12 @@ test("falls back to manual base64 helpers when Uint8Array extensions are missing
   });
 });
 
-<<<<<<< ours
-test("encodes large markdown payloads for sharing", { concurrency: false }, async () => {
-  await withCompressionSupport(async () => {
-    const markdown = "# Heading\n" + "Line\n".repeat(100_000);
-    const base64 = await encodeMarkdownToBase64(markdown);
-
-    // Ensure the encoded payload remains URL-safe even for very large inputs.
-=======
 test("encodes and decodes large markdown payloads", { concurrency: false }, async () => {
   await withCompressionSupport(async () => {
     const markdown = "# Large document\n" + "content line\n".repeat(200_000);
     const base64 = await encodeMarkdownToBase64(markdown);
 
     assert.ok(base64.length > 0);
->>>>>>> theirs
     assert.ok(!base64.includes("+"));
     assert.ok(!base64.includes("/"));
 

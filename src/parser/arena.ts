@@ -6,40 +6,64 @@
 import { TAG, TD } from './constants';
 
 export class HtmlArena {
-  private buf: Uint8Array;
+  private buf: ArrayBuffer;
   private len: number;
 
+  // Lower preacllocated size results to faster small writes, but more reallocations
   constructor(initial = 8192) {
-    this.buf = new Uint8Array(initial);
+
+    // @ts-ignore
+    this.buf = new ArrayBuffer(initial, { maxByteLength: initial * 16 });
     this.len = 0;
   }
 
   private ensure(cap: number): void {
-    if (cap <= this.buf.length) return;
+    if (cap <= this.buf.byteLength) return;
     
-    let n = this.buf.length || 8;
+    let n = this.buf.byteLength || 8;
     // Double until 1MB, then 1.5x (fewer copies for very large output)
     while (n < cap) {
       n = n < (1 << 20) ? (n << 1) : n + (n >> 1);
     }
     
-    const nb = new Uint8Array(n);
-    nb.set(this.buf.subarray(0, this.len));
-    this.buf = nb;
+    /* const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+const view = new Uint8Array(buffer);
+view[1] = 2;
+view[7] = 4;
+
+const buffer2 = buffer.transferToFixedLength();
+console.log(buffer2.byteLength); // 8
+console.log(buffer2.resizable); // false
+const view2 = new Uint8Array(buffer2);
+console.log(view2[1]); // 2
+console.log(view2[7]); // 4 */
+
+    // @ts-ignore
+    this.buf.resize(n);
+
+/*     const nb = new Uint8Array(n);
+
+
+    nb.set(this.buf.slice(0, this.len));
+    this.buf = nb; */
   }
 
   writeByte(b: number): void {
     const p = this.len;
     this.ensure(p + 1);
-    this.buf[p] = b;
+
+    const view = new Uint8Array(this.buf);
+    view[p] = b;
     this.len = p + 1;
   }
 
   writeBytes(u8: Uint8Array): void {
     const p = this.len;
-    this.ensure(p + u8.length);
-    this.buf.set(u8, p);
-    this.len = p + u8.length;
+    this.ensure(p + u8.byteLength);
+      const view = new Uint8Array(this.buf);
+      view.set(u8, p);
+/*     this.buf.set(u8, p); */
+    this.len = p + u8.byteLength;
   }
 
   /**
@@ -47,7 +71,7 @@ export class HtmlArena {
    */
   reserve(additionalCapacity: number): void {
     const need = this.len + (additionalCapacity | 0);
-    if (need > this.buf.length) this.ensure(need);
+    if (need > this.buf.byteLength) this.ensure(need);
   }
 
   writeAscii(str: string): void {
@@ -55,11 +79,13 @@ export class HtmlArena {
     const p = this.len;
     const n = str.length;
     this.ensure(p + n);
-    const b = this.buf;
+/*     const b = this.buf; */
+  const view = new Uint8Array(this.buf);
+
     let o = p;
     
     for (let i = 0; i < n; i++) {
-      b[o++] = str.charCodeAt(i) & 0xff;
+      view[o++] = str.charCodeAt(i) & 0xff;
     }
     
     this.len = o;
@@ -94,12 +120,17 @@ export class HtmlArena {
   }
 
   toString(): string {
-    return TD.decode(this.buf.subarray(0, this.len));
+
+      const view = new Uint8Array(this.buf);
+
+    return TD.decode(view.subarray(0, this.len));
   }
 
   toUint8Array(): Uint8Array {
+      const view = new Uint8Array(this.buf);
+      return view.slice(0, this.len);
     // Return a view instead of a copy for zero-allocation
-    return this.buf.subarray(0, this.len);
+/*     return this.buf.subarray(0, this.len); */
   }
 }
 
