@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after, describe, it } from 'node:test';
+import { readdirSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+const currentHead = execSync('git rev-parse --short HEAD');
 
 interface BenchmarkResult {
   name: string;
@@ -7,6 +10,22 @@ interface BenchmarkResult {
   avgTimeMs: number;
   iterations: number;
 }
+
+function writeResultsToFile(filename: string, results: BenchmarkResult[]) {
+  const lines = results.map(result => {
+    return `${result.name.replaceAll(" ", "_").toLocaleLowerCase()},${result.iterations},${result.opsPerSec.toFixed(2)},${result.avgTimeMs.toFixed(4)}`;
+  });
+
+  const header = 'name,iter,ops_per_s,avg_ms\n';
+  const content = header + lines.join('\n');
+  writeFileSync(filename, content, {
+    encoding: 'utf-8',
+    flag: "a+",
+  });
+
+}
+
+let results : BenchmarkResult[] = [];
 
 // Simple benchmark runner
 function runBenchmark(name: string, fn: () => void | Promise<void>, iterations: number = 1000): BenchmarkResult {
@@ -23,7 +42,16 @@ function runBenchmark(name: string, fn: () => void | Promise<void>, iterations: 
   const avgTimeMs = totalTime / iterations;
   const opsPerSec = (ops / totalTime) * 1000;
 
-  return { name, opsPerSec, avgTimeMs, iterations };
+  const result: BenchmarkResult = {
+    name,
+    opsPerSec,
+    avgTimeMs,
+    iterations,
+  };
+
+  results.push(result);
+
+  return result;
 }
 
 async function benchmarkMarkdownParsing() {
@@ -326,3 +354,16 @@ test('benchmark: memory usage', async () => {
   // Basic assertion to ensure memory usage is reasonable
   assert.ok(memoryUsed < 100 * 1024 * 1024, 'Memory usage seems excessive'); // Less than 100MB
 });
+
+
+describe('results', async () => {
+  after(() => {
+
+    const benchDir = './bench';
+    const files = readdirSync(benchDir)
+    const count = files.filter(f => f.endsWith('.csv')).length + 1;
+
+    writeResultsToFile(`bench/${count}_${currentHead.toString().trim()}.csv`, results);
+
+  });
+}); 
