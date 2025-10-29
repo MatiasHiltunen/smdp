@@ -15,8 +15,10 @@ export async function fetchMarkdown(
     );
   }
 
-  const buffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
+  const bytes = await response.bytes();
+
+
+  // const bytes = new Uint8Array(buffer);
   const baseUrl =
     externalUrl?.toString() ?? new URL(target, window.location.href).toString();
   return { bytes, baseUrl };

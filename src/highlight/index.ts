@@ -1,6 +1,6 @@
 import type { AuthorLanguageSpec } from './language-core';
 import { CompiledLanguageSpec, GenericHighlighter, compileLanguage, BinaryReader } from './language-core';
-import { htmlLanguageSpec } from './builtins';
+/* import { htmlLanguageSpec } from './builtins'; */
 import { LANGUAGE_BINARY, fromBase64 } from './precompiled';
 
 // Lazy import for HtmlArena (only needed in browser contexts)
@@ -110,16 +110,19 @@ function ensurePrecompiledLoaded(): void {
     registerEntry(entry, compiled.aliases);
   }
   // Ensure html is available even if precompiled blob is stale
-  try {
+/*   try {
     const compiledHtml = compileLanguage(htmlLanguageSpec);
     registerEntry({ spec: compiledHtml, highlighter: new GenericHighlighter(compiledHtml) }, compiledHtml.aliases);
-  } catch {}
+  } catch {} */
   precompiledLoaded = true;
 }
 
 export async function highlightCodeBlock(bytes: Uint8Array, lang?: string): Promise<Uint8Array> {
   ensurePrecompiledLoaded();
   const normalized = normalizeLanguage(lang);
+
+ /*  console.log(aliasRegistry) */
+
   if (normalized) {
     const entry = aliasRegistry.get(normalized.key);
     if (entry) {

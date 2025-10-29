@@ -71,7 +71,7 @@ async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<U
 /**
  * Compresses an array of bytes using the browser's Compression Streams API.
  */
-async function compressBytes(
+export async function compressBytes(
   input: Uint8Array,
   format: CompressionFormat = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<Uint8Array> {
@@ -93,7 +93,7 @@ async function compressBytes(
  * Reverses {@link compressBytes} by piping the given bytes through a
  * `DecompressionStream`.
  */
-async function decompressBytes(
+export async function decompressBytes(
   input: Uint8Array,
   format: CompressionFormat = 'gzip',
 ): Promise<Uint8Array> {

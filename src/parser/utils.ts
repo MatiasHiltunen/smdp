@@ -88,6 +88,67 @@ export function detectFence(
   return len >= 3 ? { ch: c, len } : null;
 }
 
+/* export function parseFenceMeta(u8: Uint8Array, s: number, e: number): FenceMeta | undefined {
+  // Skip leading and trailing spaces
+  let start = s;
+  let end = e;
+  
+  while (start < end && isSpace(u8[start])) start++;
+  while (end > start && isSpace(u8[end - 1])) end--;
+  
+  if (start >= end) return undefined;
+
+  // Initialize result
+  const result: FenceMeta = {};
+  
+  // Track positions for language and meta parts
+  let langStart = start;
+  let langEnd = start;
+  let metaStart = -1;
+  let metaEnd = end;
+  let colonFound = false;
+  
+  // Single pass to identify language and meta
+  for (let i = start; i < end; i++) {
+    if (isSpace(u8[i])) {
+      if (langEnd === start) {
+        // First space after language
+        langEnd = i;
+        metaStart = i + 1;
+        while (metaStart < end && isSpace(u8[metaStart])) metaStart++;
+        if (metaStart >= end) metaStart = -1;
+      } 
+        // 0x3A = ':' 
+    } else if (u8[i] === 0x3A  && langEnd === start && !colonFound) {
+      // First colon in language part
+      langEnd = i;
+      colonFound = true;
+      metaStart = i + 1;
+      while (metaStart < end && isSpace(u8[metaStart])) metaStart++;
+      if (metaStart >= end) metaStart = -1;
+    }
+  }
+  
+  // If no spaces or colon found, entire content is language
+  if (langEnd === start) langEnd = end;
+  
+  // Process language if present
+  if (langEnd > langStart) {
+    result.rawLang = utf8ToString(u8, langStart, langEnd); // Optional: implement direct copy if needed
+    result.lang = utf8ToString(u8, langStart, langEnd).toLowerCase(); // Optional: implement lowercase in-place
+  }
+  
+  // Process meta if present
+  if (metaStart !== -1 && metaEnd > metaStart) {
+    result.meta = utf8ToString(u8, metaStart, metaEnd); // Optional: implement direct copy
+  }
+  
+  // Store infoString (entire trimmed content)
+  result.infoString = utf8ToString(u8, start, end); // Optional: implement direct copy
+  
+  return result.infoString.length > 0 ? result : undefined;
+} */
+
 export function parseFenceMeta(
   u8: Uint8Array,
   s: number,
