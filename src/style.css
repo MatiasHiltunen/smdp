@@ -610,6 +610,11 @@ body.is-editing .editor-pane {
   cursor: pointer;
   box-shadow: var(--shadow-button);
   transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none; /* Safari */
+  -ms-user-select: none; /* IE 10 and IE 11 */
+  user-select: none; /* Standard syntax */
+  outline:none;
 }
 
 .fab-main:hover,
