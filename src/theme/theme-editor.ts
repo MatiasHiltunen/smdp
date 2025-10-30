@@ -25,6 +25,12 @@ type TokenField = {
   label: string;
 };
 
+type CustomPropertyField = {
+  key: string;
+  label: string;
+  placeholder?: string;
+};
+
 const META_FIELDS: readonly MetaField[] = [
   { key: 'colorScheme', label: 'Color scheme' },
   { key: 'fontFamily', label: 'Font family' },
@@ -32,6 +38,34 @@ const META_FIELDS: readonly MetaField[] = [
   { key: 'fontSize', label: 'Font size' },
   { key: 'fontWeight', label: 'Font weight' },
   { key: 'lineHeight', label: 'Line height' },
+] as const;
+
+const LAYOUT_FIELDS: readonly CustomPropertyField[] = [
+  {
+    key: '--shell-padding',
+    label: 'Workspace padding',
+    placeholder: 'clamp(1rem, 2.5vw, 1.75rem)',
+  },
+  {
+    key: '--pane-padding',
+    label: 'Panel padding',
+    placeholder: 'clamp(1rem, 2vw, 1.25rem)',
+  },
+  {
+    key: '--pane-margin',
+    label: 'Panel margin',
+    placeholder: '0',
+  },
+  {
+    key: '--markdown-margin',
+    label: 'Markdown margin',
+    placeholder: '0 auto',
+  },
+  {
+    key: '--markdown-padding',
+    label: 'Markdown padding',
+    placeholder: '0',
+  },
 ] as const;
 
 const FONT_FAMILIES = [
@@ -390,6 +424,30 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
 
   metaSection.append(metaHeading, metaFieldsContainer);
 
+  const layoutSection = document.createElement('section');
+  layoutSection.className = 'theme-editor-section';
+
+  const layoutHeading = document.createElement('h3');
+  layoutHeading.className = 'theme-editor-section-title';
+  layoutHeading.textContent = 'Layout spacing';
+
+  const layoutFieldsContainer = document.createElement('div');
+  layoutFieldsContainer.className = 'theme-editor-fields theme-editor-fields--grid';
+
+  LAYOUT_FIELDS.forEach((fieldDef) => {
+    const fieldId = `theme-custom-${fieldDef.key.replace(/^--/, '').replace(/[^a-z0-9]+/gi, '-')}`;
+    const { field, input } = createInputField(fieldDef.label, fieldId, fieldDef.key);
+    input.dataset.section = 'custom';
+    input.dataset.key = fieldDef.key;
+    if (fieldDef.placeholder && input instanceof HTMLInputElement) {
+      input.placeholder = fieldDef.placeholder;
+    }
+    layoutFieldsContainer.append(field);
+    inputs.set(`custom:${fieldDef.key}`, input);
+  });
+
+  layoutSection.append(layoutHeading, layoutFieldsContainer);
+
   const tokenSections = TOKEN_GROUPS.map((group) => {
     const section = document.createElement('section');
     section.className = 'theme-editor-section';
@@ -428,7 +486,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
   footer.className = 'theme-editor-footer';
   footer.append(resetButton);
 
-  content.append(metaSection, ...tokenSections);
+  content.append(metaSection, layoutSection, ...tokenSections);
   panel.append(header, content, footer);
   wrapper.append(overlay, panel);
 
@@ -514,6 +572,14 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
         }
       });
     });
+    LAYOUT_FIELDS.forEach((fieldDef) => {
+      const key = `custom:${fieldDef.key}`;
+      const input = inputs.get(key);
+      if (input && document.activeElement !== input) {
+        const value = configuration.customProperties[fieldDef.key] ?? '';
+        input.value = value;
+      }
+    });
   };
 
   const open = () => {
@@ -579,6 +645,8 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
       builder.withMeta(partial);
     } else if (section === 'token') {
       builder.withToken(key as ThemeTokenKey, value);
+    } else if (section === 'custom') {
+      builder.withCustomProperty(key, value);
     }
     builder.apply();
     saveThemeToUrl(builder);

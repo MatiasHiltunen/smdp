@@ -14,32 +14,48 @@ export type CanvasView = BaseView & {
   canvas: HTMLCanvasElement;
 };
 
-export function createHtmlView(): HtmlView {
-  const shell = createElement("div");
-  shell.className = "app-shell mode-html";
+function createEditorPane(): HTMLElement {
+  return createElement("section", {
+    classes: ["editor-pane", "surface-pane"],
+    attrs: {
+      id: "markdown-editor-pane",
+      "aria-hidden": "true",
+    },
+  });
+}
 
-  const viewerPane = createElement("div");
-  viewerPane.className = "viewer-pane";
-
-  const viewer = createElement("article");
-  viewer.className = "markdown-viewer";
-  viewer.id = "markdown-view";
-
-  const editorPane = createElement("section");
-  editorPane.className = "editor-pane";
-  editorPane.id = "markdown-editor-pane";
-  editorPane.setAttribute("aria-hidden", "true");
-
-  const textarea = createElement("textarea");
-  textarea.className = "editor";
+function createEditorInput(): HTMLTextAreaElement {
+  const textarea = createElement("textarea", {
+    classes: ["editor"],
+    attrs: {
+      id: "markdown-editor-input",
+      "aria-label": "Markdown source",
+      autocomplete: "off",
+    },
+  }) as HTMLTextAreaElement;
   textarea.spellcheck = false;
-  textarea.id = "markdown-editor-input";
-  textarea.autocomplete = "off";
-  textarea.setAttribute("aria-label", "Markdown source");
+  return textarea;
+}
+
+export function createHtmlView(): HtmlView {
+  const shell = createElement("div", {
+    classes: ["app-shell", "mode-html"],
+  });
+
+  const viewerPane = createElement("div", {
+    classes: ["viewer-pane", "surface-pane"],
+  });
+
+  const viewer = createElement("article", {
+    className: "markdown-viewer",
+    attrs: { id: "markdown-view" },
+  });
+
+  const editorPane = createEditorPane();
+  const textarea = createEditorInput();
 
   editorPane.appendChild(textarea);
   viewerPane.appendChild(viewer);
-
   shell.append(viewerPane, editorPane);
 
   return {
@@ -51,38 +67,35 @@ export function createHtmlView(): HtmlView {
 }
 
 export function createCanvasView(): CanvasView {
-  const shell = createElement("div");
-  shell.className = "app-shell mode-canvas";
+  const shell = createElement("div", {
+    classes: ["app-shell", "mode-canvas"],
+  });
 
-  const canvasPane = createElement("div");
-  canvasPane.className = "canvas-pane";
+  const canvasPane = createElement("div", {
+    classes: ["canvas-pane", "surface-pane"],
+  });
 
-  const canvasScroll = createElement("div");
-  canvasScroll.className = "canvas-scroll";
+  const canvasScroll = createElement("div", {
+    className: "canvas-scroll",
+  });
 
-  const canvas = createElement("canvas");
-  canvas.className = "md-canvas";
+  const canvas = createElement("canvas", {
+    className: "md-canvas",
+  });
 
-  const canvasSpacer = createElement("div");
-  canvasSpacer.id = "canvas-spacer";
-  canvasSpacer.setAttribute("aria-hidden", "true");
+  const canvasSpacer = createElement("div", {
+    attrs: {
+      id: "canvas-spacer",
+      "aria-hidden": "true",
+    },
+  });
 
-  const editorPane = createElement("section");
-  editorPane.className = "editor-pane";
-  editorPane.id = "markdown-editor-pane";
-  editorPane.setAttribute("aria-hidden", "true");
-
-  const textarea = createElement("textarea");
-  textarea.className = "editor";
-  textarea.spellcheck = false;
-  textarea.id = "markdown-editor-input";
-  textarea.autocomplete = "off";
-  textarea.setAttribute("aria-label", "Markdown source");
+  const editorPane = createEditorPane();
+  const textarea = createEditorInput();
 
   editorPane.appendChild(textarea);
   canvasScroll.append(canvas, canvasSpacer);
   canvasPane.appendChild(canvasScroll);
-
   shell.append(canvasPane, editorPane);
 
   return {

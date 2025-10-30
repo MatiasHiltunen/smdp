@@ -167,6 +167,11 @@ const DEFAULT_META: ThemeMeta = {
 const DEFAULT_CUSTOM_PROPERTIES: Record<string, string> = {
   '--bg-glow-a': 'rgba(56, 189, 248, 0.12)',
   '--bg-glow-b': 'rgba(94, 234, 212, 0.12)',
+  '--shell-padding': 'clamp(1rem, 2.5vw, 1.75rem)',
+  '--pane-padding': 'clamp(1rem, 2vw, 1.25rem)',
+  '--pane-margin': '0',
+  '--markdown-margin': '0 auto',
+  '--markdown-padding': '0',
 };
 
 const LIGHT_TOKENS: ThemeTokens = {
@@ -216,10 +221,11 @@ const LIGHT_META: ThemeMeta = {
 const LIGHT_CUSTOM_PROPERTIES: Record<string, string> = {
   '--bg-glow-a': 'rgba(37, 99, 235, 0.18)',
   '--bg-glow-b': 'rgba(14, 165, 233, 0.14)',
-/*   '--blockquote-border': 'rgba(59, 130, 246, 0.45)',
-  '--blockquote-bg': 'rgba(59, 130, 246, 0.12)',
-  '--blockquote-text': 'rgba(30, 41, 59, 0.85)',
-  '--blockquote-accent': 'rgba(37, 99, 235, 0.55)', */
+  '--shell-padding': 'clamp(1rem, 2.5vw, 1.75rem)',
+  '--pane-padding': 'clamp(1rem, 2vw, 1.25rem)',
+  '--pane-margin': '0',
+  '--markdown-margin': '0 auto',
+  '--markdown-padding': '0',
 };
 
 function cloneTokens(tokens: ThemeTokens): ThemeTokens {
