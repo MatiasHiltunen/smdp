@@ -1,3 +1,7 @@
+/* 
+Base79 experiment is planned to be removed
+*/
+
 const URL_SAFE_ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
   "abcdefghijklmnopqrstuvwxyz" +

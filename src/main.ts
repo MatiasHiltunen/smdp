@@ -180,12 +180,7 @@ async function init(): Promise<void> {
 
   try {
     if (route.dataPayload) {
-      const encoding =
-        route.dataEncoding ??
-        (route.dataFormat === "binary" ? "base79" : "base64");
-      const decoded = await decodeSharePayload(route.dataPayload, undefined, {
-        encoding,
-      });
+      const decoded = await decodeSharePayload(route.dataPayload, "gzip");
       if (decoded.themes && (decoded.themes.dark || decoded.themes.light)) {
         applyEmbeddedThemes(decoded.themes, themeBuilder);
       }
@@ -194,7 +189,8 @@ async function init(): Promise<void> {
         baseUrl: window.location.href,
         blocks: decoded.blocks ?? null,
       };
-      resolvedText = new TextDecoder().decode(decoded.markdown);
+      
+    /*   resolvedText = new TextDecoder().decode(decoded.markdown); */
     } else {
       resolved = await fetchMarkdown(route.externalUrl);
       resolvedText = new TextDecoder().decode(resolved.bytes);
@@ -220,7 +216,8 @@ async function init(): Promise<void> {
     document.body.classList.remove("hydrating");
   }
 
-  if (!route.shared) {
+  if (!route.shared && resolved) {
+    resolvedText = new TextDecoder().decode(resolved.bytes); 
     if (resolvedText !== null) {
       view.textarea.value = resolvedText;
     } else {
@@ -235,6 +232,8 @@ async function init(): Promise<void> {
         applyMarkdownToCanvas(view as CanvasView, resolved.bytes, currentBaseUrl, resolved.blocks);
       } else {
         await applyMarkdownToHtml(view as HtmlView, resolved.bytes, currentBaseUrl, resolved.blocks);
+      
+  
       }
     } else {
       await apply(resolved.bytes, currentBaseUrl);

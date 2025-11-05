@@ -1,10 +1,10 @@
 import { blocks } from "./block-parser";
-import type { BlockEvent } from "./types";
+import type { BlockEvent, FenceMeta } from "./types";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-export function encodeBlockSection(source: Uint8Array): Uint8Array {
+export function encodeBlockSection(source: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
   const writer = new BinaryWriter();
   const eventList = Array.from(blocks(source));
   writer.writeU32(eventList.length);
@@ -14,7 +14,7 @@ export function encodeBlockSection(source: Uint8Array): Uint8Array {
   return writer.finish();
 }
 
-export function decodeBlockSection(bytes: Uint8Array): BlockEvent[] {
+export function decodeBlockSection(bytes: Uint8Array<ArrayBuffer>): BlockEvent[] {
   const reader = new BinaryReader(bytes);
   const count = reader.readU32();
   const events: BlockEvent[] = [];
@@ -203,7 +203,7 @@ function readBlockEvent(reader: BinaryReader): BlockEvent {
         lang: rawLang ? rawLang.toLowerCase() : undefined,
         meta: meta || undefined,
       };
-      return { type: "codeOpen", info };
+      return { type: "codeOpen", info: info as FenceMeta };
     }
     case BlockOpcode.CodeText: {
       const s = reader.readU32();
@@ -330,7 +330,7 @@ class BinaryWriter {
     this.writeU8(value & 0xff);
   }
 
-  writeBytes(data: Uint8Array): void {
+  writeBytes(data: Uint8Array<ArrayBuffer>): void {
     for (const byte of data) {
       this.bytes.push(byte);
     }
@@ -342,7 +342,7 @@ class BinaryWriter {
     this.writeBytes(encoded);
   }
 
-  finish(): Uint8Array {
+  finish(): Uint8Array<ArrayBuffer> {
     return Uint8Array.from(this.bytes);
   }
 }
@@ -350,7 +350,7 @@ class BinaryWriter {
 class BinaryReader {
   private offset = 0;
 
-  constructor(private readonly bytes: Uint8Array) {}
+  constructor(private readonly bytes: Uint8Array<ArrayBuffer>) {}
 
   readU8(): number {
     this.ensureAvailable(1);
@@ -371,7 +371,7 @@ class BinaryReader {
     return ((b1 << 24) | (b2 << 16) | (b3 << 8) | b4) >>> 0;
   }
 
-  readBytes(length: number): Uint8Array {
+  readBytes(length: number): Uint8Array<ArrayBuffer> {
     this.ensureAvailable(length);
     const slice = this.bytes.subarray(this.offset, this.offset + length);
     this.offset += length;

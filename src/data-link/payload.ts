@@ -13,16 +13,16 @@ export type ThemeMode = "dark" | "light";
 
 export type ThemeSection = {
   mode: ThemeMode;
-  data: Uint8Array;
+  data: Uint8Array<ArrayBuffer>;
 };
 
 export type BinaryPayload = {
   themes: ThemeSection[];
-  blockData: Uint8Array;
-  markdown: Uint8Array;
+  blockData: Uint8Array<ArrayBuffer>;
+  markdown: Uint8Array<ArrayBuffer>;
 };
 
-export function serializeBinaryPayload(payload: BinaryPayload): Uint8Array {
+export function serializeBinaryPayload(payload: BinaryPayload): Uint8Array<ArrayBuffer> {
   const writer = new BinaryWriter();
   let flags = 0;
   for (const theme of payload.themes) {
@@ -50,7 +50,7 @@ export function serializeBinaryPayload(payload: BinaryPayload): Uint8Array {
   return writer.finish();
 }
 
-export function deserializeBinaryPayload(bytes: Uint8Array): BinaryPayload {
+export function deserializeBinaryPayload(bytes: Uint8Array<ArrayBuffer>): BinaryPayload {
   const reader = new BinaryReader(bytes);
   const magic = reader.readU32();
   if (magic !== DATA_LINK_MAGIC) {
@@ -106,22 +106,22 @@ class BinaryWriter {
     this.writeU8(value & 0xff);
   }
 
-  writeBytes(data: Uint8Array): void {
+  writeBytes(data: Uint8Array<ArrayBuffer>): void {
     for (const byte of data) {
       this.bytes.push(byte);
     }
   }
 
-  finish(): Uint8Array {
+  finish(): Uint8Array<ArrayBuffer> {
     return Uint8Array.from(this.bytes);
   }
 }
 
 class BinaryReader {
-  private readonly bytes: Uint8Array;
+  private readonly bytes: Uint8Array<ArrayBuffer>;
   private offset = 0;
 
-  constructor(bytes: Uint8Array) {
+  constructor(bytes: Uint8Array<ArrayBuffer>) {
     this.bytes = bytes;
   }
 
@@ -144,7 +144,7 @@ class BinaryReader {
     return ((b1 << 24) | (b2 << 16) | (b3 << 8) | b4) >>> 0;
   }
 
-  readBytes(length: number): Uint8Array {
+  readBytes(length: number): Uint8Array<ArrayBuffer> {
     this.ensureAvailable(length);
     const slice = this.bytes.subarray(this.offset, this.offset + length);
     this.offset += length;
