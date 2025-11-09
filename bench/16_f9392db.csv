@@ -1,0 +1,11 @@
+name,iter,ops_per_s,avg_ms
+small_document_parse,1000,4479.19,0.2233
+medium_document_parse,100,2023.11,0.4943
+large_document_parse,10,543.69,1.8393
+small_code_highlight,1000,19117.72,0.0523
+medium_code_highlight,100,12521.85,0.0799
+large_code_highlight,10,1043.05,0.9587
+simple_inline_parse,10000,111041.58,0.0090
+complex_inline_parse,1000,110717.71,0.0090
+nested_inline_parse,1000,27153.43,0.0368
+long_inline_parse,100,5221.38,0.1915

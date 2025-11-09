@@ -217,14 +217,14 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
       case 'bqOpen':
         closePara();
         closeListsAll();
-        out.writeBytes(TAG.bqOpen);
+        out.writeBytes(TAG.blockquoteOpen);
         bqDepth++;
         break;
 
       case 'bqClose':
         closePara();
         closeListsAll();
-        out.writeBytes(TAG.bqClose);
+        out.writeBytes(TAG.blockquoteClose);
         bqDepth = Math.max(0, bqDepth - 1);
         break;
 

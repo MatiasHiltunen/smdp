@@ -3,17 +3,18 @@
  * Uses Uint8Array for efficient byte-level operations
  */
 
-import { TAG, TD } from './constants';
+import { TAG, TD, TE } from './constants';
 
 export class HtmlArena {
-  private buf: ArrayBuffer;
+  private buf: Uint8Array<ArrayBuffer>;
   private len: number;
 
   // Lower preacllocated size results to faster small writes, but more reallocations
   constructor(initial = 8192) {
 
-    // @ts-ignore
-    this.buf = new ArrayBuffer(initial, { maxByteLength: 2 ** 29 });
+  
+    // const buffer = new ArrayBuffer(initial);
+    this.buf = new Uint8Array(initial)
     this.len = 0;
   }
 
@@ -38,31 +39,31 @@ const view2 = new Uint8Array(buffer2);
 console.log(view2[1]); // 2
 console.log(view2[7]); // 4 */
 
-    // @ts-ignore
-    this.buf.resize(n);
 
-/*     const nb = new Uint8Array(n);
+    // this.buf.resize(n);
 
-
-    nb.set(this.buf.slice(0, this.len));
-    this.buf = nb; */
+    const nb = new Uint8Array(n);
+    nb.set(this.buf.slice(0, this.buf.byteLength));
+    // this.buf()
+    this.buf = nb; 
   }
 
   writeByte(b: number): void {
     const p = this.len;
     this.ensure(p + 1);
 
-    const view = new Uint8Array(this.buf);
-    view[p] = b;
+    // const view = new Uint8Array(this.buf);
+    this.buf[p+1] = b //set(b, p + 1)
+    // view[p] = b;
     this.len = p + 1;
   }
 
-  writeBytes(u8: Uint8Array): void {
+  writeBytes(u8: Uint8Array<ArrayBuffer>): void {
     const p = this.len;
     this.ensure(p + u8.byteLength);
-      const view = new Uint8Array(this.buf);
-      view.set(u8, p);
-/*     this.buf.set(u8, p); */
+      // const view = new Uint8Array(this.buf);
+      // view.set(u8, p);
+    this.buf.set(u8, p); 
     this.len = p + u8.byteLength;
   }
 
@@ -79,22 +80,28 @@ console.log(view2[7]); // 4 */
     const p = this.len;
     const n = str.length;
     this.ensure(p + n);
-/*     const b = this.buf; */
-  const view = new Uint8Array(this.buf);
+    // const b = this.buf; 
+  // const view = new Uint8Array(this.buf);
 
-    let o = p;
+     const progress = TE.encodeInto(str, this.buf)
+
+     //this.buf.join()
+
+     this.len = progress.written + p
     
-    for (let i = 0; i < n; i++) {
-      view[o++] = str.charCodeAt(i) & 0xff;
-    }
+    // let o = p;
     
-    this.len = o;
+    // for (let i = 0; i < n; i++) {
+    //   view[o++] = str.charCodeAt(i) & 0xff;
+    // }
+    
+    // this.len = o;
   }
 
   /**
    * Hot-path: copy chunks between escapes (&, <, >, ", ')
    */
-  writeEscaped(bytes: Uint8Array, s: number, e: number): void {
+  writeEscaped(bytes: Uint8Array<ArrayBuffer>, s: number, e: number): void {
     let start = s;
     
     for (let i = s; i < e; i++) {
