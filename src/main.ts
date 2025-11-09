@@ -16,6 +16,7 @@ import {
 } from "./client/views";
 import { fetchMarkdown, type MarkdownFetchResult } from "./client/fetch";
 import { createFabMenu, displayError } from "./client/ui";
+import {TD} from "./parser/constants"
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -63,9 +64,9 @@ function applyEmbeddedThemes(themes: ThemePayload, builder: ReturnType<typeof ge
 
 async function applyMarkdownToHtml(
   view: HtmlView,
-  bytes: Uint8Array,
+bytes: Uint8Array<ArrayBuffer>,
   baseUrl?: string,
-  blockData?: Uint8Array,
+  blockData?: Uint8Array<ArrayBuffer>,
 ): Promise<void> {
   const overrides = baseUrl ? { baseUrl } : {};
   const html = blockData
@@ -76,9 +77,9 @@ async function applyMarkdownToHtml(
 
 function applyMarkdownToCanvas(
   view: CanvasView,
-  bytes: Uint8Array,
+  bytes: Uint8Array<ArrayBuffer>,
   baseUrl?: string,
-  blockData?: Uint8Array,
+  blockData?: Uint8Array<ArrayBuffer>,
 ): void {
   const overrides = baseUrl ? { baseUrl } : {};
   if (blockData) {
@@ -90,7 +91,7 @@ function applyMarkdownToCanvas(
 
 function enableRealtimeUpdates(
   view: HtmlView | CanvasView,
-  apply: (bytes: Uint8Array, baseUrl?: string) => Promise<void>,
+apply: (bytes: Uint8Array<ArrayBuffer>, baseUrl?: string) => Promise<void>,
   resolveBaseUrl: () => string | undefined,
 ): void {
   view.textarea.addEventListener("input", (event) => {
@@ -123,26 +124,30 @@ async function init(): Promise<void> {
   const route = parseRoute();
 
   let view: HtmlView | CanvasView;
-  let apply: (bytes: Uint8Array, baseUrl?: string) => Promise<void>;
+  let apply: (bytes: Uint8Array<ArrayBuffer>, baseUrl?: string) => Promise<void>;
   let themeEditorLocal: ThemeEditorHandle | null = null;
 
   if (route.mode === "canvas") {
     const canvasView = createCanvasView();
     view = canvasView;
-    apply = async (bytes, baseUrl) => {
+    apply = async (bytes: Uint8Array<ArrayBuffer>, baseUrl) => {
       applyMarkdownToCanvas(canvasView, bytes, baseUrl);
     };
   } else {
     const htmlView = createHtmlView();
     view = htmlView;
-    apply = (bytes, baseUrl) => applyMarkdownToHtml(htmlView, bytes, baseUrl);
+    apply = (bytes: Uint8Array<ArrayBuffer>, baseUrl) => applyMarkdownToHtml(htmlView, bytes, baseUrl);
   }
 
   document.body.classList.remove("is-editing");
   document.body.replaceChildren(view.shell);
   if (route.shared) {
     // Remove editor pane entirely for shared/embed mode
-    try { view.editorPane.remove(); } catch {}
+    try {
+      view.editorPane.remove();
+    } catch {
+      console.log("bug with DOM management.")
+    }
   } else {
     themeEditorLocal = ensureThemeEditor();
     document.body.appendChild(themeEditorLocal.root);
@@ -193,7 +198,7 @@ async function init(): Promise<void> {
     /*   resolvedText = new TextDecoder().decode(decoded.markdown); */
     } else {
       resolved = await fetchMarkdown(route.externalUrl);
-      resolvedText = new TextDecoder().decode(resolved.bytes);
+      resolvedText = TD.decode(resolved.bytes);
     }
   } catch (error) {
     console.error(error);
@@ -217,7 +222,7 @@ async function init(): Promise<void> {
   }
 
   if (!route.shared && resolved) {
-    resolvedText = new TextDecoder().decode(resolved.bytes); 
+    resolvedText = TD.decode(resolved.bytes); 
     if (resolvedText !== null) {
       view.textarea.value = resolvedText;
     } else {
@@ -229,9 +234,9 @@ async function init(): Promise<void> {
     currentBaseUrl = resolved.baseUrl;
     if (resolved.blocks) {
       if ("canvas" in view) {
-        applyMarkdownToCanvas(view as CanvasView, resolved.bytes, currentBaseUrl, resolved.blocks);
+        applyMarkdownToCanvas(view as CanvasView, resolved.bytes, currentBaseUrl, resolved.blocks as Uint8Array<ArrayBuffer>);
       } else {
-        await applyMarkdownToHtml(view as HtmlView, resolved.bytes, currentBaseUrl, resolved.blocks);
+        await applyMarkdownToHtml(view as HtmlView, resolved.bytes, currentBaseUrl, resolved.blocks as Uint8Array<ArrayBuffer>);
       
   
       }

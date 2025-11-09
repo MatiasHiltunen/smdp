@@ -1,10 +1,10 @@
-import { base79DecodeWithChecksum, base79EncodeWithChecksum } from "./data-link/base79";
+// import { base79DecodeWithChecksum, base79EncodeWithChecksum } from "./data-link/base79";
 import {
   serializeBinaryPayload,
   deserializeBinaryPayload,
   encodeBlockSection,
-  FLAG_THEME_DARK,
-  FLAG_THEME_LIGHT,
+  // FLAG_THEME_DARK,
+  // FLAG_THEME_LIGHT,
   DATA_LINK_MAGIC,
   DATA_LINK_VERSION,
   type ThemeSection,
@@ -14,12 +14,14 @@ import {
   gzipDecompressFallback,
 } from "./data-link/compression-fallback";
 
+
+import {TD, TE} from "./parser/constants"
 /**
  * Shared encoder/decoder instances reused across invocations to avoid
  * unnecessary allocations when transforming markdown payloads.
  */
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+// const encoder = new TextEncoder();
+// const decoder = new TextDecoder();
 
 type Base64Options = {
   alphabet?: "base64" | "base64url";
@@ -29,8 +31,8 @@ type Base64Options = {
  * Type guard that lets us safely probe the experimental base64 helpers on
  * `Uint8Array` without upsetting TypeScript.
  */
-const UINT8ARRAY_WITH_BASE64 = Uint8Array as unknown as {
-  fromBase64?: (data: string, options?: Base64Options) => Uint8Array;
+const UINT8ARRAY_WITH_BASE64 = Uint8Array<ArrayBuffer> as unknown as {
+  fromBase64?: (data: string, options?: Base64Options) => Uint8Array<ArrayBuffer>;
   prototype: {
     toBase64?: (options?: Base64Options) => string;
   };
@@ -48,13 +50,13 @@ export type SharePayload = {
 };
 
 export type DecodedSharePayload = {
-  markdown: Uint8Array;
+  markdown: Uint8Array<ArrayBuffer>;
   themes: ThemePayload;
   format: "structured" | "legacy";
-  blocks?: Uint8Array;
+  blocks?: Uint8Array<ArrayBuffer>;
 };
 
-export type ShareEncoding = "base64" | "base79";
+export type ShareEncoding = "base64";
 
 export interface ShareEncodeOptions {
   encoding?: ShareEncoding;
@@ -80,9 +82,9 @@ function compressionStreamsAvailable(): boolean {
  * decompressor outputs as async iterables, so this utility keeps the
  * higher-level helpers tidy.
  */
-async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+async function streamToUint8Array(stream: ReadableStream<Uint8Array<ArrayBuffer>>): Promise<Uint8Array<ArrayBuffer>> {
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
   let totalLength = 0;
 
   while (true) {
@@ -110,9 +112,9 @@ async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<U
  * Compresses an array of bytes using the browser's Compression Streams API.
  */
 async function compressBytes(
-  input: Uint8Array,
+  input: Uint8Array<ArrayBuffer>,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   if (compressionStreamsAvailable()) {
     const stream = new CompressionStream(resolveCompressionFormat(format));
     const writer = stream.writable.getWriter();
@@ -129,7 +131,7 @@ async function compressBytes(
 
   if (format === "gzip") {
     console.log("using gzip compress fallback");
-    return gzipCompressFallback(input);
+    return gzipCompressFallback(input) as Uint8Array<ArrayBuffer>;
   }
 
   throw new Error("Compression Streams API is not supported in this environment");
@@ -140,9 +142,9 @@ async function compressBytes(
  * `DecompressionStream`.
  */
 async function decompressBytes(
-  input: Uint8Array,
+  input: Uint8Array<ArrayBuffer>,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   if (compressionStreamsAvailable()) {
     const stream = new DecompressionStream(resolveCompressionFormat(format));
     const writer = stream.writable.getWriter();
@@ -154,12 +156,12 @@ async function decompressBytes(
     await writer.write(input as BufferSource);
     await writer.close();
 
-    return await readPromise;
+    return await readPromise as Uint8Array<ArrayBuffer>;
   }
 
   if (format === "gzip") {
     console.log("using gzip decompress fallback");
-    return gzipDecompressFallback(input);
+    return gzipDecompressFallback(input) as Uint8Array<ArrayBuffer>;
   }
 
   throw new Error("Compression Streams API is not supported in this environment");
@@ -182,7 +184,7 @@ function resolveCompressionFormat(format: CompressionAlgorithm): CompressionForm
  * `Uint8Array#toBase64` helper when it exists and fall back to a manual
  * implementation otherwise.
  */
-function bytesToBase64(bytes: Uint8Array): string {
+function bytesToBase64(bytes: Uint8Array<ArrayBuffer>): string {
   const toBase64 = UINT8ARRAY_WITH_BASE64.prototype.toBase64;
   if (typeof toBase64 === "function") {
     return toBase64.call(bytes, { alphabet: "base64url" });
@@ -193,7 +195,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 /**
  * Decodes a base64 (URL alphabet) payload into its original bytes.
  */
-function base64ToBytes(base64: string): Uint8Array {
+function base64ToBytes(base64: string): Uint8Array<ArrayBuffer>  {
   const fromBase64 = UINT8ARRAY_WITH_BASE64.fromBase64;
   if (typeof fromBase64 === "function") {
     try {
@@ -211,7 +213,7 @@ function base64ToBytes(base64: string): Uint8Array {
  * available. The output mirrors the URL-safe alphabet and omits padding to
  * keep links compact.
  */
-function fallbackBytesToBase64(bytes: Uint8Array): string {
+function fallbackBytesToBase64(bytes: Uint8Array<ArrayBuffer>): string {
   let binary = "";
   const chunkSize = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
@@ -229,7 +231,7 @@ function fallbackBytesToBase64(bytes: Uint8Array): string {
  * Reconstructs the original bytes from the URL-safe base64 encoding produced
  * by {@link fallbackBytesToBase64}.
  */
-function fallbackBase64ToBytes(base64: string): Uint8Array {
+function fallbackBase64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   const normalized = base64.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
   const binary = atob(padded);
@@ -250,7 +252,7 @@ export async function encodeMarkdownToBase64(
   markdown: string,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
-  return await encodeSharePayload({ markdown }, format, { encoding: "base64" });
+  return await encodeSharePayload({ markdown }, format);
 }
 
 /**
@@ -274,7 +276,7 @@ export async function decodeBase64MarkdownAsText(
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<string> {
   const decoded = await decodeSharePayload(base64, format);
-  return decoder.decode(decoded.markdown);
+  return TD.decode(decoded.markdown);
 }
 
 /**
@@ -283,9 +285,9 @@ export async function decodeBase64MarkdownAsText(
 export async function encodeSharePayload(
   payload: SharePayload,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
-  options: ShareEncodeOptions = {},
+  // options: ShareEncodeOptions = {},
 ): Promise<string> {
-  const markdownBytes = encoder.encode(payload.markdown);
+  const markdownBytes = TE.encode(payload.markdown);
   const structured = encodeStructuredPayload(markdownBytes, payload.themes ?? {});
   const compressed = await compressBytes(structured, format);
 
@@ -328,10 +330,10 @@ export type { CompressionAlgorithm };
 function encodeStructuredPayload(markdown: Uint8Array<ArrayBuffer>, themes: ThemePayload): Uint8Array<ArrayBuffer> {
   const themeSections: ThemeSection[] = [];
   if (themes.dark) {
-    themeSections.push({ mode: "dark", data: encoder.encode(themes.dark) });
+    themeSections.push({ mode: "dark", data: TE.encode(themes.dark) });
   }
   if (themes.light) {
-    themeSections.push({ mode: "light", data: encoder.encode(themes.light) });
+    themeSections.push({ mode: "light", data: TE.encode(themes.light) });
   }
 
   const blockData = encodeBlockSection(markdown);
@@ -343,7 +345,7 @@ function encodeStructuredPayload(markdown: Uint8Array<ArrayBuffer>, themes: Them
   });
 }
 
-function isStructuredPayload(bytes: Uint8Array): boolean {
+function isStructuredPayload(bytes: Uint8Array<ArrayBuffer>): boolean {
   if (bytes.length < 8) {
     return false;
   }
@@ -357,7 +359,7 @@ function decodeStructuredPayload(bytes: Uint8Array<ArrayBuffer>): DecodedSharePa
   const payload = deserializeBinaryPayload(bytes);
   const themes: ThemePayload = {};
   for (const entry of payload.themes) {
-    const decoded = decoder.decode(entry.data);
+    const decoded = TD.decode(entry.data);
     if (entry.mode === "dark") {
       themes.dark = decoded;
     } else if (entry.mode === "light") {

@@ -16,7 +16,7 @@ import { findBracket, matchHttp, matchWww, scanUrl } from './utils';
  *  - strongOpen / strongClose
  */
 export function* inlineTokens(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   s: number,
   e: number,
 ): Generator<InlineToken> {

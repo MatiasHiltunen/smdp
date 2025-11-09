@@ -17,7 +17,7 @@ import { createRenderPipeline } from './render-pipeline';
  * Renders inline tokens to HTML
  */
 function renderInline(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   s: number,
   e: number,
   out: HtmlArena,
@@ -146,7 +146,7 @@ function renderInline(
  * Renders blocks to HTML string
  */
 async function renderHTMLFromEventStream(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   events: Iterable<BlockEvent>,
   options: ParserOptions = {},
 ): Promise<string> {
@@ -406,12 +406,12 @@ async function renderHTMLFromEventStream(
   await pipeline.run(events, { source: u8 });
   return out.toString();
 }
-export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOptions = {}): Promise<string> {
+export async function renderHTMLFromBlocks(u8: Uint8Array<ArrayBuffer>, options: ParserOptions = {}): Promise<string> {
   return renderHTMLFromEventStream(u8, blocks(u8), options);
 }
 
 export async function renderHTMLFromBlockEvents(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   events: Iterable<BlockEvent>,
   options: ParserOptions = {},
 ): Promise<string> {
@@ -419,8 +419,8 @@ export async function renderHTMLFromBlockEvents(
 }
 
 export async function renderHTMLFromSerializedBlocks(
-  u8: Uint8Array,
-  blockBytes: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
+  blockBytes: Uint8Array<ArrayBuffer>,
   options: ParserOptions = {},
 ): Promise<string> {
   const events = decodeBlockSection(blockBytes);

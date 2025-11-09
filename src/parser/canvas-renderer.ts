@@ -126,7 +126,7 @@ function getTokenColors() {
  * Measure the width of inline content
  */
 function measureInlineContent(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   s: number,
   e: number,
   ctx: CanvasRenderingContext2D,
@@ -194,7 +194,7 @@ function measureInlineContent(
  * Render inline content within a cell with clipping
  */
 function renderCellContent(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   s: number,
   e: number,
   ctx: CanvasRenderingContext2D,
@@ -465,7 +465,7 @@ function renderHighlightedCode(
 }
 
 function drawInline(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   s: number,
   e: number,
   ctx: CanvasRenderingContext2D,
@@ -858,7 +858,7 @@ function drawInline(
 }
 
 function renderCanvas(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   ctx: CanvasRenderingContext2D,
   isMeasure: boolean,
   opts: { skipClear?: boolean; onImageLoad?: () => void; parserOptions?: ParserOptions } = {},
@@ -1562,7 +1562,7 @@ function renderCanvas(
 }
 
 function renderToCanvasInternal(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   events: BlockEvent[],
   canvas: HTMLCanvasElement,
   options: ParserOptions = {},
@@ -1734,13 +1734,13 @@ function renderToCanvasInternal(
   canvas.dataset.renderReady = 'ready';
 }
 
-export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
+export function renderToCanvasFromBlocks(u8: Uint8Array<ArrayBuffer>, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
   const events = Array.from(blocks(u8));
   renderToCanvasInternal(u8, events, canvas, options);
 }
 
 export function renderToCanvasFromBlockEvents(
-  u8: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
   events: Iterable<BlockEvent>,
   canvas: HTMLCanvasElement,
   options: ParserOptions = {},
@@ -1749,8 +1749,8 @@ export function renderToCanvasFromBlockEvents(
 }
 
 export function renderToCanvasFromSerializedBlocks(
-  u8: Uint8Array,
-  blockBytes: Uint8Array,
+  u8: Uint8Array<ArrayBuffer>,
+  blockBytes: Uint8Array<ArrayBuffer>,
   canvas: HTMLCanvasElement,
   options: ParserOptions = {},
 ): void {

@@ -52,7 +52,7 @@ export class MDParser {
   /**
    * Parses Markdown (as Uint8Array) and returns HTML string
    */
-  async parse(u8arr: Uint8Array, overrides: ParserOptions = {}): Promise<string> {
+  async parse(u8arr: Uint8Array<ArrayBuffer>, overrides: ParserOptions = {}): Promise<string> {
     const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
     const effective: ResolvedParserOptions = {
       allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
@@ -63,8 +63,8 @@ export class MDParser {
   }
 
   async parseFromBlocks(
-    u8arr: Uint8Array,
-    blockBytes: Uint8Array,
+    u8arr: Uint8Array<ArrayBuffer>,
+    blockBytes: Uint8Array<ArrayBuffer>,
     overrides: ParserOptions = {},
   ): Promise<string> {
     const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
@@ -79,7 +79,7 @@ export class MDParser {
   /**
    * Renders Markdown (as Uint8Array) to an HTML5 Canvas
    */
-  renderToCanvas(u8arr: Uint8Array, canvas: HTMLCanvasElement, overrides: ParserOptions = {}): void {
+  renderToCanvas(u8arr: Uint8Array<ArrayBuffer>, canvas: HTMLCanvasElement, overrides: ParserOptions = {}): void {
     const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
     const effective: ResolvedParserOptions = {
       allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
@@ -90,8 +90,8 @@ export class MDParser {
   }
 
   renderToCanvasFromBlocksPayload(
-    u8arr: Uint8Array,
-    blockBytes: Uint8Array,
+    u8arr: Uint8Array<ArrayBuffer>,
+    blockBytes: Uint8Array<ArrayBuffer>,
     canvas: HTMLCanvasElement,
     overrides: ParserOptions = {},
   ): void {
@@ -115,7 +115,7 @@ export class MDParser {
 /**
  * Utility function to convert string to Uint8Array
  */
-export function u8(str: string): Uint8Array {
+export function u8(str: string): Uint8Array<ArrayBuffer> {
   return TE.encode(str);
 }
 
