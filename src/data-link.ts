@@ -29,8 +29,8 @@ type Base64Options = {
  * Type guard that lets us safely probe the experimental base64 helpers on
  * `Uint8Array` without upsetting TypeScript.
  */
-const UINT8ARRAY_WITH_BASE64 = Uint8Array as unknown as {
-  fromBase64?: (data: string, options?: Base64Options) => Uint8Array;
+const UINT8ARRAY_WITH_BASE64 = Uint8Array<ArrayBuffer> as unknown as {
+  fromBase64?: (data: string, options?: Base64Options) => Uint8Array<ArrayBuffer>;
   prototype: {
     toBase64?: (options?: Base64Options) => string;
   };
@@ -82,7 +82,7 @@ function compressionStreamsAvailable(): boolean {
  */
 async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
   let totalLength = 0;
 
   while (true) {
@@ -91,7 +91,7 @@ async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<U
       break;
     }
     if (value) {
-      chunks.push(value);
+      chunks.push(value as Uint8Array<ArrayBuffer>);
       totalLength += value.length;
     }
   }
@@ -140,9 +140,9 @@ async function compressBytes(
  * `DecompressionStream`.
  */
 async function decompressBytes(
-  input: Uint8Array,
+  input: Uint8Array<ArrayBuffer>,
   format: CompressionAlgorithm = DEFAULT_COMPRESSION_ALGORITHM,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   if (compressionStreamsAvailable()) {
     const stream = new DecompressionStream(resolveCompressionFormat(format));
     const writer = stream.writable.getWriter();
@@ -154,7 +154,7 @@ async function decompressBytes(
     await writer.write(input as BufferSource);
     await writer.close();
 
-    return await readPromise;
+    return await readPromise as Uint8Array<ArrayBuffer>;
   }
 
   if (format === "gzip") {
@@ -193,7 +193,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 /**
  * Decodes a base64 (URL alphabet) payload into its original bytes.
  */
-function base64ToBytes(base64: string): Uint8Array {
+function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   const fromBase64 = UINT8ARRAY_WITH_BASE64.fromBase64;
   if (typeof fromBase64 === "function") {
     try {
@@ -229,7 +229,7 @@ function fallbackBytesToBase64(bytes: Uint8Array): string {
  * Reconstructs the original bytes from the URL-safe base64 encoding produced
  * by {@link fallbackBytesToBase64}.
  */
-function fallbackBase64ToBytes(base64: string): Uint8Array {
+function fallbackBase64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   const normalized = base64.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
   const binary = atob(padded);

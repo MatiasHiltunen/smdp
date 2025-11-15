@@ -158,9 +158,9 @@ function readUint32LE(view: DataView, offset: number): number {
 }
 
 function inflateRaw(
-  input: Uint8Array,
-  output: Uint8Array,
-): Uint8Array {
+  input: Uint8Array<ArrayBuffer>,
+  output: Uint8Array<ArrayBuffer>,
+): Uint8Array<ArrayBuffer> {
   let inputOffset = 0;
   let bitBuffer = 0;
   let bitLength = 0;
@@ -278,7 +278,7 @@ function inflateRaw(
     }
   }
 
-  return output.subarray(0, outOffset);
+  return output.subarray(0, outOffset) as Uint8Array<ArrayBuffer>;
 
   function buildDynamicTables(): { literal: HuffmanTable; distance: HuffmanTable } {
     const literalCount = readBits(5) + 257;
@@ -406,7 +406,7 @@ function parseGzipHeader(bytes: Uint8Array): number {
   return offset;
 }
 
-export function gzipDecompressFallback(bytes: Uint8Array): Uint8Array {
+export function gzipDecompressFallback(bytes: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
   const dataView = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const trailerOffset = bytes.length - 8;
   if (trailerOffset <= 0) {
