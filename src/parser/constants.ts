@@ -2,128 +2,30 @@
  * Pre-encoded tag/escape constants and styling configuration
  */
 
-// impcort { HtmlArena } from "./arena";
-
 const TE = new TextEncoder();
 
-const enc = (s: string): Uint8Array<ArrayBuffer> => TE.encode(s);
-
-
-const encodeBuffer = new Uint8Array(1024)
-
-function writeIntoBuffer(text:string, u8Arr:Uint8Array<ArrayBuffer>, cursor:[number]){
-
-  const [c] = cursor
-
-  const progress = TE.encodeInto(text, u8Arr.subarray(c))
-  u8Arr.join()
-
-  
-  cursor[0] = c + progress.written
-  
-  return u8Arr.subarray(c, cursor[0])
-  
-}
-
-let cursor: [number] = [0]
-
-// const bqOpen = writeIntoBuffer(  )
-
-// const tag = <T extends string>(start: T, end?:string) => {
-
-
-  
-//   const open = writeIntoBuffer('<' + start + '>', encodeBuffer, cursor)
-//   const close = writeIntoBuffer('</' + (end ?? start) +  '>\n', encodeBuffer, cursor)
-
-//   return {
-//     [`${start}Open`]: open,
-//     [`${start}Close`]: close
-//   }
-
-  
-// }
-
-//
-
-
-
-type Tags = typeof elementTags
-type Tag =  Extract< Tags[keyof Tags], string> //Extract<keyof Tags, string> 
-type Start = `${Tag}Open`
-type Close = `${Tag}Close`
-type TagKeys =  Start | Close
-type TagPair = {
-   [K in TagKeys]: Uint8Array<ArrayBuffer>
-}
-
-
-// type Entry<T> = { [K in keyof T]: [K, T[K]] }[keyof T]
-
-function tag(
-  start: Tag,
-  newLine: boolean = true,
-  end?: string
-): TagPair {
-  const open = writeIntoBuffer(`<${start}>`, encodeBuffer, cursor);
-  const close = writeIntoBuffer(`</${(end ?? start)}>${ newLine ? '\n' : ''}`, encodeBuffer, cursor);
-
-  const pair = {
-    [`${start}Open`]: open,
-    [`${start}Close`]: close,
-  } as TagPair
-
-  return pair
-}
-
-function createTags(htmlTags:Tags): TagPair {
-
-
-  // for(key in htmlTags) tags = {...tags, ...t}
-  
-  const entries = htmlTags.map((t: Tag) => {
-
-    const currentTag: TagPair = tag(t)
-    
-    const entries = Object.entries(currentTag) //as [TagKeys, Uint8Array<ArrayBuffer>][]
-
-    return entries
-  })
-
-  const flattened = entries.flat()
-
-  return Object.fromEntries(flattened) as TagPair
-  
-}
-
-
-// type TTags =  ReturnType<typeof createTags>
-
-const elementTags = [
-  'p',
-  'blockquote',
-  'ul',
-  'ol',
-  'li',
-  'code',
-  'em',
-  'strong',
-  'table',
-  'tr',
-  'td',
-] as const
-
-//type Tags = typeof elementTags
-
-const simpleTags = createTags(elementTags)
-
-
+const enc = (s: string): Uint8Array => TE.encode(s);
 
 export const TAG = {
-  ...simpleTags,
+  pOpen: enc('<p>'),
+  pClose: enc('</p>\n'),
+  bqOpen: enc('<blockquote>\n'),
+  bqClose: enc('</blockquote>\n'),
+  ulOpen: enc('<ul>\n'),
+  ulClose: enc('</ul>\n'),
+  olOpen: enc('<ol>\n'),
+  olClose: enc('</ol>\n'),
+  liOpen: enc('<li>'),
+  liClose: enc('</li>\n'),
   hr: enc('<hr>\n'),
   preCodeOpen: enc('<pre><code>'),
   preCodeClose: enc('</code></pre>\n'),
+  codeOpen: enc('<code>'),
+  codeClose: enc('</code>'),
+  emOpen: enc('<em>'),
+  emClose: enc('</em>'),
+  strongOpen: enc('<strong>'),
+  strongClose: enc('</strong>'),
   aOpenPre: enc('<a href="'),
   aMid: enc('">'),
   aClose: enc('</a>'),
@@ -153,13 +55,19 @@ export const TAG = {
   // expected layout without disturbing golden fixtures.
   br: enc('</br></br>\n'),
   // Table tags
+  tableOpen: enc('<table>\n'),
+  tableClose: enc('</table>\n'),
   theadOpen: enc('<thead>\n<tr>'),
   theadClose: enc('</tr>\n</thead>\n<tbody>\n'),
   tbodyClose: enc('</tbody>\n'),
+  trOpen: enc('<tr>'),
+  trClose: enc('</tr>\n'),
   thLeft: enc('<th style="text-align:left">'),
   thCenter: enc('<th style="text-align:center">'),
   thRight: enc('<th style="text-align:right">'),
   thClose: enc('</th>'),
+  tdOpen: enc('<td>'),
+  tdClose: enc('</td>'),
   // Info block tags
   infoBlockInfo: enc('<div class="info-block info">'),
   infoBlockWarning: enc('<div class="info-block warning">'),
@@ -172,12 +80,8 @@ export const TAG = {
   gt: enc('&gt;'),
   quot: enc('&quot;'),
   apos: enc('&#39;'),
-} as const
+} as const;
 
-
-
-
-  
 export const FONT_SIZE = {
   base: 14,
   code: 13,

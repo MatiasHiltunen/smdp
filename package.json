@@ -10,7 +10,7 @@
     "test": "tsx --test tests/**/*.test.ts",
     "test:golden": "tsx --test tests/parser.golden.test.ts",
     "test:property": "tsx --test tests/parser.property.test.ts",
-    "test:bench": "tsx --test tests/bench.test.ts",
+    "test:bench": "SMDP_WRITE_BENCH=1 tsx --test tests/bench.test.ts",
     "test:watch": "tsx --test --watch tests/**/*.test.ts",
     "test:e2e": "playwright test",
     "precompile": "tsx scripts/precompile-languages.ts"

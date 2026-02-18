@@ -3,6 +3,7 @@ import test, { after, describe, it } from 'node:test';
 import { readdirSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 const currentHead = execSync('git rev-parse --short HEAD');
+const shouldWriteBenchResults = process.env.SMDP_WRITE_BENCH === '1';
 
 interface BenchmarkResult {
   name: string;
@@ -358,6 +359,7 @@ test('benchmark: memory usage', async () => {
 
 describe('results', async () => {
   after(() => {
+    if (!shouldWriteBenchResults) return;
 
     const benchDir = './bench';
     const files = readdirSync(benchDir)
