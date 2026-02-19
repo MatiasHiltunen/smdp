@@ -3,7 +3,7 @@
  * Uses Uint8Array for efficient byte-level operations
  */
 
-import { TAG, TD } from './constants';
+import { TAG, TD, TE } from './constants';
 
 export class HtmlArena {
   private buf: ArrayBuffer;
@@ -85,10 +85,19 @@ console.log(view2[7]); // 4 */
     let o = p;
     
     for (let i = 0; i < n; i++) {
-      view[o++] = str.charCodeAt(i) & 0xff;
+      const code = str.charCodeAt(i);
+      if (code > 0x7f) {
+        throw new Error('writeAscii only accepts ASCII input; use writeUtf8 for non-ASCII text');
+      }
+      view[o++] = code;
     }
     
     this.len = o;
+  }
+
+  writeUtf8(str: string): void {
+    if (!str) return;
+    this.writeBytes(TE.encode(str));
   }
 
   /**
@@ -133,4 +142,3 @@ console.log(view2[7]); // 4 */
 /*     return this.buf.subarray(0, this.len); */
   }
 }
-

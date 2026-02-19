@@ -28,6 +28,13 @@ Experimental byte-oriented client-side Markdown parser and renderer. This page i
 - Relative links and images are rewritten against the source document, so `/assets/logo.png` still points to the remote origin that hosted the Markdown.
 - Toggle between dark and light UI with the moon/sun button in the lower corner; the choice is stored locally for later visits.
 
+### Book Mode (GitHub Chapters)
+- Use `/book/<entry-url>` when your entry markdown links to other markdown chapters.
+- GitHub links like `https://github.com/<owner>/<repo>/blob/<ref>/docs/chapter-1.md` are normalized to `raw.githubusercontent.com` automatically.
+- Relative chapter links continue to work because each chapter is resolved against its own source URL.
+- Chapters are discovered from links and prefetched in the background; clicking chapter links keeps navigation inside the app.
+- Deep links keep the selected chapter in `?part=<chapter-url>`, so shared links reopen the same chapter.
+
 ## Where We're Still Improving
 - Canvas output needs more accessibility affordances (narration and focus states).
 - Table alignment is solid, yet edge cases with deeply nested tables still fail occasionally.

@@ -61,13 +61,46 @@ function enableRealtimeUpdates(
   apply: (bytes: Uint8Array, baseUrl?: string) => Promise<void>,
   resolveBaseUrl: () => string | undefined,
 ): void {
-  view.textarea.addEventListener("input", (event) => {
-    const value = (event.target as HTMLTextAreaElement).value;
-    const bytes = u8(value);
-    const baseUrl = resolveBaseUrl();
-    void apply(bytes, baseUrl).catch((error) => {
+  const DEBOUNCE_MS = 80;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let renderInFlight = false;
+  let rerenderRequested = false;
+
+  const runRender = async (): Promise<void> => {
+    if (renderInFlight) {
+      rerenderRequested = true;
+      return;
+    }
+
+    renderInFlight = true;
+    try {
+      do {
+        rerenderRequested = false;
+        const value = view.textarea.value;
+        const bytes = u8(value);
+        const baseUrl = resolveBaseUrl();
+        await apply(bytes, baseUrl);
+      } while (rerenderRequested);
+    } catch (error) {
       console.error("Failed to update preview", error);
-    });
+    } finally {
+      renderInFlight = false;
+    }
+  };
+
+  const scheduleRender = (): void => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void runRender();
+    }, DEBOUNCE_MS);
+  };
+
+  view.textarea.addEventListener("input", () => {
+    rerenderRequested = true;
+    scheduleRender();
   });
 }
 

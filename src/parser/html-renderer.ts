@@ -3,13 +3,17 @@
  */
 
 import { HtmlArena } from './arena';
-import { TAG, TE } from './constants';
+import { TAG, TD, TE } from './constants';
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import type { ListStackItem } from './types';
 import { highlightCodeBlock } from '../highlight';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
+
+function decodeSpan(u8: Uint8Array, s: number, e: number): string {
+  return TD.decode(u8.subarray(s, e));
+}
 
 /**
  * Renders inline tokens to HTML
@@ -40,7 +44,7 @@ function renderInline(
         out.writeBytes(TAG.imgPre);
         out.writeEscaped(u8, tok.altS, tok.altE);
         out.writeBytes(TAG.imgMid);
-        const srcText = new TextDecoder().decode(u8.subarray(tok.srcS, tok.srcE));
+        const srcText = decodeSpan(u8, tok.srcS, tok.srcE);
         if (urlAllowlist(srcText)) {
           const resolvedSrc = resolveUrlRelativeToBase(srcText, baseUrl);
           if (resolvedSrc !== srcText) {
@@ -55,7 +59,7 @@ function renderInline(
       }
 
       case 'link': {
-        const hrefText = new TextDecoder().decode(u8.subarray(tok.hrefS, tok.hrefE));
+        const hrefText = decodeSpan(u8, tok.hrefS, tok.hrefE);
         const allowed = urlAllowlist(hrefText);
         if (allowed) {
           out.writeBytes(TAG.aOpenPre);
@@ -91,7 +95,9 @@ function renderInline(
         // Build effective href span including implicit protocol for www
         const hrefStart = tok.s - (tok.isWww ? 0 : 0);
         const hrefEnd = tok.e;
-        const hrefText = tok.isWww ? 'https://' + new TextDecoder().decode(u8.subarray(tok.s, tok.e)) : new TextDecoder().decode(u8.subarray(hrefStart, hrefEnd));
+        const hrefText = tok.isWww
+          ? 'https://' + decodeSpan(u8, tok.s, tok.e)
+          : decodeSpan(u8, hrefStart, hrefEnd);
         if (tok.isWww) {
           // Only allow if http(s) when prefixed; we synthesize https://www...
           out.writeBytes(TAG.aOpenPre);
@@ -387,7 +393,9 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
       renderInline(u8, fn.contentS, fn.contentE, out, options);
       out.writeAscii(' <a href="#fnref-');
       out.writeEscaped(u8, fn.idS, fn.idE);
-      out.writeAscii('" class="footnote-backref">↩</a></li>');
+      out.writeAscii('" class="footnote-backref">');
+      out.writeUtf8('↩');
+      out.writeAscii('</a></li>');
     }
     out.writeAscii('</ol></div>');
   }

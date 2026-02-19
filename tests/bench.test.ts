@@ -29,12 +29,12 @@ function writeResultsToFile(filename: string, results: BenchmarkResult[]) {
 let results : BenchmarkResult[] = [];
 
 // Simple benchmark runner
-function runBenchmark(name: string, fn: () => void | Promise<void>, iterations: number = 1000): BenchmarkResult {
+async function runBenchmark(name: string, fn: () => void | Promise<void>, iterations: number = 1000): Promise<BenchmarkResult> {
   const startTime = performance.now();
   let ops = 0;
 
   for (let i = 0; i < iterations; i++) {
-    fn();
+    await fn();
     ops++;
   }
 
@@ -165,17 +165,17 @@ This large document contains approximately 1000 lines of Markdown content with v
   const parser = new MDParser();
 
   // Benchmark small document
-  const smallResult = runBenchmark('Small document parse', async () => {
+  const smallResult = await runBenchmark('Small document parse', async () => {
     await parser.parse(u8(smallDoc), {});
   }, 1000);
 
   // Benchmark medium document
-  const mediumResult = runBenchmark('Medium document parse', async () => {
+  const mediumResult = await runBenchmark('Medium document parse', async () => {
     await parser.parse(u8(mediumDoc), {});
   }, 100);
 
   // Benchmark large document
-  const largeResult = runBenchmark('Large document parse', async () => {
+  const largeResult = await runBenchmark('Large document parse', async () => {
     await parser.parse(u8(largeDoc), {});
   }, 10);
 
@@ -228,18 +228,18 @@ console.log(instance.method2());
   };
 
   // Benchmark small code
-  const smallResult = runBenchmark('Small code highlight', () => {
-    highlightCodeBlock(new TextEncoder().encode(codeSamples.small), 'js');
+  const smallResult = await runBenchmark('Small code highlight', async () => {
+    await highlightCodeBlock(new TextEncoder().encode(codeSamples.small), 'js');
   }, 1000);
 
   // Benchmark medium code
-  const mediumResult = runBenchmark('Medium code highlight', () => {
-    highlightCodeBlock(new TextEncoder().encode(codeSamples.medium), 'javascript');
+  const mediumResult = await runBenchmark('Medium code highlight', async () => {
+    await highlightCodeBlock(new TextEncoder().encode(codeSamples.medium), 'javascript');
   }, 100);
 
   // Benchmark large code
-  const largeResult = runBenchmark('Large code highlight', () => {
-    highlightCodeBlock(new TextEncoder().encode(codeSamples.large), 'js');
+  const largeResult = await runBenchmark('Large code highlight', async () => {
+    await highlightCodeBlock(new TextEncoder().encode(codeSamples.large), 'js');
   }, 10);
 
   return { smallResult, mediumResult, largeResult };
@@ -257,23 +257,23 @@ async function benchmarkInlineParsing() {
   };
 
   // Benchmark simple inline
-  const simpleResult = runBenchmark('Simple inline parse', () => {
-    const tokens = Array.from(inlineTokens(u8(inlineSamples.simple), 0, inlineSamples.simple.length));
+  const simpleResult = await runBenchmark('Simple inline parse', () => {
+    Array.from(inlineTokens(u8(inlineSamples.simple), 0, inlineSamples.simple.length));
   }, 10000);
 
   // Benchmark complex inline
-  const complexResult = runBenchmark('Complex inline parse', () => {
-    const tokens = Array.from(inlineTokens(u8(inlineSamples.complex), 0, inlineSamples.complex.length));
+  const complexResult = await runBenchmark('Complex inline parse', () => {
+    Array.from(inlineTokens(u8(inlineSamples.complex), 0, inlineSamples.complex.length));
   }, 1000);
 
   // Benchmark nested inline
-  const nestedResult = runBenchmark('Nested inline parse', () => {
-    const tokens = Array.from(inlineTokens(u8(inlineSamples.nested), 0, inlineSamples.nested.length));
+  const nestedResult = await runBenchmark('Nested inline parse', () => {
+    Array.from(inlineTokens(u8(inlineSamples.nested), 0, inlineSamples.nested.length));
   }, 1000);
 
   // Benchmark long inline
-  const longResult = runBenchmark('Long inline parse', () => {
-    const tokens = Array.from(inlineTokens(u8(inlineSamples.long), 0, inlineSamples.long.length));
+  const longResult = await runBenchmark('Long inline parse', () => {
+    Array.from(inlineTokens(u8(inlineSamples.long), 0, inlineSamples.long.length));
   }, 100);
 
   return { simpleResult, complexResult, nestedResult, longResult };
