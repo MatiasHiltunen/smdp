@@ -79,8 +79,8 @@ End of content`;
 <p>Blockquote here</p>
 </blockquote>
 <hr>
-<p><a href="https://example.com">Link text</a></br></br>
-<img alt="Alt text" src="https://example.com/image.png"></br></br>
+<p><a href="https://example.com">Link text</a>
+<img alt="Alt text" src="https://example.com/image.png">
 <del>Strikethrough text</del></p>
 <ul>
 <li><input type="checkbox" disabled> Task list item (unchecked)
@@ -201,11 +201,11 @@ test("golden: URL allowlist", async () => {
 [Protocol-relative link](//example.com/path)
 `;
 
-  const expected = `<p><a href="http://example.com">Valid HTTP link</a></br></br>
-<a href="https://example.com">Valid HTTPS link</a></br></br>
-<a href="mailto:test@example.com">Valid mailto link</a></br></br>
-Invalid javascript link)</br></br>
-<a href="relative/path">Relative link</a></br></br>
+  const expected = `<p><a href="http://example.com">Valid HTTP link</a>
+<a href="https://example.com">Valid HTTPS link</a>
+<a href="mailto:test@example.com">Valid mailto link</a>
+Invalid javascript link)
+<a href="relative/path">Relative link</a>
 <a href="//example.com/path">Protocol-relative link</a></p>`;
 
   const actual = await renderMarkdownToHtml(markdown.trim());
