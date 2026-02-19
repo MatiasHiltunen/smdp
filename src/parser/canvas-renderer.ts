@@ -20,6 +20,72 @@ const MARKER_GAP = 8;
 const BULLET_RADIUS = 3;
 const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
 const MAX_IMAGE_WIDTH = 700; // max width for images in px
+const RAW_HTML_ATTR_RE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+
+type RawHtmlTag = {
+  name: string;
+  closing: boolean;
+  selfClosing: boolean;
+  attrs: Map<string, string>;
+};
+
+function decodeHtmlEntities(text: string): string {
+  return text.replaceAll(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (m, body: string) => {
+    const lower = body.toLowerCase();
+    if (lower === 'amp') return '&';
+    if (lower === 'lt') return '<';
+    if (lower === 'gt') return '>';
+    if (lower === 'quot') return '"';
+    if (lower === 'apos') return "'";
+    if (lower.startsWith('#x')) {
+      const cp = Number.parseInt(lower.slice(2), 16);
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : m;
+    }
+    if (lower.startsWith('#')) {
+      const cp = Number.parseInt(lower.slice(1), 10);
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : m;
+    }
+    return m;
+  });
+}
+
+function parseRawHtmlTag(rawTag: string): RawHtmlTag | null {
+  const tag = rawTag.trim();
+  if (!tag.startsWith('<') || !tag.endsWith('>') || tag.startsWith('<!--')) {
+    return null;
+  }
+
+  let inner = tag.slice(1, -1).trim();
+  if (!inner) return null;
+
+  let closing = false;
+  if (inner.startsWith('/')) {
+    closing = true;
+    inner = inner.slice(1).trim();
+  }
+
+  let selfClosing = false;
+  if (inner.endsWith('/')) {
+    selfClosing = true;
+    inner = inner.slice(0, -1).trim();
+  }
+
+  const tagNameMatch = /^([a-zA-Z][a-zA-Z0-9:-]*)/.exec(inner);
+  if (!tagNameMatch) return null;
+  const name = tagNameMatch[1].toLowerCase();
+  const attrText = inner.slice(tagNameMatch[0].length);
+  const attrs = new Map<string, string>();
+
+  RAW_HTML_ATTR_RE.lastIndex = 0;
+  for (const match of attrText.matchAll(RAW_HTML_ATTR_RE)) {
+    const attrName = match[1].toLowerCase();
+    if (!attrName) continue;
+    const value = match[2] ?? match[3] ?? match[4] ?? '';
+    attrs.set(attrName, value);
+  }
+
+  return { name, closing, selfClosing, attrs };
+}
 
 // Font string cache for common font combinations
 const fontCache = new Map<string, string>();
@@ -476,6 +542,7 @@ function drawInline(
   urlAllowlist?: (url: string) => boolean,
   baseUrl?: string,
   allowRawHtml: boolean = false,
+  decodeEntities: boolean = false,
 ): DrawResult {
   const allowlist = urlAllowlist ?? defaultUrlAllowlist;
   let currentX = x;
@@ -615,6 +682,93 @@ function drawInline(
     }
   };
 
+  const rawTagStack: string[] = [];
+
+  const pushRawStyle = (kind: string, style: Partial<TextStyle>): void => {
+    pushStyle(style);
+    rawTagStack.push(kind);
+  };
+
+  const popRawStyle = (kind: string): void => {
+    const top = rawTagStack[rawTagStack.length - 1];
+    if (top === kind) {
+      rawTagStack.pop();
+      popStyle();
+    }
+  };
+
+  const renderInlineImage = (rawSrc: string, altText: string): void => {
+    const src = resolveUrlRelativeToBase(rawSrc, baseUrl);
+    if (!allowlist(src)) {
+      pushStyle({ code: true, color: themeColors.textSecondary });
+      addText(`[Blocked image: ${altText || src}]`);
+      popStyle();
+      if (line.length) flushLine();
+      return;
+    }
+
+    // Flush current line before image
+    if (line.length) flushLine();
+
+    // Always try to load/get cached image to start loading
+    // Even during measure pass, we want to initiate the fetch
+    const cachedImg = loadImage(src, onImageLoad || (() => {}));
+
+    if (cachedImg && cachedImg.status === 'loaded') {
+      // Calculate display dimensions maintaining aspect ratio
+      const naturalWidth = cachedImg.width;
+      const naturalHeight = cachedImg.height;
+      const displayWidth = Math.min(naturalWidth, maxWidth, MAX_IMAGE_WIDTH);
+      const displayHeight = (displayWidth / naturalWidth) * naturalHeight;
+
+      if (!isMeasure) {
+        // Draw image with high quality
+        const prevSmoothing = ctx.imageSmoothingEnabled;
+        const prevQuality = ctx.imageSmoothingQuality;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        try {
+          ctx.drawImage(cachedImg.img, x, currentY, displayWidth, displayHeight);
+        } catch {
+          // If drawing fails (CORS, etc), show fallback
+          ctx.fillStyle = themeColors.border;
+          ctx.fillRect(x, currentY, displayWidth, displayHeight);
+          ctx.fillStyle = themeColors.textSecondary;
+          ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
+          ctx.fillText(`[Image: ${altText || src}]`, x + 10, currentY + 20);
+        }
+
+        ctx.imageSmoothingEnabled = prevSmoothing;
+        ctx.imageSmoothingQuality = prevQuality;
+      }
+
+      currentY += displayHeight + FONT_SIZE.base * 0.5; // Add spacing after image
+    } else if (cachedImg && cachedImg.status === 'error') {
+      // Show error message
+      pushStyle({ code: true, color: themeColors.textSecondary });
+      addText(`[Image failed to load: ${altText || src}]`);
+      popStyle();
+      if (line.length) flushLine();
+    } else {
+      // Loading... use consistent placeholder dimensions for both measure and draw
+      // Use a reasonable default based on typical image aspect ratios (4:3)
+      const placeholderWidth = Math.min(maxWidth, MAX_IMAGE_WIDTH);
+      const placeholderHeight = (placeholderWidth * 3) / 4; // 4:3 aspect ratio
+
+      if (!isMeasure) {
+        ctx.fillStyle = themeColors.bgSecondary;
+        ctx.fillRect(x, currentY, placeholderWidth, placeholderHeight);
+        ctx.fillStyle = themeColors.textSecondary;
+        ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
+        ctx.fillText(`Loading: ${altText || src}`, x + 10, currentY + placeholderHeight / 2);
+      }
+      currentY += placeholderHeight + FONT_SIZE.base * 0.5;
+    }
+
+    currentX = x; // Reset x after image
+  };
+
   const findBreak = (text: string, start: number, maxW: number): number => {
     if (GRAPHEME_SEGMENTER) {
       let lastOk = start;
@@ -714,9 +868,11 @@ function drawInline(
   for (const tok of inlineTokens(u8, s, e, inlineParseOptions)) {
     updateCtx();
     switch (tok.kind) {
-      case 'text':
-        addText(TD.decode(u8.subarray(tok.s, tok.e)));
+      case 'text': {
+        const text = TD.decode(u8.subarray(tok.s, tok.e));
+        addText(decodeEntities ? decodeHtmlEntities(text) : text);
         break;
+      }
 
       case 'code': {
         const codeText = TD.decode(u8.subarray(tok.s, tok.e));
@@ -733,75 +889,7 @@ function drawInline(
       case 'img': {
         const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
         const rawSrc = TD.decode(u8.subarray(tok.srcS, tok.srcE));
-        const src = resolveUrlRelativeToBase(rawSrc, baseUrl);
-        if (!allowlist(src)) {
-          pushStyle({ code: true, color: themeColors.textSecondary });
-          addText(`[Blocked image: ${altText || src}]`);
-          popStyle();
-          if (line.length) flushLine();
-          break;
-        }
-        
-        // Flush current line before image
-        if (line.length) flushLine();
-        
-        // Always try to load/get cached image to start loading
-        // Even during measure pass, we want to initiate the fetch
-        const cachedImg = loadImage(src, onImageLoad || (() => {}));
-        
-        if (cachedImg && cachedImg.status === 'loaded') {
-          // Calculate display dimensions maintaining aspect ratio
-          const naturalWidth = cachedImg.width;
-          const naturalHeight = cachedImg.height;
-          const displayWidth = Math.min(naturalWidth, maxWidth, MAX_IMAGE_WIDTH);
-          const displayHeight = (displayWidth / naturalWidth) * naturalHeight;
-          
-          if (!isMeasure) {
-            // Draw image with high quality
-            const prevSmoothing = ctx.imageSmoothingEnabled;
-            const prevQuality = ctx.imageSmoothingQuality;
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            
-            try {
-              ctx.drawImage(cachedImg.img, x, currentY, displayWidth, displayHeight);
-            } catch (err) {
-              // If drawing fails (CORS, etc), show fallback
-              ctx.fillStyle = themeColors.border;
-              ctx.fillRect(x, currentY, displayWidth, displayHeight);
-              ctx.fillStyle = themeColors.textSecondary;
-          ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
-              ctx.fillText(`[Image: ${altText || src}]`, x + 10, currentY + 20);
-            }
-            
-            ctx.imageSmoothingEnabled = prevSmoothing;
-            ctx.imageSmoothingQuality = prevQuality;
-          }
-          
-          currentY += displayHeight + FONT_SIZE.base * 0.5; // Add spacing after image
-        } else if (cachedImg && cachedImg.status === 'error') {
-          // Show error message
-          pushStyle({ code: true, color: themeColors.textSecondary });
-          addText(`[Image failed to load: ${altText || src}]`);
-          popStyle();
-          if (line.length) flushLine();
-        } else {
-          // Loading... use consistent placeholder dimensions for both measure and draw
-          // Use a reasonable default based on typical image aspect ratios (4:3)
-          const placeholderWidth = Math.min(maxWidth, MAX_IMAGE_WIDTH);
-          const placeholderHeight = (placeholderWidth * 3) / 4; // 4:3 aspect ratio
-          
-          if (!isMeasure) {
-            ctx.fillStyle = themeColors.bgSecondary;
-            ctx.fillRect(x, currentY, placeholderWidth, placeholderHeight);
-            ctx.fillStyle = themeColors.textSecondary;
-        ctx.font = FONT_SIZE.base + 'px ' + FONT_STACK;
-            ctx.fillText(`Loading: ${altText || src}`, x + 10, currentY + placeholderHeight / 2);
-          }
-          currentY += placeholderHeight + FONT_SIZE.base * 0.5;
-        }
-        
-        currentX = x; // Reset x after image
+        renderInlineImage(rawSrc, altText);
         break;
       }
 
@@ -829,15 +917,70 @@ function drawInline(
 
       case 'rawHtml': {
         if (!allowRawHtml) break;
-        const raw = TD.decode(u8.subarray(tok.s, tok.e));
-        const match = /^<\s*\/?\s*([a-zA-Z][a-zA-Z0-9:-]*)/.exec(raw);
-        const tagName = match ? match[1].toLowerCase() : "";
+        const rawTag = parseRawHtmlTag(TD.decode(u8.subarray(tok.s, tok.e)));
+        if (!rawTag) break;
+        const tagName = rawTag.name;
+        const styleTag = (
+          tagName === 'strong' || tagName === 'b' ? 'strong' :
+          tagName === 'em' || tagName === 'i' ? 'em' :
+          tagName === 'code' ? 'code' :
+          tagName === 'del' || tagName === 's' ? 'strike' :
+          tagName === 'a' ? 'a' :
+          tagName === 'small' ? 'small' :
+          tagName === 'sup' ? 'sup' :
+          tagName === 'sub' ? 'sub' :
+          null
+        );
+
+        if (rawTag.closing) {
+          if (styleTag) {
+            popRawStyle(styleTag);
+          }
+          break;
+        }
+
         if (tagName === 'br') {
           if (line.length) {
             flushLine();
           } else {
             currentY += (currentStyle.size || FONT_SIZE.base) * LINE_HEIGHT_MULTIPLIER;
             currentX = x;
+          }
+          break;
+        }
+
+        if (tagName === 'img') {
+          const rawSrc = rawTag.attrs.get('src') ?? '';
+          if (rawSrc) {
+            const altText = rawTag.attrs.get('alt') ?? '';
+            renderInlineImage(rawSrc, altText);
+          }
+          break;
+        }
+
+        if (styleTag) {
+          if (styleTag === 'strong') {
+            pushRawStyle(styleTag, { bold: true });
+          } else if (styleTag === 'em') {
+            pushRawStyle(styleTag, { italic: true });
+          } else if (styleTag === 'code') {
+            const surroundingSize = currentStyle.size || FONT_SIZE.base;
+            const codeSize = Math.round(surroundingSize * 0.9);
+            pushRawStyle(styleTag, { code: true, color: themeColors.inlineCodeText, size: codeSize });
+          } else if (styleTag === 'strike') {
+            pushRawStyle(styleTag, { strike: true });
+          } else if (styleTag === 'a') {
+            pushRawStyle(styleTag, { link: true, color: themeColors.link });
+          } else if (styleTag === 'small') {
+            const size = Math.max(10, Math.round((currentStyle.size || FONT_SIZE.base) * 0.9));
+            pushRawStyle(styleTag, { size });
+          } else if (styleTag === 'sup' || styleTag === 'sub') {
+            const size = Math.max(9, Math.round((currentStyle.size || FONT_SIZE.base) * 0.75));
+            pushRawStyle(styleTag, { size });
+          }
+
+          if (rawTag.selfClosing) {
+            popRawStyle(styleTag);
           }
         }
         break;
@@ -1014,6 +1157,7 @@ function renderCanvas(
           urlAllowlist,
           baseUrl,
           parserOptions.allowRawHtml === true,
+          true,
         );
         y = hRes.y;
         if (!isMeasure && (level === 0 || level === 1)) {
@@ -1101,6 +1245,7 @@ function renderCanvas(
           urlAllowlist,
           baseUrl,
           parserOptions.allowRawHtml === true,
+          true,
         );
         y = liRes.y + baseSize * 0.8;
         break;
