@@ -55,8 +55,12 @@ function applyMarkdownToCanvas(
   view: CanvasView,
   bytes: Uint8Array,
   baseUrl?: string,
+  allowRawHtml: boolean = false,
 ): void {
-  const overrides = baseUrl ? { baseUrl } : undefined;
+  const overrides = {
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+    ...(allowRawHtml ? { allowRawHtml: true } : {}),
+  };
   parser.renderToCanvas(bytes, view.canvas, overrides);
 }
 
@@ -189,7 +193,7 @@ async function init(): Promise<void> {
   }
 
   const route = parseRoute();
-  const allowRawHtml = route.bookEntryUrl !== null;
+  const allowRawHtml = route.bookEntryUrl !== null || route.mode === "canvas";
 
   let view: HtmlView | CanvasView;
   let apply: (bytes: Uint8Array, baseUrl?: string, allowRawHtml?: boolean) => Promise<void>;
@@ -198,8 +202,13 @@ async function init(): Promise<void> {
   if (route.mode === "canvas") {
     const canvasView = createCanvasView();
     view = canvasView;
-    apply = async (bytes, baseUrl) => {
-      applyMarkdownToCanvas(canvasView, bytes, baseUrl);
+    apply = async (bytes, baseUrl, allowRawHtmlOverride) => {
+      applyMarkdownToCanvas(
+        canvasView,
+        bytes,
+        baseUrl,
+        allowRawHtmlOverride ?? false,
+      );
     };
   } else {
     const htmlView = createHtmlView();

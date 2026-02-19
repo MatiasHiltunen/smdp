@@ -475,6 +475,7 @@ function drawInline(
   onImageLoad?: () => void,
   urlAllowlist?: (url: string) => boolean,
   baseUrl?: string,
+  allowRawHtml: boolean = false,
 ): DrawResult {
   const allowlist = urlAllowlist ?? defaultUrlAllowlist;
   let currentX = x;
@@ -709,7 +710,8 @@ function drawInline(
     }
   };
 
-  for (const tok of inlineTokens(u8, s, e)) {
+  const inlineParseOptions = allowRawHtml ? { allowRawHtml: true } : undefined;
+  for (const tok of inlineTokens(u8, s, e, inlineParseOptions)) {
     updateCtx();
     switch (tok.kind) {
       case 'text':
@@ -825,6 +827,22 @@ function drawInline(
         popStyle();
         break;
 
+      case 'rawHtml': {
+        if (!allowRawHtml) break;
+        const raw = TD.decode(u8.subarray(tok.s, tok.e));
+        const match = /^<\s*\/?\s*([a-zA-Z][a-zA-Z0-9:-]*)/.exec(raw);
+        const tagName = match ? match[1].toLowerCase() : "";
+        if (tagName === 'br') {
+          if (line.length) {
+            flushLine();
+          } else {
+            currentY += (currentStyle.size || FONT_SIZE.base) * LINE_HEIGHT_MULTIPLIER;
+            currentX = x;
+          }
+        }
+        break;
+      }
+
       case 'emOpen':
         pushStyle({ italic: true });
         break;
@@ -925,7 +943,8 @@ function renderCanvas(
     }
   };
 
-  for (const ev of blocks(u8)) {
+  const blockParseOptions = parserOptions.allowRawHtml ? { allowRawHtml: true } : undefined;
+  for (const ev of blocks(u8, blockParseOptions)) {
     switch (ev.type) {
       case 'bqOpen':
         closePara();
@@ -994,6 +1013,7 @@ function renderCanvas(
           opts.onImageLoad,
           urlAllowlist,
           baseUrl,
+          parserOptions.allowRawHtml === true,
         );
         y = hRes.y;
         if (!isMeasure && (level === 0 || level === 1)) {
@@ -1080,6 +1100,7 @@ function renderCanvas(
           opts.onImageLoad,
           urlAllowlist,
           baseUrl,
+          parserOptions.allowRawHtml === true,
         );
         y = liRes.y + baseSize * 0.8;
         break;
@@ -1126,9 +1147,37 @@ function renderCanvas(
           opts.onImageLoad,
           urlAllowlist,
           baseUrl,
+          parserOptions.allowRawHtml === true,
         );
         currentX = pRes.x;
         y = pRes.y;
+        break;
+      }
+
+      case 'rawHtmlLine': {
+        closePara();
+        closeListsAll();
+        const baseSize = FONT_SIZE.base;
+        const textStart = MARGIN + indent;
+        const beforeY = y;
+        const rawRes = drawInline(
+          u8,
+          ev.s,
+          ev.e,
+          ctx,
+          textStart,
+          y,
+          maxWidth - indent,
+          isMeasure,
+          { size: baseSize, color: themeColors.text },
+          opts.onImageLoad,
+          urlAllowlist,
+          baseUrl,
+          parserOptions.allowRawHtml === true,
+        );
+        if (rawRes.y > beforeY) {
+          y = rawRes.y;
+        }
         break;
       }
 

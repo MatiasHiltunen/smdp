@@ -15,6 +15,11 @@ function decodeSpan(u8: Uint8Array, s: number, e: number): string {
   return TD.decode(u8.subarray(s, e));
 }
 
+function isAsciiAlpha(byte: number): boolean {
+  const lower = byte | 32;
+  return lower >= 0x61 && lower <= 0x7a;
+}
+
 type RawHtmlState = {
   suppressedTag: 'script' | 'style' | null;
 };
@@ -37,10 +42,20 @@ const ALLOWED_RAW_HTML_TAGS = new Set([
   'strong',
   'sub',
   'sup',
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'tr',
+  'th',
+  'td',
+  'caption',
+  'colgroup',
+  'col',
   'u',
 ]);
 
-const VOID_RAW_HTML_TAGS = new Set(['br', 'img']);
+const VOID_RAW_HTML_TAGS = new Set(['br', 'img', 'col']);
 
 const GLOBAL_ALLOWED_ATTRS = new Set([
   'class',
@@ -60,6 +75,9 @@ const IMG_ALLOWED_ATTRS = new Set([
   'height',
   'loading',
 ]);
+const TABLE_CELL_ALLOWED_ATTRS = new Set(['rowspan', 'colspan', 'scope']);
+const COLGROUP_ALLOWED_ATTRS = new Set(['span']);
+const COL_ALLOWED_ATTRS = new Set(['span']);
 
 const ATTR_RE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
@@ -76,6 +94,9 @@ function isAttrAllowed(tagName: string, attrName: string): boolean {
   if (GLOBAL_ALLOWED_ATTRS.has(attrName)) return true;
   if (tagName === 'a') return A_ALLOWED_ATTRS.has(attrName);
   if (tagName === 'img') return IMG_ALLOWED_ATTRS.has(attrName);
+  if (tagName === 'th' || tagName === 'td') return TABLE_CELL_ALLOWED_ATTRS.has(attrName);
+  if (tagName === 'colgroup') return COLGROUP_ALLOWED_ATTRS.has(attrName);
+  if (tagName === 'col') return COL_ALLOWED_ATTRS.has(attrName);
   return false;
 }
 
@@ -191,6 +212,87 @@ function sanitizeRawHtmlTag(
     return `<${tagName}${attrSuffix}>`;
   }
   return `<${tagName}${attrSuffix}>`;
+}
+
+function writeEscapedHtmlTextInRawContext(
+  out: HtmlArena,
+  bytes: Uint8Array,
+  s: number,
+  e: number,
+): void {
+  let start = s;
+
+  for (let i = s; i < e; i++) {
+    const c = bytes[i];
+    if (c === 0x3c || c === 0x3e || c === 0x22 || c === 0x27) {
+      if (i > start) {
+        out.writeBytes(bytes.subarray(start, i));
+      }
+      if (c === 0x3c) out.writeBytes(TAG.lt); // <
+      else if (c === 0x3e) out.writeBytes(TAG.gt); // >
+      else if (c === 0x22) out.writeBytes(TAG.quot); // "
+      else out.writeBytes(TAG.apos); // '
+      start = i + 1;
+    }
+  }
+
+  if (start < e) {
+    out.writeBytes(bytes.subarray(start, e));
+  }
+}
+
+function renderRawHtmlLine(
+  u8: Uint8Array,
+  s: number,
+  e: number,
+  out: HtmlArena,
+  options: ParserOptions,
+  rawHtmlState: RawHtmlState,
+): void {
+  if (!options.allowRawHtml) {
+    out.writeEscaped(u8, s, e);
+    return;
+  }
+
+  const urlAllowlist = options.urlAllowlist ?? defaultUrlAllowlist;
+  const baseUrl = options.baseUrl;
+
+  let i = s;
+  let textStart = s;
+  while (i < e) {
+    if (u8[i] === 0x3c && i + 2 < e) { // <
+      let probe = i + 1;
+      if (u8[probe] === 0x2f) probe++; // optional /
+      const first = probe < e ? u8[probe] : 0;
+      if (isAsciiAlpha(first) || first === 0x21) {
+        let close = probe + 1;
+        while (close < e && u8[close] !== 0x3e) close++; // >
+        if (close < e) {
+          if (i > textStart) {
+            writeEscapedHtmlTextInRawContext(out, u8, textStart, i);
+          }
+          const rawTag = decodeSpan(u8, i, close + 1);
+          const sanitizedTag = sanitizeRawHtmlTag(
+            rawTag,
+            urlAllowlist,
+            baseUrl,
+            rawHtmlState,
+          );
+          if (sanitizedTag) {
+            out.writeUtf8(sanitizedTag);
+          }
+          i = close + 1;
+          textStart = i;
+          continue;
+        }
+      }
+    }
+    i++;
+  }
+
+  if (textStart < e) {
+    writeEscapedHtmlTextInRawContext(out, u8, textStart, e);
+  }
 }
 
 /**
@@ -402,7 +504,8 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
     top.liOpen = true;
   };
 
-  for (const ev of blocks(u8)) {
+  const blockParseOptions = options.allowRawHtml ? { allowRawHtml: true } : undefined;
+  for (const ev of blocks(u8, blockParseOptions)) {
     switch (ev.type) {
       case 'bqOpen':
         closePara();
@@ -468,6 +571,13 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
           out.writeBytes(TAG.br);
         }
         renderInline(u8, ev.s, ev.e, out, options, rawHtmlState);
+        break;
+
+      case 'rawHtmlLine':
+        closePara();
+        closeListsAll();
+        renderRawHtmlLine(u8, ev.s, ev.e, out, options, rawHtmlState);
+        out.writeBytes(TAG.lf);
         break;
 
       case 'codeOpen':

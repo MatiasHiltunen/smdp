@@ -67,3 +67,32 @@ test("raw html target blank links always enforce noopener noreferrer", async () 
   assert.ok(html.includes('rel="noopener noreferrer"'));
   assert.ok(!html.includes('rel="opener"'));
 });
+
+test("allowRawHtml supports sanitized html table blocks", async () => {
+  const parser = new MDParser();
+  const markdown = `
+<table>
+<tr>
+<th rowspan="2">Model</th>
+<th colspan="2">I2_S</th>
+</tr>
+<tr>
+<td><a href="https://example.com/model.md">Model A</a></td>
+<td>&#9989;</td>
+</tr>
+</table>
+`.trim();
+
+  const html = await parser.parse(u8(markdown), { allowRawHtml: true });
+
+  assert.ok(html.includes("<table>"));
+  assert.ok(html.includes('<th rowspan="2">Model</th>'));
+  assert.ok(html.includes('<th colspan="2">I2_S</th>'));
+  assert.ok(html.includes('<a href="https://example.com/model.md">Model A</a>'));
+  assert.ok(html.includes("<td>&#9989;</td>"));
+  assert.ok(!html.includes("<em>"));
+  assert.ok(!html.includes("&amp;#9989;"));
+  assert.ok(html.includes("</table>"));
+  assert.ok(!html.includes("<p><table>"));
+  assert.ok(!html.includes("</br>"));
+});

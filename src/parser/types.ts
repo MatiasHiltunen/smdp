@@ -56,6 +56,7 @@ export type BlockEvent =
   | { type: 'listOpen'; kind: 'ul' | 'ol'; indent: number }
   | { type: 'listItem'; s: number; e: number; task?: boolean; checked?: boolean }
   | { type: 'listClose'; kind: 'ul' | 'ol' }
+  | { type: 'rawHtmlLine'; s: number; e: number }
   | { type: 'paraLine'; s: number; e: number }
   | { type: 'codeOpen'; info?: FenceMeta }
   | { type: 'codeText'; s: number; e: number }

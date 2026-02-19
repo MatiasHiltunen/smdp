@@ -5,6 +5,7 @@
 
 import type { BlockEvent, BlockState } from './types';
 import { lineSpans } from './line-parser';
+import { TD } from './constants';
 import {
   isBlank,
   isHr,
@@ -20,6 +21,40 @@ import {
   clampUtf8SliceEnd,
 } from './utils';
 
+export interface BlockParseOptions {
+  allowRawHtml?: boolean;
+}
+
+const RAW_HTML_BLOCK_TAGS = new Set([
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'tr',
+  'th',
+  'td',
+  'caption',
+  'colgroup',
+  'col',
+]);
+
+function isAsciiAlphaNum(byte: number): boolean {
+  const lower = byte | 32;
+  return (lower >= 0x61 && lower <= 0x7a) || (byte >= 0x30 && byte <= 0x39);
+}
+
+function isRawHtmlBlockLine(u8: Uint8Array, s: number, e: number): boolean {
+  let i = skipSpaces(u8, s, e);
+  if (i >= e || u8[i] !== 0x3c) return false; // <
+  i++;
+  if (i < e && u8[i] === 0x2f) i++; // optional /
+  const nameStart = i;
+  while (i < e && isAsciiAlphaNum(u8[i])) i++;
+  if (i <= nameStart) return false;
+  const tagName = TD.decode(u8.subarray(nameStart, i)).toLowerCase();
+  return RAW_HTML_BLOCK_TAGS.has(tagName);
+}
+
 /**
  * Events:
  *  bqOpen / bqClose
@@ -29,7 +64,11 @@ import {
  *  paraLine{s,e}
  *  codeOpen / codeText{s,e} / codeClose
  */
-export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
+export function* blocks(
+  u8: Uint8Array,
+  options: BlockParseOptions = {},
+): Generator<BlockEvent> {
+  const allowRawHtml = options.allowRawHtml === true;
   const st: BlockState = {
     bqLevel: 0,
     listStack: [],
@@ -113,6 +152,11 @@ export function* blocks(u8: Uint8Array): Generator<BlockEvent> {
         const item = st.listStack.pop()!;
         yield { type: 'listClose', kind: item.kind };
       }
+      continue;
+    }
+
+    if (allowRawHtml && isRawHtmlBlockLine(u8, i, end)) {
+      yield { type: 'rawHtmlLine', s: i, e: end };
       continue;
     }
 
