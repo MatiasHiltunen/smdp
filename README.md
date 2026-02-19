@@ -174,6 +174,22 @@ parser.parse(u8(markdown)).then(html => {
 // parser.renderToCanvas(u8(markdown), canvas); // ❌ Not available
 ```
 
+### Book Mode (Multi-Part Markdown)
+
+Use `/book/<entry-url>` to treat a markdown document as a book entry that links to other chapters.
+
+- `github.com/.../blob/...` chapter links are automatically converted to `raw.githubusercontent.com/...` for fetching.
+- Relative chapter links (for example `./chapter-2.md`) are resolved against each chapter file URL.
+- Linked markdown chapters are discovered and prefetched in the background.
+
+Example:
+
+```text
+https://md2.at/book/https://github.com/owner/repo/blob/main/docs/README.md
+```
+
+When a chapter link is opened, the selected part is stored in `?part=<chapter-url>` so deep links remain shareable.
+
 ### Syntax Highlighting
 
 ```typescript

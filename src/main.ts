@@ -8,6 +8,7 @@ import {
 import "./style.css";
 import { applyTheme, getCurrentTheme, getThemeBuilder } from "./client/theme";
 import { parseRoute } from "./client/routing";
+import { BookLoader } from "./client/book";
 import {
   createCanvasView,
   createHtmlView,
@@ -15,6 +16,7 @@ import {
   type HtmlView,
 } from "./client/views";
 import { fetchMarkdown, type MarkdownFetchResult } from "./client/fetch";
+import { canonicalizeBookLink } from "./client/github-url";
 import { sanitizeSharedDataBaseUrl } from "./client/shared-data";
 import { createFabMenu, displayError } from "./client/ui";
 import { TD } from "./parser/constants";
@@ -67,6 +69,67 @@ function enableRealtimeUpdates(
       console.error("Failed to update preview", error);
     });
   });
+}
+
+function preserveThemeQueryParams(target: URL): void {
+  const current = new URLSearchParams(window.location.search);
+  const next = new URLSearchParams();
+  const dark = current.get("d");
+  const light = current.get("l");
+  if (dark) next.set("d", dark);
+  if (light) next.set("l", light);
+  target.search = next.toString();
+}
+
+function buildBookUrl(
+  entryUrl: string,
+  partUrl: string,
+  anchor?: string,
+): URL {
+  const next = new URL(window.location.href);
+  next.pathname = `/book/${entryUrl}`;
+  preserveThemeQueryParams(next);
+  next.searchParams.set("part", partUrl);
+  next.hash = anchor ? `#${anchor}` : "";
+  return next;
+}
+
+function scrollToHeadingAnchor(view: HtmlView, anchor: string): void {
+  if (!anchor) return;
+  let decoded = anchor;
+  try {
+    decoded = decodeURIComponent(anchor);
+  } catch {
+    decoded = anchor;
+  }
+  const escaped = globalThis.CSS?.escape
+    ? globalThis.CSS.escape(decoded)
+    : decoded.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  requestAnimationFrame(() => {
+    const target = view.viewer.querySelector<HTMLElement>(`#${escaped}`);
+    target?.scrollIntoView({ block: "start" });
+  });
+}
+
+function rewriteBookLinksInViewer(
+  view: HtmlView,
+  loader: BookLoader,
+  currentBaseUrl: string,
+): void {
+  const entryUrl = loader.getEntryUrl();
+  const anchors = view.viewer.querySelectorAll<HTMLAnchorElement>("a[href]");
+  for (const anchor of anchors) {
+    const href = anchor.getAttribute("href");
+    if (!href) continue;
+    const target = canonicalizeBookLink(href, currentBaseUrl);
+    if (!target) continue;
+    if (!loader.isKnownPart(target.canonicalUrl)) continue;
+
+    const bookUrl = buildBookUrl(entryUrl, target.canonicalUrl, target.anchor);
+    anchor.href = bookUrl.toString();
+    anchor.dataset.bookPart = target.canonicalUrl;
+    anchor.dataset.bookAnchor = target.anchor;
+  }
 }
 
 async function init(): Promise<void> {
@@ -142,9 +205,22 @@ async function init(): Promise<void> {
 
   let resolved: MarkdownFetchResult | null = null;
   let currentBaseUrl: string | undefined;
+  let bookLoader: BookLoader | null = null;
+  let currentBookPartUrl: string | null = null;
 
   try {
-    if (route.dataPayload) {
+    if (route.bookEntryUrl) {
+      bookLoader = new BookLoader(route.bookEntryUrl.toString());
+      const initialTarget =
+        route.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
+      const initialPart = await bookLoader.loadPart(initialTarget);
+      currentBookPartUrl = initialPart.url;
+      resolved = {
+        bytes: initialPart.bytes,
+        baseUrl: initialPart.baseUrl,
+      };
+      bookLoader.prefetchInBackground();
+    } else if (route.dataPayload) {
       const decoded = await decodeBase64Markdown(route.dataPayload);
       const baseUrl = sanitizeSharedDataBaseUrl(window.location.href);
       resolved = {
@@ -181,12 +257,80 @@ async function init(): Promise<void> {
     currentBaseUrl = resolved.baseUrl;
     await apply(resolved.bytes, currentBaseUrl);
 
+    if (bookLoader && route.mode === "html") {
+      const htmlView = view as HtmlView;
+      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl);
+      scrollToHeadingAnchor(htmlView, window.location.hash.replace(/^#/, ""));
+    }
+
     view.textarea.value = TD.decode(resolved.bytes);
+  }
+
+  if (bookLoader && route.mode === "html") {
+    const htmlView = view as HtmlView;
+
+    const navigateToBookPart = async (
+      targetPartUrl: string,
+      anchor: string,
+      pushHistory: boolean,
+    ): Promise<void> => {
+      if (!bookLoader) return;
+      const nextPart = await bookLoader.loadPart(targetPartUrl);
+      const isSamePart = currentBookPartUrl === nextPart.url;
+      currentBookPartUrl = nextPart.url;
+      currentBaseUrl = nextPart.baseUrl;
+
+      if (!isSamePart) {
+        await apply(nextPart.bytes, currentBaseUrl);
+        view.textarea.value = nextPart.markdown;
+      }
+
+      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl);
+      if (anchor) {
+        scrollToHeadingAnchor(htmlView, anchor);
+      }
+
+      if (pushHistory) {
+        const next = buildBookUrl(bookLoader.getEntryUrl(), nextPart.url, anchor);
+        window.history.pushState(
+          { bookPartUrl: nextPart.url, bookAnchor: anchor },
+          "",
+          next,
+        );
+      }
+
+      bookLoader.prefetchInBackground();
+    };
+
+    htmlView.viewer.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const link = target.closest("a[data-book-part]") as HTMLAnchorElement | null;
+      if (!link) return;
+      const partUrl = link.dataset.bookPart;
+      if (!partUrl) return;
+      event.preventDefault();
+      const anchor = link.dataset.bookAnchor ?? "";
+      void navigateToBookPart(partUrl, anchor, true).catch((error) => {
+        console.error("Unable to navigate to book chapter", error);
+        displayError("Unable to open linked chapter");
+      });
+    });
+
+    window.addEventListener("popstate", () => {
+      const nextRoute = parseRoute();
+      if (!nextRoute.bookEntryUrl || !bookLoader) return;
+      const partUrl = nextRoute.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
+      const anchor = window.location.hash.replace(/^#/, "");
+      void navigateToBookPart(partUrl, anchor, false).catch((error) => {
+        console.error("Unable to restore book navigation state", error);
+      });
+    });
   }
 
   if (!route.shared) {
 
-    
+
 
     enableRealtimeUpdates(view, apply, () => currentBaseUrl);
   }

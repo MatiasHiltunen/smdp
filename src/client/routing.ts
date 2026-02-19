@@ -5,6 +5,8 @@ export type RouteDetails = {
   externalUrl: URL | null;
   shared: boolean;
   dataPayload: string | null;
+  bookEntryUrl: URL | null;
+  bookPartUrl: URL | null;
 };
 
 function safeParseUrl(value: string | null): URL | null {
@@ -42,6 +44,7 @@ function extractHashPayload(): string | null {
 export function parseRoute(): RouteDetails {
   const rawPath = decodeURIComponent(window.location.pathname);
   const hashPayload = extractHashPayload();
+  const query = new URLSearchParams(window.location.search);
 
   // Shared (embed) mode: no FABs, no editor/theme UI, HTML render
   if (rawPath.startsWith("/shared/")) {
@@ -51,6 +54,8 @@ export function parseRoute(): RouteDetails {
       externalUrl: safeParseUrl(externalPart || null),
       shared: true,
       dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -60,6 +65,8 @@ export function parseRoute(): RouteDetails {
       externalUrl: null,
       shared: true,
       dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -73,6 +80,33 @@ export function parseRoute(): RouteDetails {
       externalUrl: null,
       shared: true,
       dataPayload: payload,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+    };
+  }
+
+  if (rawPath.startsWith("/book/")) {
+    const entryPart = rawPath.slice("/book/".length);
+    const entryUrl = safeParseUrl(entryPart || null);
+    const partUrl = safeParseUrl(query.get("part"));
+    return {
+      mode: "html",
+      externalUrl: partUrl ?? entryUrl,
+      shared: false,
+      dataPayload: null,
+      bookEntryUrl: entryUrl,
+      bookPartUrl: partUrl,
+    };
+  }
+
+  if (rawPath === "/book") {
+    return {
+      mode: "html",
+      externalUrl: null,
+      shared: false,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -83,6 +117,8 @@ export function parseRoute(): RouteDetails {
       externalUrl: safeParseUrl(externalPart || null),
       shared: false,
       dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -92,6 +128,8 @@ export function parseRoute(): RouteDetails {
       externalUrl: null,
       shared: false,
       dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -102,6 +140,8 @@ export function parseRoute(): RouteDetails {
       externalUrl: safeParseUrl(externalPart || null),
       shared: false,
       dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -111,6 +151,8 @@ export function parseRoute(): RouteDetails {
       externalUrl: null,
       shared: false,
       dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -120,6 +162,8 @@ export function parseRoute(): RouteDetails {
       externalUrl: null,
       shared: false,
       dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
     };
   }
 
@@ -129,5 +173,7 @@ export function parseRoute(): RouteDetails {
     externalUrl: safeParseUrl(externalPart || null),
     shared: false,
     dataPayload: null,
+    bookEntryUrl: null,
+    bookPartUrl: null,
   };
 }

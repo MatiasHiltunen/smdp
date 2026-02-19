@@ -1,3 +1,5 @@
+import { normalizeGitHubUrlToRaw } from "./github-url";
+
 export type MarkdownFetchResult = {
   bytes: Uint8Array;
   baseUrl: string;
@@ -6,7 +8,9 @@ export type MarkdownFetchResult = {
 export async function fetchMarkdown(
   externalUrl: URL | null,
 ): Promise<MarkdownFetchResult> {
-  const target = externalUrl?.toString() ?? "/test.md";
+  const target = externalUrl
+    ? normalizeGitHubUrlToRaw(externalUrl.toString())
+    : "/test.md";
   const response = await fetch(target);
 
   if (!response.ok) {
@@ -19,7 +23,6 @@ export async function fetchMarkdown(
 
 
   // const bytes = new Uint8Array(buffer);
-  const baseUrl =
-    externalUrl?.toString() ?? new URL(target, window.location.href).toString();
+  const baseUrl = new URL(target, window.location.href).toString();
   return { bytes, baseUrl };
 }

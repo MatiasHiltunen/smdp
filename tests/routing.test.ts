@@ -49,3 +49,39 @@ test("legacy data routes continue to prefer path payload", () => {
     }
   }
 });
+
+test("book routes parse entry and selected part", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/book/https://github.com/acme/docs/blob/main/README.md",
+      hash: "#intro",
+      search:
+        "?part=https%3A%2F%2Fraw.githubusercontent.com%2Facme%2Fdocs%2Fmain%2Fchapter-1.md",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "html");
+    assert.equal(route.shared, false);
+    assert.equal(
+      route.bookEntryUrl?.toString(),
+      "https://github.com/acme/docs/blob/main/README.md",
+    );
+    assert.equal(
+      route.bookPartUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/chapter-1.md",
+    );
+    assert.equal(
+      route.externalUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/chapter-1.md",
+    );
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});
