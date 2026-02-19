@@ -7,6 +7,27 @@ import { getThemeBuilder } from "./theme";
 import { encodeMarkdownToBase64 } from "../data-link";
 import { deserializeTheme } from "../theme/theme-serializer";
 
+const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
+
+function sanitizeCssDeclarationValue(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 256) return null;
+  if (/[<>{};\n\r\u0000]/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function sanitizeCssCustomPropertyName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!SAFE_CUSTOM_PROPERTY_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
+function sanitizeStyleTagContent(css: string): string {
+  // Prevent untrusted values from terminating the enclosing <style> element.
+  return css.replace(/<\/style/gi, "<\\/style");
+}
+
 /**
  * Export the rendered HTML as a self-contained HTML5 file
  */
@@ -48,11 +69,16 @@ export function exportAsHtml(view: HtmlView | CanvasView): void {
     
     // Add meta properties
     if (config.meta) {
-      if (config.meta.fontFamily) targetArray.push(`  font-family: ${config.meta.fontFamily};`);
-      if (config.meta.fontSize) targetArray.push(`  font-size: ${config.meta.fontSize};`);
-      if (config.meta.fontWeight) targetArray.push(`  font-weight: ${config.meta.fontWeight};`);
-      if (config.meta.lineHeight) targetArray.push(`  line-height: ${config.meta.lineHeight};`);
-      if (config.meta.monoFontFamily) targetArray.push(`  --font-mono: ${config.meta.monoFontFamily};`);
+      const fontFamily = sanitizeCssDeclarationValue(config.meta.fontFamily);
+      if (fontFamily) targetArray.push(`  font-family: ${fontFamily};`);
+      const fontSize = sanitizeCssDeclarationValue(config.meta.fontSize);
+      if (fontSize) targetArray.push(`  font-size: ${fontSize};`);
+      const fontWeight = sanitizeCssDeclarationValue(config.meta.fontWeight);
+      if (fontWeight) targetArray.push(`  font-weight: ${fontWeight};`);
+      const lineHeight = sanitizeCssDeclarationValue(config.meta.lineHeight);
+      if (lineHeight) targetArray.push(`  line-height: ${lineHeight};`);
+      const monoFontFamily = sanitizeCssDeclarationValue(config.meta.monoFontFamily);
+      if (monoFontFamily) targetArray.push(`  --font-mono: ${monoFontFamily};`);
     }
 
     // Add token properties (converted to CSS variables)
@@ -60,14 +86,19 @@ export function exportAsHtml(view: HtmlView | CanvasView): void {
       Object.entries(config.tokens).forEach(([key, value]) => {
         // Convert camelCase token names to kebab-case CSS variable names
         const cssVarName = `--${key.replace(/([A-Z])/g, "-$1").toLowerCase()}`;
-        targetArray.push(`  ${cssVarName}: ${value};`);
+        const safeValue = sanitizeCssDeclarationValue(value);
+        if (!safeValue) return;
+        targetArray.push(`  ${cssVarName}: ${safeValue};`);
       });
     }
 
     // Add custom properties
     if (config.customProperties) {
       Object.entries(config.customProperties).forEach(([key, value]) => {
-        targetArray.push(`  ${key}: ${value};`);
+        const safeKey = sanitizeCssCustomPropertyName(key);
+        const safeValue = sanitizeCssDeclarationValue(value);
+        if (!safeKey || !safeValue) return;
+        targetArray.push(`  ${safeKey}: ${safeValue};`);
       });
     }
   };
@@ -93,6 +124,8 @@ export function exportAsHtml(view: HtmlView | CanvasView): void {
     )}\n}`;
   }
 
+  const safeStyleContent = sanitizeStyleTagContent(`${styles}${themeOverrides}`);
+
   // Create HTML5 document
   const html = `<!DOCTYPE html>
 <html lang="en" data-theme="${currentTheme}">
@@ -102,7 +135,7 @@ export function exportAsHtml(view: HtmlView | CanvasView): void {
   <meta name="generator" content="SMDP - Simple Markdown Parser">
   <title>Exported Markdown</title>
   <style>
-${styles}${themeOverrides}
+${safeStyleContent}
   </style>
 </head>
 <body>

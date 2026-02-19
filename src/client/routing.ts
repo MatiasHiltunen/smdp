@@ -9,6 +9,14 @@ export type RouteDetails = {
   bookPartUrl: URL | null;
 };
 
+function safeDecodePathname(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
 function safeParseUrl(value: string | null): URL | null {
   if (!value) {
     return null;
@@ -42,7 +50,7 @@ function extractHashPayload(): string | null {
 }
 
 export function parseRoute(): RouteDetails {
-  const rawPath = decodeURIComponent(window.location.pathname);
+  const rawPath = safeDecodePathname(window.location.pathname);
   const hashPayload = extractHashPayload();
   const query = new URLSearchParams(window.location.search);
 

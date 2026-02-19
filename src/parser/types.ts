@@ -35,6 +35,7 @@ export interface UrlScan {
 export type InlineToken =
   | { kind: 'text'; s: number; e: number }
   | { kind: 'code'; s: number; e: number }
+  | { kind: 'rawHtml'; s: number; e: number }
   | { kind: 'img'; altS: number; altE: number; srcS: number; srcE: number }
   | { kind: 'link'; hrefS: number; hrefE: number; textS: number; textE: number }
   | { kind: 'autolink'; s: number; e: number; isWww: boolean }
@@ -144,4 +145,3 @@ export interface RenderChunkMetadata {
   blockquotes: BlockquoteInfo[];
   segments: RenderSegment[];
 }
-

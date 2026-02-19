@@ -23,6 +23,13 @@ const UINT8ARRAY_WITH_BASE64 = Uint8Array as unknown as {
 
 
 const DEFAULT_COMPRESSION_ALGORITHM: CompressionFormat = "gzip";
+const MAX_BASE64_PAYLOAD_CHARS = 12 * 1024 * 1024;
+const MAX_COMPRESSED_PAYLOAD_BYTES = 9 * 1024 * 1024;
+const MAX_DECOMPRESSED_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
+function describeBytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
 
 /**
  * Ensures the Compression Streams API is available before attempting to
@@ -42,7 +49,10 @@ function ensureCompressionStreamsAvailable(): void {
  * decompressor outputs as async iterables, so this utility keeps the
  * higher-level helpers tidy.
  */
-async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+async function streamToUint8Array(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes?: number,
+): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let totalLength = 0;
@@ -55,6 +65,16 @@ async function streamToUint8Array(stream: ReadableStream<Uint8Array>): Promise<U
     if (value) {
       chunks.push(value);
       totalLength += value.length;
+      if (maxBytes !== undefined && totalLength > maxBytes) {
+        try {
+          await reader.cancel("stream payload exceeded maximum size");
+        } catch {
+          // Ignore cancellation failures and throw the size-limit error below.
+        }
+        throw new Error(
+          `Decoded payload exceeds limit (${describeBytes(maxBytes)})`,
+        );
+      }
     }
   }
 
@@ -103,7 +123,10 @@ export async function decompressBytes(
   
   // Start reading from the readable stream before closing the writer
   // to avoid race conditions with the stream's internal buffering
-  const readPromise = streamToUint8Array(stream.readable);
+  const readPromise = streamToUint8Array(
+    stream.readable,
+    MAX_DECOMPRESSED_PAYLOAD_BYTES,
+  );
   
   await writer.write(input as BufferSource);
   await writer.close();
@@ -188,7 +211,17 @@ export async function decodeBase64Markdown(
   base64: string,
   format: CompressionFormat = DEFAULT_COMPRESSION_ALGORITHM,
 ): Promise<Uint8Array> {
+  if (base64.length > MAX_BASE64_PAYLOAD_CHARS) {
+    throw new Error(
+      `Encoded payload exceeds limit (${MAX_BASE64_PAYLOAD_CHARS.toLocaleString()} characters)`,
+    );
+  }
   const compressed = base64ToBytes(base64);
+  if (compressed.byteLength > MAX_COMPRESSED_PAYLOAD_BYTES) {
+    throw new Error(
+      `Compressed payload exceeds limit (${describeBytes(MAX_COMPRESSED_PAYLOAD_BYTES)})`,
+    );
+  }
   return await decompressBytes(compressed, format);
 }
 

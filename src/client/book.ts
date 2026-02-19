@@ -15,6 +15,10 @@ export type BookPart = {
 };
 
 const INLINE_LINK_RE = /\[[^\]]+\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+const DEFAULT_PREFETCH_CONCURRENCY = 4;
+const MAX_BOOK_PARTS = 512;
+const MAX_PREFETCH_PARTS_PER_PASS = 64;
+const MAX_DISCOVERED_LINKS_PER_PART = 256;
 
 function titleFromUrl(url: string): string {
   try {
@@ -39,7 +43,11 @@ function extractTitle(markdown: string, fallbackUrl: string): string {
   return titleFromUrl(fallbackUrl);
 }
 
-export function discoverBookLinks(markdown: string, baseUrl: string): string[] {
+export function discoverBookLinks(
+  markdown: string,
+  baseUrl: string,
+  maxLinks: number = Number.POSITIVE_INFINITY,
+): string[] {
   const discovered: string[] = [];
   const seen = new Set<string>();
 
@@ -54,6 +62,9 @@ export function discoverBookLinks(markdown: string, baseUrl: string): string[] {
     if (!target || seen.has(target.canonicalUrl)) continue;
     seen.add(target.canonicalUrl);
     discovered.push(target.canonicalUrl);
+    if (discovered.length >= maxLinks) {
+      break;
+    }
   }
 
   return discovered;
@@ -124,7 +135,7 @@ export class BookLoader {
     return task;
   }
 
-  prefetchInBackground(concurrency = 4): void {
+  prefetchInBackground(concurrency = DEFAULT_PREFETCH_CONCURRENCY): void {
     if (this.prefetchTask) {
       return;
     }
@@ -162,13 +173,16 @@ export class BookLoader {
   private async prefetchAll(concurrency: number): Promise<void> {
     const workers: Promise<void>[] = [];
     const workerCount = Math.max(1, concurrency | 0);
+    let remaining = MAX_PREFETCH_PARTS_PER_PASS;
 
     for (let i = 0; i < workerCount; i++) {
       workers.push(
         (async () => {
           while (true) {
+            if (remaining <= 0) break;
             const target = this.claimNextPrefetchTarget();
             if (!target) break;
+            remaining -= 1;
             try {
               await this.loadPart(target);
             } catch {
@@ -186,6 +200,7 @@ export class BookLoader {
 
   private registerKnownPart(url: string): void {
     if (this.knownSet.has(url)) return;
+    if (this.knownOrder.length >= MAX_BOOK_PARTS) return;
     this.knownSet.add(url);
     this.knownOrder.push(url);
   }
@@ -194,7 +209,11 @@ export class BookLoader {
     try {
       const result = await fetchMarkdown(new URL(canonicalUrl));
       const markdown = TD.decode(result.bytes);
-      const discoveredParts = discoverBookLinks(markdown, result.baseUrl);
+      const discoveredParts = discoverBookLinks(
+        markdown,
+        result.baseUrl,
+        MAX_DISCOVERED_LINKS_PER_PART,
+      );
       for (const partUrl of discoveredParts) {
         this.registerKnownPart(partUrl);
       }

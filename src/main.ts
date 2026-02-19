@@ -41,8 +41,12 @@ async function applyMarkdownToHtml(
   view: HtmlView,
   bytes: Uint8Array,
   baseUrl?: string,
+  allowRawHtml: boolean = false,
 ): Promise<void> {
-  const overrides = baseUrl ? { baseUrl } : undefined;
+  const overrides = {
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+    ...(allowRawHtml ? { allowRawHtml: true } : {}),
+  };
   const html = await parser.parse(bytes, overrides);
   view.viewer.innerHTML = html;
 }
@@ -58,8 +62,9 @@ function applyMarkdownToCanvas(
 
 function enableRealtimeUpdates(
   view: HtmlView | CanvasView,
-  apply: (bytes: Uint8Array, baseUrl?: string) => Promise<void>,
+  apply: (bytes: Uint8Array, baseUrl?: string, allowRawHtml?: boolean) => Promise<void>,
   resolveBaseUrl: () => string | undefined,
+  resolveAllowRawHtml: () => boolean,
 ): void {
   const DEBOUNCE_MS = 80;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,7 +84,8 @@ function enableRealtimeUpdates(
         const value = view.textarea.value;
         const bytes = u8(value);
         const baseUrl = resolveBaseUrl();
-        await apply(bytes, baseUrl);
+        const allowRawHtml = resolveAllowRawHtml();
+        await apply(bytes, baseUrl, allowRawHtml);
       } while (rerenderRequested);
     } catch (error) {
       console.error("Failed to update preview", error);
@@ -183,9 +189,10 @@ async function init(): Promise<void> {
   }
 
   const route = parseRoute();
+  const allowRawHtml = route.bookEntryUrl !== null;
 
   let view: HtmlView | CanvasView;
-  let apply: (bytes: Uint8Array, baseUrl?: string) => Promise<void>;
+  let apply: (bytes: Uint8Array, baseUrl?: string, allowRawHtml?: boolean) => Promise<void>;
   let themeEditorLocal: ThemeEditorHandle | null = null;
 
   if (route.mode === "canvas") {
@@ -197,7 +204,13 @@ async function init(): Promise<void> {
   } else {
     const htmlView = createHtmlView();
     view = htmlView;
-    apply = (bytes, baseUrl) => applyMarkdownToHtml(htmlView, bytes, baseUrl);
+    apply = (bytes, baseUrl, allowRawHtmlOverride) =>
+      applyMarkdownToHtml(
+        htmlView,
+        bytes,
+        baseUrl,
+        allowRawHtmlOverride ?? false,
+      );
   }
 
   document.body.classList.remove("is-editing");
@@ -288,7 +301,7 @@ async function init(): Promise<void> {
 
   if (resolved) {
     currentBaseUrl = resolved.baseUrl;
-    await apply(resolved.bytes, currentBaseUrl);
+    await apply(resolved.bytes, currentBaseUrl, allowRawHtml);
 
     if (bookLoader && route.mode === "html") {
       const htmlView = view as HtmlView;
@@ -314,7 +327,7 @@ async function init(): Promise<void> {
       currentBaseUrl = nextPart.baseUrl;
 
       if (!isSamePart) {
-        await apply(nextPart.bytes, currentBaseUrl);
+        await apply(nextPart.bytes, currentBaseUrl, allowRawHtml);
         view.textarea.value = nextPart.markdown;
       }
 
@@ -365,7 +378,12 @@ async function init(): Promise<void> {
 
 
 
-    enableRealtimeUpdates(view, apply, () => currentBaseUrl);
+    enableRealtimeUpdates(
+      view,
+      apply,
+      () => currentBaseUrl,
+      () => allowRawHtml,
+    );
   }
 }
 

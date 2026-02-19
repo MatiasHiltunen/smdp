@@ -15,6 +15,184 @@ function decodeSpan(u8: Uint8Array, s: number, e: number): string {
   return TD.decode(u8.subarray(s, e));
 }
 
+type RawHtmlState = {
+  suppressedTag: 'script' | 'style' | null;
+};
+
+const ALLOWED_RAW_HTML_TAGS = new Set([
+  'a',
+  'abbr',
+  'b',
+  'br',
+  'code',
+  'del',
+  'em',
+  'i',
+  'img',
+  'kbd',
+  'mark',
+  's',
+  'small',
+  'span',
+  'strong',
+  'sub',
+  'sup',
+  'u',
+]);
+
+const VOID_RAW_HTML_TAGS = new Set(['br', 'img']);
+
+const GLOBAL_ALLOWED_ATTRS = new Set([
+  'class',
+  'id',
+  'title',
+  'role',
+  'aria-label',
+  'aria-hidden',
+]);
+
+const A_ALLOWED_ATTRS = new Set(['href', 'title', 'target', 'rel']);
+const IMG_ALLOWED_ATTRS = new Set([
+  'src',
+  'alt',
+  'title',
+  'width',
+  'height',
+  'loading',
+]);
+
+const ATTR_RE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+
+function escapeAttr(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function isAttrAllowed(tagName: string, attrName: string): boolean {
+  if (GLOBAL_ALLOWED_ATTRS.has(attrName)) return true;
+  if (tagName === 'a') return A_ALLOWED_ATTRS.has(attrName);
+  if (tagName === 'img') return IMG_ALLOWED_ATTRS.has(attrName);
+  return false;
+}
+
+function sanitizeRawHtmlTag(
+  rawTag: string,
+  urlAllowlist: (url: string) => boolean,
+  baseUrl: string | undefined,
+  state: RawHtmlState,
+): string {
+  const tag = rawTag.trim();
+  if (!tag.startsWith('<') || !tag.endsWith('>')) {
+    return '';
+  }
+  if (tag.startsWith('<!--')) {
+    return '';
+  }
+
+  let inner = tag.slice(1, -1).trim();
+  if (!inner) return '';
+
+  let isClosing = false;
+  if (inner.startsWith('/')) {
+    isClosing = true;
+    inner = inner.slice(1).trim();
+  }
+
+  let isSelfClosing = false;
+  if (inner.endsWith('/')) {
+    isSelfClosing = true;
+    inner = inner.slice(0, -1).trim();
+  }
+
+  const tagNameMatch = /^([a-zA-Z][a-zA-Z0-9:-]*)/.exec(inner);
+  if (!tagNameMatch) {
+    return '';
+  }
+  const tagName = tagNameMatch[1].toLowerCase();
+
+  if (tagName === 'script' || tagName === 'style') {
+    if (!isClosing) {
+      state.suppressedTag = tagName;
+    } else if (state.suppressedTag === tagName) {
+      state.suppressedTag = null;
+    }
+    return '';
+  }
+
+  if (state.suppressedTag) {
+    if (isClosing && tagName === state.suppressedTag) {
+      state.suppressedTag = null;
+    }
+    return '';
+  }
+
+  if (!ALLOWED_RAW_HTML_TAGS.has(tagName)) {
+    return '';
+  }
+
+  if (isClosing) {
+    if (VOID_RAW_HTML_TAGS.has(tagName)) return '';
+    return `</${tagName}>`;
+  }
+
+  const attrText = inner.slice(tagNameMatch[0].length);
+  const attrs = new Map<string, string>();
+  let targetBlank = false;
+
+  ATTR_RE.lastIndex = 0;
+  for (const match of attrText.matchAll(ATTR_RE)) {
+    const attrName = match[1].toLowerCase();
+    if (!attrName || attrName === 'style' || attrName.startsWith('on')) continue;
+    if (!isAttrAllowed(tagName, attrName)) continue;
+
+    let value = match[2] ?? match[3] ?? match[4] ?? '';
+    if (attrName === 'href' || attrName === 'src') {
+      if (!value) continue;
+      const resolved = resolveUrlRelativeToBase(value, baseUrl);
+      if (!urlAllowlist(resolved)) continue;
+      value = resolved;
+    }
+    if (attrName === 'target') {
+      const lower = value.toLowerCase();
+      if (lower !== '_blank' && lower !== '_self' && lower !== '_parent' && lower !== '_top') {
+        continue;
+      }
+      value = lower;
+      if (lower === '_blank') {
+        targetBlank = true;
+      }
+    }
+    attrs.set(attrName, value);
+  }
+
+  if (tagName === 'a' && targetBlank) {
+    const relTokens = new Set(
+      (attrs.get('rel') ?? '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((token) => token.toLowerCase()),
+    );
+    relTokens.delete('opener');
+    relTokens.add('noopener');
+    relTokens.add('noreferrer');
+    attrs.set('rel', Array.from(relTokens).join(' '));
+  }
+
+  const renderedAttrs: string[] = [];
+  for (const [name, value] of attrs.entries()) {
+    renderedAttrs.push(`${name}="${escapeAttr(value)}"`);
+  }
+  const attrSuffix = renderedAttrs.length > 0 ? ` ${renderedAttrs.join(' ')}` : '';
+  if (VOID_RAW_HTML_TAGS.has(tagName) || isSelfClosing) {
+    return `<${tagName}${attrSuffix}>`;
+  }
+  return `<${tagName}${attrSuffix}>`;
+}
+
 /**
  * Renders inline tokens to HTML
  */
@@ -24,11 +202,17 @@ function renderInline(
   e: number,
   out: HtmlArena,
   options: ParserOptions = {},
+  rawHtmlState: RawHtmlState = { suppressedTag: null },
 ): void {
   const urlAllowlist = options.urlAllowlist ?? defaultUrlAllowlist;
   const baseUrl = options.baseUrl;
 
-  for (const tok of inlineTokens(u8, s, e)) {
+  const inlineParseOptions = options.allowRawHtml ? { allowRawHtml: true } : undefined;
+  for (const tok of inlineTokens(u8, s, e, inlineParseOptions)) {
+    if (rawHtmlState.suppressedTag && tok.kind !== 'rawHtml') {
+      continue;
+    }
+
     switch (tok.kind) {
       case 'text':
         out.writeEscaped(u8, tok.s, tok.e);
@@ -45,14 +229,10 @@ function renderInline(
         out.writeEscaped(u8, tok.altS, tok.altE);
         out.writeBytes(TAG.imgMid);
         const srcText = decodeSpan(u8, tok.srcS, tok.srcE);
-        if (urlAllowlist(srcText)) {
-          const resolvedSrc = resolveUrlRelativeToBase(srcText, baseUrl);
-          if (resolvedSrc !== srcText) {
-            const encoded = TE.encode(resolvedSrc);
-            out.writeEscaped(encoded, 0, encoded.length);
-          } else {
-            out.writeEscaped(u8, tok.srcS, tok.srcE);
-          }
+        const resolvedSrc = resolveUrlRelativeToBase(srcText, baseUrl);
+        if (urlAllowlist(resolvedSrc)) {
+          const encoded = TE.encode(resolvedSrc);
+          out.writeEscaped(encoded, 0, encoded.length);
         }
         out.writeBytes(TAG.imgClose);
         break;
@@ -60,22 +240,36 @@ function renderInline(
 
       case 'link': {
         const hrefText = decodeSpan(u8, tok.hrefS, tok.hrefE);
-        const allowed = urlAllowlist(hrefText);
+        const resolvedHref = resolveUrlRelativeToBase(hrefText, baseUrl);
+        const allowed = urlAllowlist(resolvedHref);
         if (allowed) {
           out.writeBytes(TAG.aOpenPre);
-          const resolvedHref = resolveUrlRelativeToBase(hrefText, baseUrl);
-          if (resolvedHref !== hrefText) {
-            const encoded = TE.encode(resolvedHref);
-            out.writeEscaped(encoded, 0, encoded.length);
-          } else {
-            out.writeEscaped(u8, tok.hrefS, tok.hrefE);
-          }
+          const encoded = TE.encode(resolvedHref);
+          out.writeEscaped(encoded, 0, encoded.length);
           out.writeBytes(TAG.aMid);
-          renderInline(u8, tok.textS, tok.textE, out, options);
+          renderInline(u8, tok.textS, tok.textE, out, options, rawHtmlState);
           out.writeBytes(TAG.aClose);
         } else {
           // Fallback to plain text if URL is not allowed
-          renderInline(u8, tok.textS, tok.textE, out, options);
+          renderInline(u8, tok.textS, tok.textE, out, options, rawHtmlState);
+        }
+        break;
+      }
+
+      case 'rawHtml': {
+        if (!options.allowRawHtml) {
+          out.writeEscaped(u8, tok.s, tok.e);
+          break;
+        }
+        const rawTag = decodeSpan(u8, tok.s, tok.e);
+        const sanitizedTag = sanitizeRawHtmlTag(
+          rawTag,
+          urlAllowlist,
+          baseUrl,
+          rawHtmlState,
+        );
+        if (sanitizedTag) {
+          out.writeUtf8(sanitizedTag);
         }
         break;
       }
@@ -92,31 +286,20 @@ function renderInline(
       }
 
       case 'autolink': {
-        // Build effective href span including implicit protocol for www
-        const hrefStart = tok.s - (tok.isWww ? 0 : 0);
-        const hrefEnd = tok.e;
         const hrefText = tok.isWww
           ? 'https://' + decodeSpan(u8, tok.s, tok.e)
-          : decodeSpan(u8, hrefStart, hrefEnd);
-        if (tok.isWww) {
-          // Only allow if http(s) when prefixed; we synthesize https://www...
+          : decodeSpan(u8, tok.s, tok.e);
+        const resolvedHref = resolveUrlRelativeToBase(hrefText, baseUrl);
+        const allowed = urlAllowlist(resolvedHref);
+        if (allowed) {
           out.writeBytes(TAG.aOpenPre);
-          out.writeAscii('https://');
-          out.writeEscaped(u8, tok.s, tok.e);
+          const encoded = TE.encode(resolvedHref);
+          out.writeEscaped(encoded, 0, encoded.length);
           out.writeBytes(TAG.aMid);
           out.writeEscaped(u8, tok.s, tok.e);
           out.writeBytes(TAG.aClose);
         } else {
-          const allowed = urlAllowlist(hrefText);
-          if (allowed) {
-            out.writeBytes(TAG.aOpenPre);
-            out.writeEscaped(u8, hrefStart, hrefEnd);
-            out.writeBytes(TAG.aMid);
-            out.writeEscaped(u8, tok.s, tok.e);
-            out.writeBytes(TAG.aClose);
-          } else {
-            out.writeEscaped(u8, tok.s, tok.e);
-          }
+          out.writeEscaped(u8, tok.s, tok.e);
         }
         break;
       }
@@ -162,6 +345,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
   let codeBuffer: Array<{ s: number; e: number }> | null = null;
   let codeLang: string | undefined;
   const footnotes: Array<{ idS: number; idE: number; contentS: number; contentE: number }> = [];
+  const rawHtmlState: RawHtmlState = { suppressedTag: null };
 
   const closePara = (): void => {
     if (paraOpen) {
@@ -244,7 +428,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         closePara();
         closeListsAll();
         out.writeBytes(TAG.hPre[ev.level - 1]);
-        renderInline(u8, ev.s, ev.e, out, options);
+        renderInline(u8, ev.s, ev.e, out, options, rawHtmlState);
         out.writeBytes(TAG.hClose[ev.level - 1]);
         break;
 
@@ -260,7 +444,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
           if (ev.checked) out.writeAscii(' checked');
           out.writeAscii('> ');
         }
-        renderInline(u8, ev.s, ev.e, out, options);
+        renderInline(u8, ev.s, ev.e, out, options, rawHtmlState);
         out.writeBytes(TAG.lf);
         break;
 
@@ -283,7 +467,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         } else {
           out.writeBytes(TAG.br);
         }
-        renderInline(u8, ev.s, ev.e, out, options);
+        renderInline(u8, ev.s, ev.e, out, options, rawHtmlState);
         break;
 
       case 'codeOpen':
@@ -319,7 +503,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
           const thTag = cell.align === 'center' ? TAG.thCenter : 
                         cell.align === 'right' ? TAG.thRight : TAG.thLeft;
           out.writeBytes(thTag);
-          renderInline(u8, cell.s, cell.e, out, options);
+          renderInline(u8, cell.s, cell.e, out, options, rawHtmlState);
           out.writeBytes(TAG.thClose);
         }
         out.writeBytes(TAG.theadClose);
@@ -329,7 +513,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         out.writeBytes(TAG.trOpen);
         for (const cell of ev.cells) {
           out.writeBytes(TAG.tdOpen);
-          renderInline(u8, cell.s, cell.e, out, options);
+          renderInline(u8, cell.s, cell.e, out, options, rawHtmlState);
           out.writeBytes(TAG.tdClose);
         }
         out.writeBytes(TAG.trClose);
@@ -390,7 +574,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
       out.writeAscii('<li id="fn-');
       out.writeEscaped(u8, fn.idS, fn.idE);
       out.writeAscii('">');
-      renderInline(u8, fn.contentS, fn.contentE, out, options);
+      renderInline(u8, fn.contentS, fn.contentE, out, options, rawHtmlState);
       out.writeAscii(' <a href="#fnref-');
       out.writeEscaped(u8, fn.idS, fn.idE);
       out.writeAscii('" class="footnote-backref">');

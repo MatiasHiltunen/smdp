@@ -85,3 +85,26 @@ test("book routes parse entry and selected part", () => {
     }
   }
 });
+
+test("route parsing tolerates malformed percent-encoding in pathname", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/data/%E0%A4%A",
+      hash: "",
+      search: "",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "html");
+    assert.equal(route.shared, true);
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});

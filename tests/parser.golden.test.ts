@@ -204,7 +204,7 @@ test("golden: URL allowlist", async () => {
   const expected = `<p><a href="http://example.com">Valid HTTP link</a></br></br>
 <a href="https://example.com">Valid HTTPS link</a></br></br>
 <a href="mailto:test@example.com">Valid mailto link</a></br></br>
-<a href="javascript:alert(&#39;xss&#39;">Invalid javascript link</a>)</br></br>
+Invalid javascript link)</br></br>
 <a href="relative/path">Relative link</a></br></br>
 <a href="//example.com/path">Protocol-relative link</a></p>`;
 

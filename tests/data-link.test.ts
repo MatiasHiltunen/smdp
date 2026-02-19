@@ -207,3 +207,13 @@ test("encodes and decodes large markdown payloads", { concurrency: false }, asyn
     assert.equal(decoded, markdown);
   });
 });
+
+test("rejects oversized base64 payloads before decompression", { concurrency: false }, async () => {
+  await withCompressionSupport(async () => {
+    const oversized = "A".repeat((12 * 1024 * 1024) + 1);
+    await assert.rejects(
+      () => decodeBase64Markdown(oversized),
+      /Encoded payload exceeds limit/,
+    );
+  });
+});

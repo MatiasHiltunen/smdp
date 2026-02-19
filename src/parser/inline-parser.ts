@@ -5,6 +5,15 @@
 import type { InlineToken } from './types';
 import { findBracket, matchHttp, matchWww, scanUrl } from './utils';
 
+export interface InlineParseOptions {
+  allowRawHtml?: boolean;
+}
+
+function isAsciiAlpha(byte: number): boolean {
+  const lower = byte | 32;
+  return lower >= 0x61 && lower <= 0x7a;
+}
+
 /**
  * Yields inline tokens:
  *  - text{s,e}          (escaped as HTML)
@@ -19,7 +28,9 @@ export function* inlineTokens(
   u8: Uint8Array,
   s: number,
   e: number,
+  options: InlineParseOptions = {},
 ): Generator<InlineToken> {
+  const allowRawHtml = options.allowRawHtml === true;
   const emStack: Array<{ char: number; pos: number }> = [];
   const strongStack: Array<{ char: number; pos: number }> = [];
   const strikeStack: number[] = [];
@@ -64,6 +75,22 @@ export function* inlineTokens(
       // Skip characters inside code spans - they'll be yielded as a single 'code' token
       i++;
       continue;
+    }
+
+    // Raw HTML tag passthrough when enabled (sanitized in renderer)
+    if (allowRawHtml && c === 0x3c && i + 2 < e) { // <
+      let probe = i + 1;
+      if (u8[probe] === 0x2f) probe++; // optional /
+      const first = probe < e ? u8[probe] : 0;
+      if (isAsciiAlpha(first) || first === 0x21) { // letter or ! (comments/doctype)
+        let close = probe + 1;
+        while (close < e && u8[close] !== 0x3e) close++; // >
+        if (close < e) {
+          yield { kind: 'rawHtml', s: i, e: close + 1 };
+          i = close + 1;
+          continue;
+        }
+      }
     }
 
     // ![alt](src)
@@ -209,4 +236,3 @@ export function* inlineTokens(
     yield { kind: 'strikeClose' };
   }
 }
-

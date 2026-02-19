@@ -582,15 +582,20 @@ export function isUrlAllowed(u8: Uint8Array, s: number, e: number): boolean {
 }
 
 const ABSOLUTE_PROTOCOL_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+const URL_RESOLUTION_BASE = 'https://smdp.invalid/';
 
 export function defaultUrlAllowlist(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return true;
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('mailto:')) {
-    return true;
+  try {
+    // Resolve against a stable base to normalize obfuscated schemes like
+    // "java\tscript:" before protocol checks.
+    const parsed = new URL(trimmed, URL_RESOLUTION_BASE);
+    const protocol = parsed.protocol.toLowerCase();
+    return protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:';
+  } catch {
+    return false;
   }
-  return !trimmed.includes('://');
 }
 
 export function resolveUrlRelativeToBase(url: string, baseUrl: string | undefined): string {

@@ -731,14 +731,14 @@ function drawInline(
       case 'img': {
         const altText = TD.decode(u8.subarray(tok.altS, tok.altE));
         const rawSrc = TD.decode(u8.subarray(tok.srcS, tok.srcE));
-        if (!allowlist(rawSrc)) {
+        const src = resolveUrlRelativeToBase(rawSrc, baseUrl);
+        if (!allowlist(src)) {
           pushStyle({ code: true, color: themeColors.textSecondary });
-          addText(`[Blocked image: ${altText || rawSrc}]`);
+          addText(`[Blocked image: ${altText || src}]`);
           popStyle();
           if (line.length) flushLine();
           break;
         }
-        const src = resolveUrlRelativeToBase(rawSrc, baseUrl);
         
         // Flush current line before image
         if (line.length) flushLine();
