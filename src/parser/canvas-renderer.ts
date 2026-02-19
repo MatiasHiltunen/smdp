@@ -30,6 +30,11 @@ type RawHtmlTag = {
 };
 
 function decodeHtmlEntities(text: string): string {
+  const toCodePoint = (value: number, fallback: string): string => {
+    if (!Number.isInteger(value) || value < 0 || value > 0x10ffff) return fallback;
+    return String.fromCodePoint(value);
+  };
+
   return text.replaceAll(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (m, body: string) => {
     const lower = body.toLowerCase();
     if (lower === 'amp') return '&';
@@ -39,11 +44,11 @@ function decodeHtmlEntities(text: string): string {
     if (lower === 'apos') return "'";
     if (lower.startsWith('#x')) {
       const cp = Number.parseInt(lower.slice(2), 16);
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : m;
+      return toCodePoint(cp, m);
     }
     if (lower.startsWith('#')) {
       const cp = Number.parseInt(lower.slice(1), 10);
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : m;
+      return toCodePoint(cp, m);
     }
     return m;
   });
@@ -569,7 +574,7 @@ function drawInline(
     let lineX = x;
     
     if (!isMeasure) {
-      // First pass: draw backgrounds for consecutive code spans
+      // First pass: draw backgrounds for code/mark spans.
       let tempX = x;
       let i = 0;
       const baseLineSize = line.length > 0 ? (line[0].style.size || FONT_SIZE.base) : FONT_SIZE.base;
@@ -580,47 +585,57 @@ function drawInline(
         updateCtx();
         const w = ctx.measureText(span.text).width;
         
-        if (currentStyle.code) {
-          // Find consecutive code spans
-          let codeEndX = tempX + w;
+        if (currentStyle.code || currentStyle.highlight) {
+          const isCodeSpan = currentStyle.code === true;
+          // Find consecutive spans of the same background kind.
+          let bgEndX = tempX + w;
           let j = i + 1;
-          while (j < line.length && line[j].style.code) {
-            currentStyle = line[j].style;
+          while (j < line.length) {
+            const s = line[j].style;
+            if (isCodeSpan) {
+              if (!s.code) break;
+            } else if (!s.highlight || s.code) {
+              break;
+            }
+            currentStyle = s;
             updateCtx();
-            codeEndX += ctx.measureText(line[j].text).width;
+            bgEndX += ctx.measureText(line[j].text).width;
             j++;
           }
-          
-          // Draw one background for all consecutive code spans
+
           const fontSize = span.style.size || FONT_SIZE.base;
           const baselineOffset = baseLineSize - fontSize;
-          const paddingX = Math.max(6, fontSize * 0.35);
-          const paddingY = Math.max(4, fontSize * 0.3);
-          const radius = 3;
+          const paddingX = isCodeSpan ? Math.max(6, fontSize * 0.35) : Math.max(2, fontSize * 0.12);
+          const paddingY = isCodeSpan ? Math.max(4, fontSize * 0.3) : Math.max(2, fontSize * 0.12);
+          const radius = isCodeSpan ? 3 : 2;
           const bgX = tempX - paddingX;
           const bgY = currentY + baselineOffset - paddingY / 2;
-          const bgWidth = (codeEndX - tempX) + paddingX * 2;
+          const bgWidth = (bgEndX - tempX) + paddingX * 2;
           const bgHeight = fontSize + paddingY;
-          
+
           const previousFill = ctx.fillStyle;
-          ctx.fillStyle = themeColors.inlineCodeBg;
-          ctx.beginPath();
-          ctx.moveTo(bgX + radius, bgY);
-          ctx.lineTo(bgX + bgWidth - radius, bgY);
-          ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
-          ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
-          ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
-          ctx.lineTo(bgX + radius, bgY + bgHeight);
-          ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
-          ctx.lineTo(bgX, bgY + radius);
-          ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
-          ctx.closePath();
-          ctx.fill();
+          ctx.fillStyle = isCodeSpan ? themeColors.inlineCodeBg : 'rgba(250, 204, 21, 0.24)';
+          if (isCodeSpan) {
+            ctx.beginPath();
+            ctx.moveTo(bgX + radius, bgY);
+            ctx.lineTo(bgX + bgWidth - radius, bgY);
+            ctx.quadraticCurveTo(bgX + bgWidth, bgY, bgX + bgWidth, bgY + radius);
+            ctx.lineTo(bgX + bgWidth, bgY + bgHeight - radius);
+            ctx.quadraticCurveTo(bgX + bgWidth, bgY + bgHeight, bgX + bgWidth - radius, bgY + bgHeight);
+            ctx.lineTo(bgX + radius, bgY + bgHeight);
+            ctx.quadraticCurveTo(bgX, bgY + bgHeight, bgX, bgY + bgHeight - radius);
+            ctx.lineTo(bgX, bgY + radius);
+            ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
+            ctx.closePath();
+            ctx.fill();
+          } else {
+            ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
+          }
           ctx.fillStyle = previousFill;
-          
-          // Skip to end of code sequence
+
+          // Skip to end of background sequence
           i = j;
-          tempX = codeEndX;
+          tempX = bgEndX;
         } else {
           tempX += w;
           i++;
@@ -643,13 +658,13 @@ function drawInline(
         
         ctx.fillText(span.text, lineX, currentY + baselineOffset);
         
-        if (currentStyle.link) {
+        if (currentStyle.link || currentStyle.underline) {
           // Draw underline below the text baseline
           const underlineY = currentY + baselineOffset + fontSize + 1;
           ctx.beginPath();
           ctx.moveTo(lineX, underlineY);
           ctx.lineTo(lineX + w, underlineY);
-          ctx.strokeStyle = themeColors.inlineCodeText;
+          ctx.strokeStyle = currentStyle.link ? themeColors.inlineCodeText : (currentStyle.color || themeColors.text);
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -865,7 +880,15 @@ function drawInline(
   };
 
   const inlineParseOptions = allowRawHtml ? { allowRawHtml: true } : undefined;
-  for (const tok of inlineTokens(u8, s, e, inlineParseOptions)) {
+  const RECURSION_LIMIT = 8;
+
+  const processRange = (rangeStart: number, rangeEnd: number, depth: number): void => {
+    for (const tok of inlineTokens(u8, rangeStart, rangeEnd, inlineParseOptions)) {
+      processToken(tok, depth);
+    }
+  };
+
+  const processToken = (tok: ReturnType<typeof inlineTokens> extends Generator<infer T> ? T : never, depth: number): void => {
     updateCtx();
     switch (tok.kind) {
       case 'text': {
@@ -878,7 +901,7 @@ function drawInline(
         const codeText = TD.decode(u8.subarray(tok.s, tok.e));
         const surroundingSize = currentStyle.size || FONT_SIZE.base;
         const codeSize = Math.round(surroundingSize * 0.9); // Slightly smaller than surrounding text
-        
+
         // Push style with code flag - background will be drawn during flush
         pushStyle({ code: true, color: themeColors.inlineCodeText, size: codeSize });
         addText(codeText);
@@ -902,15 +925,25 @@ function drawInline(
       }
 
       case 'link': {
-        pushStyle({ link: true, color: themeColors.link });
-        const linkText = TD.decode(u8.subarray(tok.textS, tok.textE));
-        addText(linkText);
-        popStyle();
+        const hrefText = TD.decode(u8.subarray(tok.hrefS, tok.hrefE));
+        const resolvedHref = resolveUrlRelativeToBase(hrefText, baseUrl);
+        const allowed = allowlist(resolvedHref);
+        if (allowed) {
+          pushStyle({ link: true, color: themeColors.link, underline: true });
+        }
+        if (depth < RECURSION_LIMIT) {
+          processRange(tok.textS, tok.textE, depth + 1);
+        } else {
+          addText(TD.decode(u8.subarray(tok.textS, tok.textE)));
+        }
+        if (allowed) {
+          popStyle();
+        }
         break;
       }
 
       case 'autolink':
-        pushStyle({ link: true, color: themeColors.link });
+        pushStyle({ link: true, color: themeColors.link, underline: true });
         addText(TD.decode(u8.subarray(tok.s, tok.e)));
         popStyle();
         break;
@@ -920,15 +953,20 @@ function drawInline(
         const rawTag = parseRawHtmlTag(TD.decode(u8.subarray(tok.s, tok.e)));
         if (!rawTag) break;
         const tagName = rawTag.name;
+
         const styleTag = (
           tagName === 'strong' || tagName === 'b' ? 'strong' :
           tagName === 'em' || tagName === 'i' ? 'em' :
-          tagName === 'code' ? 'code' :
+          tagName === 'code' || tagName === 'kbd' ? 'code' :
           tagName === 'del' || tagName === 's' ? 'strike' :
           tagName === 'a' ? 'a' :
           tagName === 'small' ? 'small' :
           tagName === 'sup' ? 'sup' :
           tagName === 'sub' ? 'sub' :
+          tagName === 'u' ? 'u' :
+          tagName === 'mark' ? 'mark' :
+          tagName === 'abbr' ? 'abbr' :
+          tagName === 'span' ? 'span' :
           null
         );
 
@@ -970,13 +1008,26 @@ function drawInline(
           } else if (styleTag === 'strike') {
             pushRawStyle(styleTag, { strike: true });
           } else if (styleTag === 'a') {
-            pushRawStyle(styleTag, { link: true, color: themeColors.link });
+            const rawHref = rawTag.attrs.get('href') ?? '';
+            if (rawHref) {
+              const resolvedHref = resolveUrlRelativeToBase(rawHref, baseUrl);
+              if (allowlist(resolvedHref)) {
+                pushRawStyle(styleTag, { link: true, color: themeColors.link, underline: true });
+              }
+            }
           } else if (styleTag === 'small') {
             const size = Math.max(10, Math.round((currentStyle.size || FONT_SIZE.base) * 0.9));
             pushRawStyle(styleTag, { size });
           } else if (styleTag === 'sup' || styleTag === 'sub') {
             const size = Math.max(9, Math.round((currentStyle.size || FONT_SIZE.base) * 0.75));
             pushRawStyle(styleTag, { size });
+          } else if (styleTag === 'u') {
+            pushRawStyle(styleTag, { underline: true });
+          } else if (styleTag === 'mark') {
+            pushRawStyle(styleTag, { highlight: true });
+          } else if (styleTag === 'abbr' || styleTag === 'span') {
+            // Preserve nesting semantics even when no visual style changes.
+            pushRawStyle(styleTag, {});
           }
 
           if (rawTag.selfClosing) {
@@ -1010,7 +1061,9 @@ function drawInline(
         popStyle();
         break;
     }
-  }
+  };
+
+  processRange(s, e, 0);
 
   if (line.length) flushLine();
   return { x: currentX, y: currentY };

@@ -88,6 +88,8 @@ export interface TextStyle {
   code?: boolean;
   link?: boolean;
   strike?: boolean;
+  underline?: boolean;
+  highlight?: boolean;
   color?: string;
   size?: number;
 }
