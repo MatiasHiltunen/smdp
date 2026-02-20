@@ -29,6 +29,38 @@ type RawHtmlTag = {
   attrs: Map<string, string>;
 };
 
+type RawHtmlTableCell = {
+  html: string;
+  plainText: string;
+  align: 'left' | 'center' | 'right';
+  rowSpan: number;
+  colSpan: number;
+  isHeader: boolean;
+};
+
+type RawHtmlTablePlacement = {
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
+  align: 'left' | 'center' | 'right';
+  isHeader: boolean;
+  htmlBytes: Uint8Array;
+  plainText: string;
+};
+
+type RawHtmlTableModel = {
+  colCount: number;
+  rowCount: number;
+  rowIsHeader: boolean[];
+  placements: RawHtmlTablePlacement[];
+};
+
+const RAW_HTML_TABLE_START_RE = /<\s*table\b/i;
+const RAW_HTML_TABLE_END_RE = /<\s*\/\s*table\s*>/i;
+const RAW_HTML_TABLE_ROW_RE = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+const RAW_HTML_TABLE_CELL_RE = /<(th|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+
 function decodeHtmlEntities(text: string): string {
   const toCodePoint = (value: number, fallback: string): string => {
     if (!Number.isInteger(value) || value < 0 || value > 0x10ffff) return fallback;
@@ -90,6 +122,316 @@ function parseRawHtmlTag(rawTag: string): RawHtmlTag | null {
   }
 
   return { name, closing, selfClosing, attrs };
+}
+
+function parseRawHtmlAttrs(attrText: string): Map<string, string> {
+  const attrs = new Map<string, string>();
+  RAW_HTML_ATTR_RE.lastIndex = 0;
+  for (const match of attrText.matchAll(RAW_HTML_ATTR_RE)) {
+    const attrName = match[1]?.toLowerCase();
+    if (!attrName) continue;
+    const value = match[2] ?? match[3] ?? match[4] ?? '';
+    attrs.set(attrName, value);
+  }
+  return attrs;
+}
+
+function parseSpanAttr(value: string | undefined): number {
+  if (!value) return 1;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.min(parsed, 64);
+}
+
+function parseAlignAttr(value: string | undefined, isHeader: boolean): 'left' | 'center' | 'right' {
+  const lower = (value ?? '').trim().toLowerCase();
+  if (lower === 'left' || lower === 'center' || lower === 'right') {
+    return lower;
+  }
+  return isHeader ? 'center' : 'left';
+}
+
+function sanitizeRawHtmlTableCellHtml(rawHtml: string): string {
+  return rawHtml
+    .replaceAll(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replaceAll(/<style\b[\s\S]*?<\/style>/gi, '')
+    .trim();
+}
+
+function htmlToPlainText(html: string): string {
+  const withoutTags = html.replaceAll(/<[^>]*>/g, ' ');
+  const decoded = decodeHtmlEntities(withoutTags);
+  return decoded.replaceAll(/\s+/g, ' ').trim();
+}
+
+function parseRawHtmlTableModel(rawLines: string[]): RawHtmlTableModel | null {
+  if (rawLines.length === 0) return null;
+
+  const tableHtml = rawLines.join('\n');
+  const parsedRows: RawHtmlTableCell[][] = [];
+  const encoder = new TextEncoder();
+
+  RAW_HTML_TABLE_ROW_RE.lastIndex = 0;
+  for (const rowMatch of tableHtml.matchAll(RAW_HTML_TABLE_ROW_RE)) {
+    const rowHtml = rowMatch[1];
+    const parsedCells: RawHtmlTableCell[] = [];
+
+    RAW_HTML_TABLE_CELL_RE.lastIndex = 0;
+    for (const cellMatch of rowHtml.matchAll(RAW_HTML_TABLE_CELL_RE)) {
+      const tag = cellMatch[1].toLowerCase();
+      const attrs = parseRawHtmlAttrs(cellMatch[2] ?? '');
+      const sanitizedHtml = sanitizeRawHtmlTableCellHtml(cellMatch[3] ?? '');
+      const isHeader = tag === 'th';
+
+      parsedCells.push({
+        html: sanitizedHtml,
+        plainText: htmlToPlainText(sanitizedHtml),
+        align: parseAlignAttr(attrs.get('align'), isHeader),
+        rowSpan: parseSpanAttr(attrs.get('rowspan')),
+        colSpan: parseSpanAttr(attrs.get('colspan')),
+        isHeader,
+      });
+    }
+
+    if (parsedCells.length > 0) {
+      parsedRows.push(parsedCells);
+    }
+  }
+
+  if (parsedRows.length === 0) return null;
+
+  const occupied: boolean[][] = [];
+  const rowIsHeader: boolean[] = [];
+  const placements: RawHtmlTablePlacement[] = [];
+  let colCount = 0;
+
+  for (let row = 0; row < parsedRows.length; row++) {
+    if (!occupied[row]) occupied[row] = [];
+    let col = 0;
+
+    for (const cell of parsedRows[row]) {
+      while (occupied[row][col]) col++;
+
+      const rowSpan = Math.max(1, cell.rowSpan);
+      const colSpan = Math.max(1, cell.colSpan);
+      const htmlBytes = encoder.encode(cell.html);
+
+      placements.push({
+        row,
+        col,
+        rowSpan,
+        colSpan,
+        align: cell.align,
+        isHeader: cell.isHeader,
+        htmlBytes,
+        plainText: cell.plainText,
+      });
+
+      for (let r = row; r < row + rowSpan; r++) {
+        if (!occupied[r]) occupied[r] = [];
+        for (let c = col; c < col + colSpan; c++) {
+          occupied[r][c] = true;
+        }
+      }
+
+      if (cell.isHeader) {
+        for (let r = row; r < row + rowSpan; r++) {
+          rowIsHeader[r] = true;
+        }
+      }
+
+      col += colSpan;
+    }
+
+    colCount = Math.max(colCount, occupied[row].length, col);
+  }
+
+  const rowCount = Math.max(parsedRows.length, occupied.length);
+  if (rowCount <= 0 || colCount <= 0) return null;
+
+  for (let i = 0; i < rowCount; i++) {
+    rowIsHeader[i] = rowIsHeader[i] === true;
+  }
+
+  return { colCount, rowCount, rowIsHeader, placements };
+}
+
+function renderRawHtmlTableCellContent(
+  cell: RawHtmlTablePlacement,
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  maxWidth: number,
+  clipHeight: number,
+  baseSize: number,
+  color: string,
+  isMeasure: boolean,
+  onImageLoad: (() => void) | undefined,
+  urlAllowlist: (url: string) => boolean,
+  baseUrl: string | undefined,
+): void {
+  if (maxWidth <= 0) return;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y - baseSize, maxWidth, Math.max(baseSize * 2, clipHeight));
+  ctx.clip();
+
+  const measureFont = getFontString(cell.isHeader, false, baseSize, false);
+  const totalWidth = measureWidth(ctx, cell.plainText, measureFont);
+  let offsetX = x;
+  if (cell.align === 'center') {
+    offsetX = x + (maxWidth - totalWidth) / 2;
+  } else if (cell.align === 'right') {
+    offsetX = x + maxWidth - totalWidth;
+  }
+
+  drawInline(
+    cell.htmlBytes,
+    0,
+    cell.htmlBytes.length,
+    ctx,
+    offsetX,
+    y,
+    Number.MAX_SAFE_INTEGER,
+    isMeasure,
+    { size: baseSize, color, bold: cell.isHeader },
+    onImageLoad,
+    urlAllowlist,
+    baseUrl,
+    true,
+    true,
+  );
+
+  ctx.restore();
+}
+
+function renderRawHtmlTableModel(
+  table: RawHtmlTableModel,
+  ctx: CanvasRenderingContext2D,
+  y: number,
+  indent: number,
+  maxWidth: number,
+  isMeasure: boolean,
+  themeColors: ReturnType<typeof getThemeColors>,
+  onImageLoad: (() => void) | undefined,
+  urlAllowlist: (url: string) => boolean,
+  baseUrl: string | undefined,
+): number {
+  const cellPadding = 10;
+  const headerRowHeight = FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 2;
+  const dataRowHeight = FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.8;
+  const rowHeights = new Array<number>(table.rowCount);
+  for (let i = 0; i < table.rowCount; i++) {
+    rowHeights[i] = table.rowIsHeader[i] ? headerRowHeight : dataRowHeight;
+  }
+
+  let colWidths = new Array<number>(table.colCount).fill(80);
+  for (const cell of table.placements) {
+    const font = getFontString(cell.isHeader, false, FONT_SIZE.base, false);
+    const textForMeasure = cell.plainText || ' ';
+    const measured = measureWidth(ctx, textForMeasure, font);
+    const desired = measured + cellPadding * 2;
+
+    if (cell.colSpan === 1) {
+      colWidths[cell.col] = Math.max(colWidths[cell.col], desired);
+      continue;
+    }
+
+    const perCol = desired / cell.colSpan;
+    for (let c = 0; c < cell.colSpan && cell.col + c < colWidths.length; c++) {
+      colWidths[cell.col + c] = Math.max(colWidths[cell.col + c], perCol);
+    }
+  }
+
+  let tableWidth = colWidths.reduce((sum, w) => sum + w, 0);
+  if (tableWidth > maxWidth && tableWidth > 0) {
+    const scale = maxWidth / tableWidth;
+    colWidths = colWidths.map((w) => Math.max(56, w * scale));
+    tableWidth = colWidths.reduce((sum, w) => sum + w, 0);
+  }
+
+  const colOffsets = new Array<number>(table.colCount + 1);
+  colOffsets[0] = 0;
+  for (let i = 0; i < table.colCount; i++) {
+    colOffsets[i + 1] = colOffsets[i] + colWidths[i];
+  }
+
+  const rowOffsets = new Array<number>(table.rowCount + 1);
+  rowOffsets[0] = 0;
+  for (let i = 0; i < table.rowCount; i++) {
+    rowOffsets[i + 1] = rowOffsets[i] + rowHeights[i];
+  }
+
+  const tableHeight = rowOffsets[table.rowCount];
+  const tableX = MARGIN + indent;
+  const tableY = y;
+  const tableRadius = 4;
+
+  if (!isMeasure) {
+    ctx.save();
+    ctx.fillStyle = themeColors.bgSecondary;
+    ctx.beginPath();
+    ctx.moveTo(tableX + tableRadius, tableY);
+    ctx.lineTo(tableX + tableWidth - tableRadius, tableY);
+    ctx.quadraticCurveTo(tableX + tableWidth, tableY, tableX + tableWidth, tableY + tableRadius);
+    ctx.lineTo(tableX + tableWidth, tableY + tableHeight - tableRadius);
+    ctx.quadraticCurveTo(tableX + tableWidth, tableY + tableHeight, tableX + tableWidth - tableRadius, tableY + tableHeight);
+    ctx.lineTo(tableX + tableRadius, tableY + tableHeight);
+    ctx.quadraticCurveTo(tableX, tableY + tableHeight, tableX, tableY + tableHeight - tableRadius);
+    ctx.lineTo(tableX, tableY + tableRadius);
+    ctx.quadraticCurveTo(tableX, tableY, tableX + tableRadius, tableY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    let bodyRowIndex = 0;
+    for (let row = 0; row < table.rowCount; row++) {
+      if (table.rowIsHeader[row]) continue;
+      if (bodyRowIndex % 2 === 1) {
+        const rowY = tableY + rowOffsets[row];
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.02)';
+        ctx.fillRect(tableX, rowY, tableWidth, rowHeights[row]);
+      }
+      bodyRowIndex++;
+    }
+  }
+
+  for (const cell of table.placements) {
+    const colStart = cell.col;
+    const colEnd = Math.min(table.colCount, colStart + cell.colSpan);
+    const rowStart = cell.row;
+    const rowEnd = Math.min(table.rowCount, rowStart + cell.rowSpan);
+
+    const cellX = tableX + colOffsets[colStart];
+    const cellY = tableY + rowOffsets[rowStart];
+    const cellWidth = colOffsets[colEnd] - colOffsets[colStart];
+    const cellHeight = rowOffsets[rowEnd] - rowOffsets[rowStart];
+
+    if (!isMeasure) {
+      ctx.strokeStyle = themeColors.border;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
+
+      const textY = cellY + Math.max(0, (cellHeight - FONT_SIZE.base) / 2);
+      renderRawHtmlTableCellContent(
+        cell,
+        ctx,
+        cellX + cellPadding,
+        textY,
+        Math.max(0, cellWidth - cellPadding * 2),
+        cellHeight,
+        FONT_SIZE.base,
+        cell.isHeader ? themeColors.text : themeColors.textSecondary,
+        isMeasure,
+        onImageLoad,
+        urlAllowlist,
+        baseUrl,
+      );
+    }
+  }
+
+  return tableY + tableHeight;
 }
 
 // Font string cache for common font combinations
@@ -1123,6 +1465,8 @@ function renderCanvas(
   let infoType = 'info';
   let pendingTableHeader: { cells: Array<{ s: number; e: number; align: 'left' | 'center' | 'right' }> } | null = null;
   let pendingTableRows: Array<{ cells: Array<{ s: number; e: number }> }> = [];
+  let pendingRawHtmlTableLines: string[] | null = null;
+  const utf8Encoder = new TextEncoder();
 
   const closePara = (): void => {
     if (paraOpen) {
@@ -1139,8 +1483,65 @@ function renderCanvas(
     }
   };
 
+  const flushPendingRawHtmlTable = (): void => {
+    if (!pendingRawHtmlTableLines || pendingRawHtmlTableLines.length === 0) {
+      pendingRawHtmlTableLines = null;
+      return;
+    }
+
+    const parsed = parseRawHtmlTableModel(pendingRawHtmlTableLines);
+    if (parsed) {
+      y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
+      y = renderRawHtmlTableModel(
+        parsed,
+        ctx,
+        y,
+        indent,
+        maxWidth - indent,
+        isMeasure,
+        themeColors,
+        opts.onImageLoad,
+        urlAllowlist,
+        baseUrl,
+      );
+      y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
+      pendingRawHtmlTableLines = null;
+      return;
+    }
+
+    const baseSize = FONT_SIZE.base;
+    for (const rawLine of pendingRawHtmlTableLines) {
+      const rawBytes = utf8Encoder.encode(rawLine);
+      const rawRes = drawInline(
+        rawBytes,
+        0,
+        rawBytes.length,
+        ctx,
+        MARGIN + indent,
+        y,
+        maxWidth - indent,
+        isMeasure,
+        { size: baseSize, color: themeColors.text },
+        opts.onImageLoad,
+        urlAllowlist,
+        baseUrl,
+        parserOptions.allowRawHtml === true,
+        true,
+      );
+      if (rawRes.y > y) {
+        y = rawRes.y;
+      }
+    }
+
+    pendingRawHtmlTableLines = null;
+  };
+
   const blockParseOptions = parserOptions.allowRawHtml ? { allowRawHtml: true } : undefined;
   for (const ev of blocks(u8, blockParseOptions)) {
+    if (pendingRawHtmlTableLines && ev.type !== 'rawHtmlLine') {
+      flushPendingRawHtmlTable();
+    }
+
     switch (ev.type) {
       case 'bqOpen':
         closePara();
@@ -1353,6 +1754,30 @@ function renderCanvas(
       }
 
       case 'rawHtmlLine': {
+        if (parserOptions.allowRawHtml === true) {
+          const rawLine = TD.decode(u8.subarray(ev.s, ev.e));
+          const opensTable = RAW_HTML_TABLE_START_RE.test(rawLine);
+          const closesTable = RAW_HTML_TABLE_END_RE.test(rawLine);
+
+          if (pendingRawHtmlTableLines) {
+            pendingRawHtmlTableLines.push(rawLine);
+            if (closesTable) {
+              flushPendingRawHtmlTable();
+            }
+            break;
+          }
+
+          if (opensTable) {
+            closePara();
+            closeListsAll();
+            pendingRawHtmlTableLines = [rawLine];
+            if (closesTable) {
+              flushPendingRawHtmlTable();
+            }
+            break;
+          }
+        }
+
         closePara();
         closeListsAll();
         const baseSize = FONT_SIZE.base;
@@ -1372,6 +1797,7 @@ function renderCanvas(
           urlAllowlist,
           baseUrl,
           parserOptions.allowRawHtml === true,
+          true,
         );
         if (rawRes.y > beforeY) {
           y = rawRes.y;
@@ -1641,6 +2067,10 @@ function renderCanvas(
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.2;
         break;
     }
+  }
+
+  if (pendingRawHtmlTableLines) {
+    flushPendingRawHtmlTable();
   }
 
   closePara();
