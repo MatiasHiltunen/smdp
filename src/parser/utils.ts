@@ -583,6 +583,60 @@ export function isUrlAllowed(u8: Uint8Array, s: number, e: number): boolean {
 
 const ABSOLUTE_PROTOCOL_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 const URL_RESOLUTION_BASE = 'https://smdp.invalid/';
+const MARKDOWN_PATH_RE = /\.(md|markdown|mdown|mdx)$/i;
+const IMAGE_PATH_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|tiff?|webp)$/i;
+
+function splitPathSegments(pathname: string): string[] {
+  return pathname.split('/').filter(Boolean);
+}
+
+function normalizeGitHubContentUrl(urlLike: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlLike);
+  } catch {
+    return urlLike;
+  }
+
+  if (parsed.hostname === 'raw.githubusercontent.com') {
+    return urlLike;
+  }
+
+  if (parsed.hostname !== 'github.com') {
+    return urlLike;
+  }
+
+  const segments = splitPathSegments(parsed.pathname);
+  if (segments.length < 5) {
+    return urlLike;
+  }
+
+  const owner = segments[0];
+  const repo = segments[1];
+  const marker = segments[2];
+  const ref = segments[3];
+  const restPath = segments.slice(4).join('/');
+
+  if (!owner || !repo || !ref || !restPath) {
+    return urlLike;
+  }
+
+  if (marker !== 'blob' && marker !== 'raw') {
+    return urlLike;
+  }
+
+  const lowerPath = restPath.toLowerCase();
+  if (!MARKDOWN_PATH_RE.test(lowerPath) && !IMAGE_PATH_RE.test(lowerPath)) {
+    return urlLike;
+  }
+
+  const normalized = new URL(
+    `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${restPath}`,
+  );
+  normalized.search = parsed.search;
+  normalized.hash = parsed.hash;
+  return normalized.toString();
+}
 
 export function defaultUrlAllowlist(url: string): boolean {
   const trimmed = url.trim();
@@ -599,20 +653,25 @@ export function defaultUrlAllowlist(url: string): boolean {
 }
 
 export function resolveUrlRelativeToBase(url: string, baseUrl: string | undefined): string {
-  if (!baseUrl) {
-    return url;
-  }
   const trimmed = url.trim();
   if (!trimmed) {
     return url;
   }
+
+  const normalizedDirect = normalizeGitHubContentUrl(trimmed);
+  const directResult = normalizedDirect === trimmed ? url : normalizedDirect;
+
+  if (!baseUrl) {
+    return directResult;
+  }
+
   if (trimmed.startsWith('//') || ABSOLUTE_PROTOCOL_RE.test(trimmed)) {
-    return url;
+    return directResult;
   }
   try {
     const resolved = new URL(trimmed, baseUrl);
-    return resolved.toString();
+    return normalizeGitHubContentUrl(resolved.toString());
   } catch {
-    return url;
+    return directResult;
   }
 }

@@ -96,3 +96,24 @@ test("allowRawHtml supports sanitized html table blocks", async () => {
   assert.ok(!html.includes("<p><table>"));
   assert.ok(!html.includes("</br>"));
 });
+
+test("allowRawHtml rewrites GitHub blob URLs only for markdown and images", async () => {
+  const parser = new MDParser();
+  const markdown = [
+    '<img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Splash">',
+    '<a href="https://github.com/openai/codex/blob/main/README.md">README</a>',
+    '<a href="https://github.com/openai/codex/blob/main/package-lock.json">Lock</a>',
+  ].join(" ");
+
+  const html = await parser.parse(u8(markdown), { allowRawHtml: true });
+
+  assert.ok(
+    html.includes('src="https://raw.githubusercontent.com/openai/codex/main/.github/codex-cli-splash.png"'),
+  );
+  assert.ok(
+    html.includes('href="https://raw.githubusercontent.com/openai/codex/main/README.md"'),
+  );
+  assert.ok(
+    html.includes('href="https://github.com/openai/codex/blob/main/package-lock.json"'),
+  );
+});

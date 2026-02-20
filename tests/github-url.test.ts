@@ -7,13 +7,29 @@ import {
   normalizeGitHubUrlToRaw,
 } from "../src/client/github-url";
 
-test("normalizes GitHub blob URLs to raw content URLs", () => {
+test("normalizes GitHub blob markdown URLs to raw content URLs", () => {
   const input = "https://github.com/org/repo/blob/main/docs/intro.md";
   const normalized = normalizeGitHubUrlToRaw(input);
   assert.equal(
     normalized,
     "https://raw.githubusercontent.com/org/repo/main/docs/intro.md",
   );
+});
+
+test("normalizes GitHub blob image URLs to raw content URLs", () => {
+  const input =
+    "https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png";
+  const normalized = normalizeGitHubUrlToRaw(input);
+  assert.equal(
+    normalized,
+    "https://raw.githubusercontent.com/openai/codex/main/.github/codex-cli-splash.png",
+  );
+});
+
+test("preserves GitHub blob URLs for non-markdown and non-image files", () => {
+  const input = "https://github.com/openai/codex/blob/main/package-lock.json";
+  const normalized = normalizeGitHubUrlToRaw(input);
+  assert.equal(normalized, input);
 });
 
 test("canonicalizes markdown document URLs and strips query/hash", () => {

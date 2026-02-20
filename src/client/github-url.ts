@@ -1,4 +1,5 @@
 const MARKDOWN_EXT_RE = /\.(md|markdown|mdown|mdx)$/i;
+const IMAGE_EXT_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|tiff?|webp)$/i;
 
 function splitPathSegments(pathname: string): string[] {
   return pathname.split("/").filter(Boolean);
@@ -50,6 +51,13 @@ export function normalizeGitHubUrlToRaw(urlLike: string): string {
   }
 
   if (marker !== "blob" && marker !== "raw") {
+    return parsed.toString();
+  }
+
+  const lowerPath = restPath.toLowerCase();
+  const shouldNormalize =
+    MARKDOWN_EXT_RE.test(lowerPath) || IMAGE_EXT_RE.test(lowerPath);
+  if (!shouldNormalize) {
     return parsed.toString();
   }
 
