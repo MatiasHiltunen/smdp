@@ -21,6 +21,7 @@ type RenderMessage = {
   requestId: number;
   markdownBuffer: ArrayBufferLike;
   width: number;
+  minHeight: number;
   dpr: number;
   parserOptions: WorkerRenderParserOptions;
   themeColors: CanvasThemeColors;
@@ -58,6 +59,7 @@ type ActiveRender = {
   requestId: number;
   bytes: Uint8Array;
   width: number;
+  minHeight: number;
   dpr: number;
   parserOptions: WorkerRenderParserOptions;
   themeColors: CanvasThemeColors;
@@ -146,9 +148,10 @@ async function performRender(request: ActiveRender): Promise<void> {
       dpr: request.dpr,
       themeColors: request.themeColors,
     }) + MARGIN * 2;
+    const renderHeight = Math.max(totalHeight, request.minHeight);
 
     offscreenCanvas.width = Math.max(1, Math.ceil(request.width * request.dpr));
-    offscreenCanvas.height = Math.max(1, Math.ceil(totalHeight * request.dpr));
+    offscreenCanvas.height = Math.max(1, Math.ceil(renderHeight * request.dpr));
 
     const drawCtx = offscreenCanvas.getContext('2d', {
       alpha: true,
@@ -179,7 +182,7 @@ async function performRender(request: ActiveRender): Promise<void> {
       type: 'rendered',
       requestId: request.requestId,
       width: request.width,
-      height: totalHeight,
+      height: renderHeight,
     } satisfies OutputMessage);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -235,6 +238,7 @@ scope.onmessage = (event: MessageEvent<InputMessage>) => {
       requestId: message.requestId,
       bytes: new Uint8Array(message.markdownBuffer),
       width: message.width,
+      minHeight: message.minHeight,
       dpr: message.dpr,
       parserOptions: message.parserOptions,
       themeColors: message.themeColors,

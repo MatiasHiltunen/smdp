@@ -192,6 +192,63 @@ body.is-editing .floating-toggle {
   user-select: none;
 }
 
+body.mode-canvas {
+  display: block;
+  min-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+body.mode-canvas::before,
+body.mode-canvas::after {
+  display: none;
+}
+
+body.mode-canvas .app-shell.mode-canvas {
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  display: block;
+}
+
+body.mode-canvas .canvas-pane {
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body.mode-canvas .canvas-scroll {
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 0;
+}
+
+body.mode-canvas .md-canvas {
+  width: 100vw;
+  max-width: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  margin: 0;
+}
+
 .markdown-viewer {
   width: 100%;
   max-width: min(92ch, 100%);

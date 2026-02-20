@@ -2387,6 +2387,8 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
   
   measureCtx.scale(dpr, dpr);
   const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender, parserOptions: options }) + MARGIN * 2;
+  const minRenderHeight = scrollEl ? scrollEl.clientHeight : 0;
+  const renderHeight = Math.max(totalHeight, minRenderHeight);
 
   const viewportHeight = scrollEl ? scrollEl.clientHeight : totalHeight;
   // Use a dynamic threshold relative to current viewport height (2x viewport)
@@ -2394,9 +2396,9 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
 
   if (!needsVirtualScroll || !scrollEl) {
     canvas.width = styleWidth * dpr;
-    canvas.height = totalHeight * dpr;
+    canvas.height = renderHeight * dpr;
     canvas.style.width = `${styleWidth}px`;
-    canvas.style.height = `${totalHeight}px`;
+    canvas.style.height = `${renderHeight}px`;
     canvas.style.position = 'static';
     const ctx = canvas.getContext('2d', { 
       willReadFrequently: false,
@@ -2549,6 +2551,7 @@ type WorkerRenderMessage = {
   requestId: number;
   markdownBuffer: ArrayBufferLike;
   width: number;
+  minHeight: number;
   dpr: number;
   parserOptions: WorkerRenderParserOptions;
   themeColors: CanvasThemeColors;
@@ -2769,6 +2772,8 @@ function renderToCanvasFromWorker(u8: Uint8Array, canvas: HTMLCanvasElement, opt
 
   const rect = canvas.getBoundingClientRect();
   const styleWidth = rect.width || 800;
+  const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
+  const minHeight = scrollEl ? scrollEl.clientHeight : 0;
   const dpr = window.devicePixelRatio || 1;
   const parserOptions: WorkerRenderParserOptions = {
     ...(options.allowRawHtml !== undefined ? { allowRawHtml: options.allowRawHtml } : {}),
@@ -2789,6 +2794,7 @@ function renderToCanvasFromWorker(u8: Uint8Array, canvas: HTMLCanvasElement, opt
       requestId,
       markdownBuffer: bufferView.buffer,
       width: styleWidth,
+      minHeight,
       dpr,
       parserOptions,
       themeColors,

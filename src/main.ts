@@ -221,12 +221,13 @@ async function init(): Promise<void> {
   }
 
   const route = parseRoute();
+  document.body.classList.toggle("mode-canvas", route.mode === "canvas");
   if (route.mode === "test_e2e") {
     document.body.classList.remove("hydrating");
     mountE2ETestRunner(route.externalUrl);
     return;
   }
-  const allowRawHtml = route.bookEntryUrl !== null || route.mode === "canvas";
+  const allowRawHtml = route.bookEntryUrl !== null;
 
   let view: HtmlView | CanvasView;
   let applyRender: (
