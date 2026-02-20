@@ -227,7 +227,9 @@ async function init(): Promise<void> {
     mountE2ETestRunner(route.externalUrl);
     return;
   }
-  const allowRawHtml = route.bookEntryUrl !== null;
+  // Canvas mode keeps raw HTML enabled so supported safe tags (tables, links,
+  // emphasis, inline images, etc.) render consistently with book mode.
+  const allowRawHtml = route.bookEntryUrl !== null || route.mode === "canvas";
 
   let view: HtmlView | CanvasView;
   let applyRender: (

@@ -194,11 +194,18 @@ function parseSpanAttr(value: string | undefined): number {
   return Math.min(parsed, 64);
 }
 
-function parseAlignAttr(value: string | undefined, isHeader: boolean): 'left' | 'center' | 'right' {
-  const lower = (value ?? '').trim().toLowerCase();
+function parseAlignAttr(attrs: Map<string, string>, isHeader: boolean): 'left' | 'center' | 'right' {
+  const lower = (attrs.get('align') ?? '').trim().toLowerCase();
   if (lower === 'left' || lower === 'center' || lower === 'right') {
     return lower;
   }
+
+  const style = attrs.get('style') ?? '';
+  const styleAlign = /\btext-align\s*:\s*(left|center|right)\b/i.exec(style);
+  if (styleAlign) {
+    return styleAlign[1].toLowerCase() as 'left' | 'center' | 'right';
+  }
+
   return isHeader ? 'center' : 'left';
 }
 
@@ -237,7 +244,7 @@ function parseRawHtmlTableModel(rawLines: string[]): RawHtmlTableModel | null {
       parsedCells.push({
         html: sanitizedHtml,
         plainText: htmlToPlainText(sanitizedHtml),
-        align: parseAlignAttr(attrs.get('align'), isHeader),
+        align: parseAlignAttr(attrs, isHeader),
         rowSpan: parseSpanAttr(attrs.get('rowspan')),
         colSpan: parseSpanAttr(attrs.get('colspan')),
         isHeader,
