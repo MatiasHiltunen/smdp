@@ -5,6 +5,7 @@ import {
   defaultTheme,
 } from './theme-builder';
 import { serializeTheme, deserializeTheme } from './theme-serializer';
+import { emitThemeChange } from '../client/theme-events';
 
 export type ThemeEditorHandle = {
   root: HTMLElement;
@@ -312,11 +313,16 @@ function createInputField(labelText: string, id: string, key: string): { field: 
   }
 }
 
-export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle {
-  // Load theme from URL if present
-  const hasUrlTheme = loadThemeFromUrl(builder);
+export function initializeThemeEditor(
+  builder: ThemeBuilder,
+  options: { loadFromUrl?: boolean } = {},
+): ThemeEditorHandle {
+  // Load theme from URL if present unless caller already applied URL overrides.
+  const shouldLoadFromUrl = options.loadFromUrl !== false;
+  const hasUrlTheme = shouldLoadFromUrl && loadThemeFromUrl(builder);
   if (hasUrlTheme) {
     builder.apply();
+    emitThemeChange('url');
   }
   
   const wrapper = document.createElement('div');
@@ -582,6 +588,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
     }
     builder.apply();
     saveThemeToUrl(builder);
+    emitThemeChange('editor');
   };
 
   // Handle color picker changes
@@ -628,6 +635,7 @@ export function initializeThemeEditor(builder: ThemeBuilder): ThemeEditorHandle 
     builder.apply();
     saveThemeToUrl(builder);
     refresh();
+    emitThemeChange('reset');
   });
 
   closeButton.addEventListener('click', () => {

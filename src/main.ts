@@ -2,11 +2,15 @@ import { decodeBase64Markdown } from "./data-link";
 import { MDParser, u8 } from "./parser/index";
 import {
   initializeThemeEditor,
-  loadThemeFromUrl,
   type ThemeEditorHandle,
 } from "./theme/theme-editor";
 import "./style.css";
-import { applyTheme, getCurrentTheme, getThemeBuilder } from "./client/theme";
+import {
+  applyTheme,
+  applyThemeUrlOverrides,
+  getCurrentTheme,
+  getThemeBuilder,
+} from "./client/theme";
 import { parseRoute } from "./client/routing";
 import { BookLoader } from "./client/book";
 import {
@@ -20,6 +24,8 @@ import { canonicalizeBookLink } from "./client/github-url";
 import { sanitizeSharedDataBaseUrl } from "./client/shared-data";
 import { createFabMenu, displayError } from "./client/ui";
 import { TD } from "./parser/constants";
+import { onThemeChange } from "./client/theme-events";
+import { mountE2ETestRunner } from "./client/e2e";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -32,7 +38,7 @@ const parser = new MDParser({
 function ensureThemeEditor(): ThemeEditorHandle {
   if (!themeEditorHandle) {
     const themeBuilder = getThemeBuilder();
-    themeEditorHandle = initializeThemeEditor(themeBuilder);
+    themeEditorHandle = initializeThemeEditor(themeBuilder, { loadFromUrl: false });
   }
   return themeEditorHandle;
 }
@@ -69,7 +75,7 @@ function enableRealtimeUpdates(
   apply: (bytes: Uint8Array, baseUrl?: string, allowRawHtml?: boolean) => Promise<void>,
   resolveBaseUrl: () => string | undefined,
   resolveAllowRawHtml: () => boolean,
-): void {
+): () => void {
   const DEBOUNCE_MS = 80;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let renderInFlight = false;
@@ -108,10 +114,20 @@ function enableRealtimeUpdates(
     }, DEBOUNCE_MS);
   };
 
-  view.textarea.addEventListener("input", () => {
+  const onInput = () => {
     rerenderRequested = true;
     scheduleRender();
-  });
+  };
+
+  view.textarea.addEventListener("input", onInput);
+
+  return () => {
+    view.textarea.removeEventListener("input", onInput);
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+  };
 }
 
 function preserveThemeQueryParams(target: URL): void {
@@ -177,32 +193,53 @@ function rewriteBookLinksInViewer(
 
 async function init(): Promise<void> {
   document.body.classList.add("hydrating");
+  const cleanupFns: Array<() => void> = [];
+  const registerCleanup = (fn: () => void): void => {
+    cleanupFns.push(fn);
+  };
+  const runCleanup = (): void => {
+    while (cleanupFns.length > 0) {
+      const fn = cleanupFns.pop();
+      try {
+        fn?.();
+      } catch (error) {
+        console.warn("cleanup failed", error);
+      }
+    }
+  };
+  window.addEventListener("pagehide", runCleanup, { once: true });
 
   const initialTheme = getCurrentTheme();
-  applyTheme(initialTheme, themeEditorHandle, false);
+  applyTheme(initialTheme, themeEditorHandle, false, false, "init");
 
   // Apply theme overrides from URL for both shared and normal modes.
   // Ensures shared/embed pages pick up style params supplied in the query string.
   const themeBuilder = getThemeBuilder();
-  const hasUrlTheme = loadThemeFromUrl(themeBuilder);
-  if (hasUrlTheme) {
+  const hasUrlTheme = applyThemeUrlOverrides(themeEditorHandle);
+  if (!hasUrlTheme) {
     themeBuilder.apply();
-    // If a theme editor exists, refresh it; otherwise it's a no-op and
-    // when the editor is later created it will reflect current builder state.
-    themeEditorHandle?.refresh();
   }
 
   const route = parseRoute();
+  if (route.mode === "test_e2e") {
+    document.body.classList.remove("hydrating");
+    mountE2ETestRunner(route.externalUrl);
+    return;
+  }
   const allowRawHtml = route.bookEntryUrl !== null || route.mode === "canvas";
 
   let view: HtmlView | CanvasView;
-  let apply: (bytes: Uint8Array, baseUrl?: string, allowRawHtml?: boolean) => Promise<void>;
+  let applyRender: (
+    bytes: Uint8Array,
+    baseUrl?: string,
+    allowRawHtml?: boolean,
+  ) => Promise<void>;
   let themeEditorLocal: ThemeEditorHandle | null = null;
 
   if (route.mode === "canvas") {
     const canvasView = createCanvasView();
     view = canvasView;
-    apply = async (bytes, baseUrl, allowRawHtmlOverride) => {
+    applyRender = async (bytes, baseUrl, allowRawHtmlOverride) => {
       applyMarkdownToCanvas(
         canvasView,
         bytes,
@@ -213,7 +250,7 @@ async function init(): Promise<void> {
   } else {
     const htmlView = createHtmlView();
     view = htmlView;
-    apply = (bytes, baseUrl, allowRawHtmlOverride) =>
+    applyRender = (bytes, baseUrl, allowRawHtmlOverride) =>
       applyMarkdownToHtml(
         htmlView,
         bytes,
@@ -221,6 +258,28 @@ async function init(): Promise<void> {
         allowRawHtmlOverride ?? false,
       );
   }
+
+  let latestBytes = u8("");
+  let latestBaseUrl: string | undefined;
+  let latestAllowRawHtml = allowRawHtml;
+
+  const apply = async (
+    bytes: Uint8Array,
+    baseUrl?: string,
+    allowRawHtmlOverride?: boolean,
+  ): Promise<void> => {
+    latestBytes = bytes;
+    latestBaseUrl = baseUrl;
+    latestAllowRawHtml = allowRawHtmlOverride ?? false;
+    await applyRender(bytes, baseUrl, latestAllowRawHtml);
+  };
+
+  const rerenderCurrent = async (): Promise<void> => {
+    if (!latestBytes || latestBytes.byteLength === 0) {
+      return;
+    }
+    await apply(latestBytes, latestBaseUrl, latestAllowRawHtml);
+  };
 
   document.body.classList.remove("is-editing");
   document.body.replaceChildren(view.shell);
@@ -357,7 +416,7 @@ async function init(): Promise<void> {
       bookLoader.prefetchInBackground();
     };
 
-    htmlView.viewer.addEventListener("click", (event) => {
+    const onBookLinkClick = (event: Event): void => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
       const link = target.closest("a[data-book-part]") as HTMLAnchorElement | null;
@@ -370,9 +429,11 @@ async function init(): Promise<void> {
         console.error("Unable to navigate to book chapter", error);
         displayError("Unable to open linked chapter");
       });
-    });
+    };
+    htmlView.viewer.addEventListener("click", onBookLinkClick);
+    registerCleanup(() => htmlView.viewer.removeEventListener("click", onBookLinkClick));
 
-    window.addEventListener("popstate", () => {
+    const onBookPopState = () => {
       const nextRoute = parseRoute();
       if (!nextRoute.bookEntryUrl || !bookLoader) return;
       const partUrl = nextRoute.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
@@ -380,19 +441,65 @@ async function init(): Promise<void> {
       void navigateToBookPart(partUrl, anchor, false).catch((error) => {
         console.error("Unable to restore book navigation state", error);
       });
-    });
+    };
+    window.addEventListener("popstate", onBookPopState);
+    registerCleanup(() => window.removeEventListener("popstate", onBookPopState));
   }
 
   if (!route.shared) {
-
-
-
-    enableRealtimeUpdates(
+    const stopRealtimeUpdates = enableRealtimeUpdates(
       view,
       apply,
       () => currentBaseUrl,
       () => allowRawHtml,
     );
+    registerCleanup(stopRealtimeUpdates);
+  }
+
+  if (route.mode === "canvas") {
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleCanvasRerender = (): void => {
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
+      }
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        void rerenderCurrent().catch((error) => {
+          console.error("Canvas rerender failed after resize/theme change", error);
+        });
+      }, 120);
+    };
+
+    const onResize = (): void => {
+      scheduleCanvasRerender();
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+    registerCleanup(() => window.removeEventListener("resize", onResize));
+
+    const removeThemeListener = onThemeChange(() => {
+      scheduleCanvasRerender();
+    });
+    registerCleanup(removeThemeListener);
+
+    const canvasView = view as CanvasView;
+    if (typeof ResizeObserver !== "undefined") {
+      const resizeObserver = new ResizeObserver(() => {
+        scheduleCanvasRerender();
+      });
+      const resizeTarget =
+        canvasView.canvas.parentElement?.closest(".canvas-scroll") ??
+        canvasView.canvas.parentElement ??
+        canvasView.canvas;
+      resizeObserver.observe(resizeTarget);
+      registerCleanup(() => resizeObserver.disconnect());
+    }
+
+    registerCleanup(() => {
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
+        resizeTimer = null;
+      }
+    });
   }
 }
 

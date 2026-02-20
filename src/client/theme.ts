@@ -5,6 +5,8 @@ import {
   type ThemeBuilder,
 } from "../theme";
 import type { ThemeEditorHandle } from "../theme/theme-editor";
+import { loadThemeFromUrl } from "../theme/theme-editor";
+import { emitThemeChange, type ThemeChangeSource } from "./theme-events";
 
 let themeBuilder: ThemeBuilder | null = null;
 
@@ -37,6 +39,8 @@ export function applyTheme(
   theme: "light" | "dark",
   themeEditorHandle: ThemeEditorHandle | null,
   preserveCustomizations: boolean = false,
+  emitChange: boolean = true,
+  source: ThemeChangeSource = "toggle",
 ): void {
   const builder = getThemeBuilder();
   const config = theme === "light" ? lightTheme : defaultTheme;
@@ -62,6 +66,21 @@ export function applyTheme(
     // ignore storage errors
   }
   themeEditorHandle?.refresh();
+  if (emitChange) {
+    emitThemeChange(source, theme);
+  }
+}
+
+export function applyThemeUrlOverrides(
+  themeEditorHandle: ThemeEditorHandle | null = null,
+): boolean {
+  const builder = getThemeBuilder();
+  const hasUrlTheme = loadThemeFromUrl(builder);
+  if (!hasUrlTheme) return false;
+  builder.apply();
+  themeEditorHandle?.refresh();
+  emitThemeChange("url");
+  return true;
 }
 
 export { getThemeBuilder };

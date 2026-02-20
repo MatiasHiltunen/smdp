@@ -22,6 +22,56 @@ const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
 const MAX_IMAGE_WIDTH = 700; // max width for images in px
 const RAW_HTML_ATTR_RE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
+export interface CanvasThemeColors {
+  text: string;
+  textSecondary: string;
+  bg: string;
+  bgSecondary: string;
+  codeBg: string;
+  border: string;
+  accent: string;
+  link: string;
+  inlineCodeBg: string;
+  inlineCodeText: string;
+  blockquoteBorder: string;
+  hr: string;
+  listMarker: string;
+  codeKw: string;
+  codeId: string;
+  codeNum: string;
+  codeStr: string;
+  codeTpl: string;
+  codeCom: string;
+  codeOp: string;
+  codePunc: string;
+  codeRx: string;
+}
+
+const DEFAULT_THEME_COLORS: CanvasThemeColors = {
+  text: COLOR.text,
+  textSecondary: COLOR.textSecondary,
+  bg: COLOR.bg,
+  bgSecondary: COLOR.bgSecondary,
+  codeBg: COLOR.codeBg,
+  border: COLOR.border,
+  accent: COLOR.accent,
+  link: COLOR.link,
+  inlineCodeBg: COLOR.inlineCodeBg,
+  inlineCodeText: COLOR.inlineCodeText,
+  blockquoteBorder: COLOR.blockquoteBorder,
+  hr: COLOR.hr,
+  listMarker: COLOR.listMarker,
+  codeKw: '#38bdf8',
+  codeId: '#e6edf3',
+  codeNum: '#79c0ff',
+  codeStr: '#a5d6ff',
+  codeTpl: '#a5d6ff',
+  codeCom: '#8b949e',
+  codeOp: '#ff7b72',
+  codePunc: '#e6edf3',
+  codeRx: '#7ee787',
+};
+
 type RawHtmlTag = {
   name: string;
   closing: boolean;
@@ -479,13 +529,27 @@ const GRAPHEME_SEGMENTER: any = (typeof (Intl as any).Segmenter === 'function')
   ? new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
   : null;
 
+let canvasThemeColorsOverride: CanvasThemeColors | null = null;
+
+export function setCanvasThemeColorsOverride(colors: CanvasThemeColors | null): void {
+  canvasThemeColorsOverride = colors;
+}
+
 /**
  * Get colors from CSS custom properties (theme-aware)
  */
-function getThemeColors() {
+function getThemeColors(): CanvasThemeColors {
+  if (canvasThemeColorsOverride) {
+    return canvasThemeColorsOverride;
+  }
+
+  if (typeof document === 'undefined') {
+    return DEFAULT_THEME_COLORS;
+  }
+
   const root = document.documentElement;
   const computedStyle = getComputedStyle(root);
-  
+
   return {
     text: computedStyle.getPropertyValue('--text-primary').trim() || COLOR.text,
     textSecondary: computedStyle.getPropertyValue('--text-secondary').trim() || COLOR.textSecondary,
@@ -501,15 +565,15 @@ function getThemeColors() {
     hr: computedStyle.getPropertyValue('--border-strong').trim() || COLOR.hr,
     listMarker: computedStyle.getPropertyValue('--accent').trim() || COLOR.listMarker,
     // Syntax highlighting colors
-    codeKw: computedStyle.getPropertyValue('--code-kw').trim() || '#38bdf8',
-    codeId: computedStyle.getPropertyValue('--code-id').trim() || '#e6edf3',
-    codeNum: computedStyle.getPropertyValue('--code-num').trim() || '#79c0ff',
-    codeStr: computedStyle.getPropertyValue('--code-str').trim() || '#a5d6ff',
-    codeTpl: computedStyle.getPropertyValue('--code-tpl').trim() || '#a5d6ff',
-    codeCom: computedStyle.getPropertyValue('--code-com').trim() || '#8b949e',
-    codeOp: computedStyle.getPropertyValue('--code-op').trim() || '#ff7b72',
-    codePunc: computedStyle.getPropertyValue('--code-punc').trim() || '#e6edf3',
-    codeRx: computedStyle.getPropertyValue('--code-rx').trim() || '#7ee787',
+    codeKw: computedStyle.getPropertyValue('--code-kw').trim() || DEFAULT_THEME_COLORS.codeKw,
+    codeId: computedStyle.getPropertyValue('--code-id').trim() || DEFAULT_THEME_COLORS.codeId,
+    codeNum: computedStyle.getPropertyValue('--code-num').trim() || DEFAULT_THEME_COLORS.codeNum,
+    codeStr: computedStyle.getPropertyValue('--code-str').trim() || DEFAULT_THEME_COLORS.codeStr,
+    codeTpl: computedStyle.getPropertyValue('--code-tpl').trim() || DEFAULT_THEME_COLORS.codeTpl,
+    codeCom: computedStyle.getPropertyValue('--code-com').trim() || DEFAULT_THEME_COLORS.codeCom,
+    codeOp: computedStyle.getPropertyValue('--code-op').trim() || DEFAULT_THEME_COLORS.codeOp,
+    codePunc: computedStyle.getPropertyValue('--code-punc').trim() || DEFAULT_THEME_COLORS.codePunc,
+    codeRx: computedStyle.getPropertyValue('--code-rx').trim() || DEFAULT_THEME_COLORS.codeRx,
   };
 }
 
@@ -726,7 +790,7 @@ function renderCellContent(
 
 // Image cache with loading state
 interface CachedImage {
-  img: HTMLImageElement;
+  image: CanvasImageSource | null;
   width: number;
   height: number;
   status: 'loading' | 'loaded' | 'error';
@@ -734,6 +798,26 @@ interface CachedImage {
 }
 
 const imageCache = new Map<string, CachedImage>();
+type CanvasImageLoadHook = (
+  src: string,
+  onResolve: (image: CanvasImageSource, width: number, height: number) => void,
+  onReject: () => void,
+) => void;
+
+let canvasImageLoadHook: CanvasImageLoadHook | null = null;
+
+export function setCanvasImageLoadHook(hook: CanvasImageLoadHook | null): void {
+  canvasImageLoadHook = hook;
+}
+
+export function clearCanvasImageCache(): void {
+  for (const cached of imageCache.values()) {
+    if (typeof ImageBitmap !== 'undefined' && cached.image instanceof ImageBitmap) {
+      cached.image.close();
+    }
+  }
+  imageCache.clear();
+}
 
 function loadImage(src: string, onLoad: () => void): CachedImage | undefined {
   const cached = imageCache.get(src);
@@ -745,11 +829,8 @@ function loadImage(src: string, onLoad: () => void): CachedImage | undefined {
     return cached;
   }
 
-  const img = new Image();
-  img.crossOrigin = 'anonymous'; // Try to enable CORS for external images
-  
   const cacheEntry: CachedImage = {
-    img,
+    image: null,
     width: 0,
     height: 0,
     status: 'loading',
@@ -761,26 +842,37 @@ function loadImage(src: string, onLoad: () => void): CachedImage | undefined {
   }
   
   imageCache.set(src, cacheEntry);
-  
-  img.onload = () => {
-    cacheEntry.width = img.naturalWidth;
-    cacheEntry.height = img.naturalHeight;
+
+  const onResolve = (image: CanvasImageSource, width: number, height: number): void => {
+    cacheEntry.image = image;
+    cacheEntry.width = width;
+    cacheEntry.height = height;
     cacheEntry.status = 'loaded';
-    
-    // Trigger re-render for all callbacks registered for this image
-    cacheEntry.callbacks.forEach(fn => fn());
+    cacheEntry.callbacks.forEach((fn) => fn());
     cacheEntry.callbacks.clear();
   };
-  
-  img.onerror = () => {
+
+  const onReject = (): void => {
     cacheEntry.status = 'error';
-    
-    // Trigger re-render for all callbacks registered for this image
-    cacheEntry.callbacks.forEach(fn => fn());
+    cacheEntry.callbacks.forEach((fn) => fn());
     cacheEntry.callbacks.clear();
   };
-  
-  img.src = src;
+
+  if (canvasImageLoadHook) {
+    canvasImageLoadHook(src, onResolve, onReject);
+    return cacheEntry;
+  }
+
+  if (typeof Image !== 'undefined') {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => onResolve(img, img.naturalWidth, img.naturalHeight);
+    img.onerror = onReject;
+    img.src = src;
+    return cacheEntry;
+  }
+
+  onReject();
   
   return cacheEntry;
 }
@@ -797,6 +889,29 @@ interface CanvasRenderState {
 }
 
 const canvasStates = new WeakMap<HTMLCanvasElement, CanvasRenderState>();
+const activeMainThreadCanvases = new Set<HTMLCanvasElement>();
+let mainThreadShutdownHookInstalled = false;
+
+function ensureMainThreadShutdownHook(): void {
+  if (mainThreadShutdownHookInstalled) return;
+  if (typeof window === 'undefined') return;
+  mainThreadShutdownHookInstalled = true;
+  window.addEventListener(
+    'pagehide',
+    () => {
+      for (const canvas of activeMainThreadCanvases) {
+        const state = canvasStates.get(canvas);
+        if (state?.scrollEl && state.onScroll) {
+          state.scrollEl.removeEventListener('scroll', state.onScroll);
+        }
+        canvasStates.delete(canvas);
+      }
+      activeMainThreadCanvases.clear();
+      clearCanvasImageCache();
+    },
+    { once: true },
+  );
+}
 
 /**
  * Render syntax-highlighted code to canvas
@@ -1071,7 +1186,7 @@ function drawInline(
     // Even during measure pass, we want to initiate the fetch
     const cachedImg = loadImage(src, onImageLoad || (() => {}));
 
-    if (cachedImg && cachedImg.status === 'loaded') {
+    if (cachedImg && cachedImg.status === 'loaded' && cachedImg.image) {
       // Calculate display dimensions maintaining aspect ratio
       const naturalWidth = cachedImg.width;
       const naturalHeight = cachedImg.height;
@@ -1086,7 +1201,7 @@ function drawInline(
         ctx.imageSmoothingQuality = 'high';
 
         try {
-          ctx.drawImage(cachedImg.img, x, currentY, displayWidth, displayHeight);
+          ctx.drawImage(cachedImg.image, x, currentY, displayWidth, displayHeight);
         } catch {
           // If drawing fails (CORS, etc), show fallback
           ctx.fillStyle = themeColors.border;
@@ -1411,19 +1526,41 @@ function drawInline(
   return { x: currentX, y: currentY };
 }
 
+type RenderCanvasOptions = {
+  skipClear?: boolean;
+  onImageLoad?: () => void;
+  parserOptions?: ParserOptions;
+  dpr?: number;
+  themeColors?: CanvasThemeColors;
+};
+
+export function renderCanvasToContext(
+  u8: Uint8Array,
+  ctx: CanvasRenderingContext2D,
+  isMeasure: boolean,
+  opts: RenderCanvasOptions = {},
+): number {
+  return renderCanvas(u8, ctx, isMeasure, opts);
+}
+
 function renderCanvas(
   u8: Uint8Array,
   ctx: CanvasRenderingContext2D,
   isMeasure: boolean,
-  opts: { skipClear?: boolean; onImageLoad?: () => void; parserOptions?: ParserOptions } = {},
+  opts: RenderCanvasOptions = {},
 ): number {
   const parserOptions = opts.parserOptions ?? {};
   const urlAllowlist = parserOptions.urlAllowlist ?? defaultUrlAllowlist;
   const baseUrl = parserOptions.baseUrl;
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = opts.dpr ?? (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1);
   const logicalWidth = ctx.canvas.width / dpr;
   const logicalHeight = ctx.canvas.height / dpr;
-  
+
+  const previousThemeOverride = canvasThemeColorsOverride;
+  if (opts.themeColors) {
+    canvasThemeColorsOverride = opts.themeColors;
+  }
+
   // Get theme-aware colors
   const themeColors = getThemeColors();
   
@@ -2208,10 +2345,12 @@ function renderCanvas(
     ctx.restore();
   }
 
+  canvasThemeColorsOverride = previousThemeOverride;
   return y;
 }
 
-export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
+function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
+  ensureMainThreadShutdownHook();
   const dpr = window.devicePixelRatio || 1;
   canvas.dataset.renderReady = 'pending';
   canvas.dataset.virtualized = 'false';
@@ -2223,7 +2362,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   // Set up re-render callback for when images load
   const rerender = () => {
     // Re-render the canvas when an image finishes loading
-    renderToCanvasFromBlocks(u8, canvas, options);
+    renderToCanvasFromBlocksMainThread(u8, canvas, options);
   };
 
   const measureCanvas = document.createElement('canvas');
@@ -2282,6 +2421,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     if (prev?.scrollEl && prev.onScroll) {
       prev.scrollEl.removeEventListener('scroll', prev.onScroll);
       canvasStates.delete(canvas);
+      activeMainThreadCanvases.delete(canvas);
     }
     return;
   }
@@ -2366,15 +2506,379 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const prevState = canvasStates.get(canvas);
   if (prevState?.onScroll) {
     prevState.scrollEl.removeEventListener('scroll', prevState.onScroll);
+    activeMainThreadCanvases.delete(canvas);
   }
 
   const scrollHandler = () => requestAnimationFrame(renderViewport);
   state.onScroll = scrollHandler;
   canvasStates.set(canvas, state);
+  activeMainThreadCanvases.add(canvas);
 
   scrollEl.addEventListener('scroll', scrollHandler, { passive: true });
 
   renderViewport();
   canvas.dataset.virtualized = 'true';
   canvas.dataset.renderReady = 'ready';
+}
+
+function htmlCanvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        reject(new Error('Failed to encode canvas image'));
+      }, 'image/png');
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+type WorkerRenderParserOptions = Pick<ParserOptions, 'allowRawHtml' | 'baseUrl'>;
+
+type WorkerInitMessage = {
+  type: 'init';
+  canvas: OffscreenCanvas;
+};
+
+type WorkerRenderMessage = {
+  type: 'render';
+  requestId: number;
+  markdownBuffer: ArrayBufferLike;
+  width: number;
+  dpr: number;
+  parserOptions: WorkerRenderParserOptions;
+  themeColors: CanvasThemeColors;
+};
+
+type WorkerExportMessage = {
+  type: 'export';
+  requestId: number;
+};
+
+type WorkerInputMessage = WorkerInitMessage | WorkerRenderMessage | WorkerExportMessage;
+
+type WorkerRenderedMessage = {
+  type: 'rendered';
+  requestId: number;
+  width: number;
+  height: number;
+};
+
+type WorkerErrorMessage = {
+  type: 'error';
+  requestId?: number;
+  message: string;
+};
+
+type WorkerExportedMessage = {
+  type: 'exported';
+  requestId: number;
+  blob: Blob;
+};
+
+type WorkerOutputMessage =
+  | WorkerRenderedMessage
+  | WorkerExportedMessage
+  | WorkerErrorMessage;
+
+type PendingCanvasExport = {
+  resolve: (blob: Blob) => void;
+  reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout> | null;
+};
+
+interface WorkerCanvasState {
+  worker: Worker | null;
+  requestId: number;
+  exportRequestId: number;
+  pendingExports: Map<number, PendingCanvasExport>;
+  disabled: boolean;
+}
+
+const workerCanvasStates = new WeakMap<HTMLCanvasElement, WorkerCanvasState>();
+const activeCanvasWorkers = new Set<Worker>();
+let workerShutdownHookInstalled = false;
+
+function rejectPendingWorkerExports(state: WorkerCanvasState, message: string): void {
+  for (const pending of state.pendingExports.values()) {
+    if (pending.timeoutId) {
+      clearTimeout(pending.timeoutId);
+    }
+    pending.reject(new Error(message));
+  }
+  state.pendingExports.clear();
+}
+
+function terminateWorkerState(state: WorkerCanvasState): void {
+  rejectPendingWorkerExports(state, 'Canvas worker terminated');
+  if (state.worker) {
+    try {
+      state.worker.terminate();
+    } catch {
+      // ignore termination errors
+    }
+    activeCanvasWorkers.delete(state.worker);
+  }
+  state.worker = null;
+  state.disabled = true;
+}
+
+function ensureWorkerShutdownHook(): void {
+  if (workerShutdownHookInstalled) return;
+  if (typeof window === 'undefined') return;
+  workerShutdownHookInstalled = true;
+  const shutdown = (): void => {
+    for (const worker of activeCanvasWorkers) {
+      try {
+        worker.terminate();
+      } catch {
+        // ignore termination errors
+      }
+    }
+    activeCanvasWorkers.clear();
+  };
+  window.addEventListener('pagehide', shutdown, { once: true });
+}
+
+function canUseWorkerCanvas(): boolean {
+  return (
+    typeof Worker !== 'undefined' &&
+    typeof OffscreenCanvas !== 'undefined' &&
+    typeof HTMLCanvasElement !== 'undefined' &&
+    'transferControlToOffscreen' in HTMLCanvasElement.prototype
+  );
+}
+
+function cleanupMainThreadCanvasState(canvas: HTMLCanvasElement): void {
+  const prev = canvasStates.get(canvas);
+  if (prev?.scrollEl && prev.onScroll) {
+    prev.scrollEl.removeEventListener('scroll', prev.onScroll);
+    canvasStates.delete(canvas);
+  }
+  activeMainThreadCanvases.delete(canvas);
+}
+
+function getOrCreateWorkerCanvasState(canvas: HTMLCanvasElement): WorkerCanvasState | null {
+  const existing = workerCanvasStates.get(canvas);
+  if (existing) {
+    return existing.disabled ? null : existing;
+  }
+
+  try {
+    ensureWorkerShutdownHook();
+    const worker = new Worker(new URL('./canvas-renderer.worker.ts', import.meta.url), { type: 'module' });
+    activeCanvasWorkers.add(worker);
+    const offscreen = canvas.transferControlToOffscreen();
+    const state: WorkerCanvasState = {
+      worker,
+      requestId: 0,
+      exportRequestId: 0,
+      pendingExports: new Map<number, PendingCanvasExport>(),
+      disabled: false,
+    };
+
+    worker.onmessage = (event: MessageEvent<WorkerOutputMessage>) => {
+      const message = event.data;
+      if (message.type === 'error') {
+        if (typeof message.requestId === 'number') {
+          const pending = state.pendingExports.get(message.requestId);
+          if (pending) {
+            if (pending.timeoutId) {
+              clearTimeout(pending.timeoutId);
+            }
+            state.pendingExports.delete(message.requestId);
+            pending.reject(new Error(message.message));
+            return;
+          }
+        }
+        console.error('[canvas-worker]', message.message);
+        canvas.dataset.renderReady = 'error';
+        return;
+      }
+
+      if (message.type === 'exported') {
+        const pending = state.pendingExports.get(message.requestId);
+        if (!pending) {
+          return;
+        }
+        if (pending.timeoutId) {
+          clearTimeout(pending.timeoutId);
+        }
+        state.pendingExports.delete(message.requestId);
+        pending.resolve(message.blob);
+        return;
+      }
+
+      if (message.type === 'rendered') {
+        if (message.requestId !== state.requestId) {
+          return;
+        }
+        canvas.style.width = `${message.width}px`;
+        canvas.style.height = `${message.height}px`;
+        canvas.style.position = 'static';
+        canvas.dataset.virtualized = 'false';
+        canvas.dataset.renderReady = 'ready';
+
+        const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
+        const spacer = scrollEl?.querySelector<HTMLDivElement>('#canvas-spacer') ?? null;
+        if (spacer) spacer.style.height = '0px';
+      }
+    };
+
+    worker.onerror = (event: ErrorEvent) => {
+      console.error('[canvas-worker] fatal error', event.message || event.error);
+      canvas.dataset.renderReady = 'error';
+      terminateWorkerState(state);
+    };
+
+    worker.onmessageerror = () => {
+      console.error('[canvas-worker] message deserialization failure');
+      rejectPendingWorkerExports(state, 'Canvas worker message deserialization failure');
+      canvas.dataset.renderReady = 'error';
+    };
+
+    worker.postMessage({ type: 'init', canvas: offscreen } satisfies WorkerInputMessage, [offscreen]);
+    workerCanvasStates.set(canvas, state);
+    return state;
+  } catch (error) {
+    console.warn('Failed to initialize canvas worker; falling back to main thread', error);
+    const disabledState: WorkerCanvasState = {
+      worker: null,
+      requestId: 0,
+      exportRequestId: 0,
+      pendingExports: new Map<number, PendingCanvasExport>(),
+      disabled: true,
+    };
+    workerCanvasStates.set(canvas, disabledState);
+    return null;
+  }
+}
+
+function renderToCanvasFromWorker(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions): boolean {
+  const workerState = getOrCreateWorkerCanvasState(canvas);
+  if (!workerState) return false;
+  if (!workerState.worker) return false;
+  if (!canvas.isConnected) {
+    terminateWorkerState(workerState);
+    return false;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const styleWidth = rect.width || 800;
+  const dpr = window.devicePixelRatio || 1;
+  const parserOptions: WorkerRenderParserOptions = {
+    ...(options.allowRawHtml !== undefined ? { allowRawHtml: options.allowRawHtml } : {}),
+    ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+  };
+
+  const themeColors = getThemeColors();
+  // Never transfer the caller's original buffer ownership.
+  const bufferView = u8.slice();
+  const requestId = ++workerState.requestId;
+
+  canvas.dataset.renderReady = 'pending';
+  cleanupMainThreadCanvasState(canvas);
+
+  workerState.worker.postMessage(
+    {
+      type: 'render',
+      requestId,
+      markdownBuffer: bufferView.buffer,
+      width: styleWidth,
+      dpr,
+      parserOptions,
+      themeColors,
+    } satisfies WorkerRenderMessage,
+    [bufferView.buffer],
+  );
+
+  return true;
+}
+
+function requestWorkerCanvasExport(state: WorkerCanvasState): Promise<Blob> {
+  if (!state.worker || state.disabled) {
+    return Promise.reject(new Error('Canvas worker is unavailable for export'));
+  }
+
+  // Keep export request ids in a high range to avoid colliding with render ids.
+  const requestId = 1_000_000_000 + ++state.exportRequestId;
+  return new Promise<Blob>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      state.pendingExports.delete(requestId);
+      reject(new Error('Timed out while exporting canvas image'));
+    }, 15_000);
+
+    state.pendingExports.set(requestId, {
+      resolve,
+      reject,
+      timeoutId,
+    });
+
+    try {
+      state.worker?.postMessage({
+        type: 'export',
+        requestId,
+      } satisfies WorkerExportMessage);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      state.pendingExports.delete(requestId);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+export async function exportCanvasAsImageBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  const workerState = workerCanvasStates.get(canvas);
+  if (workerState) {
+    if (workerState.disabled || !workerState.worker) {
+      throw new Error('Canvas worker renderer is unavailable for export');
+    }
+    return requestWorkerCanvasExport(workerState);
+  }
+
+  const virtualizedState = canvasStates.get(canvas);
+  const sourceCanvas = virtualizedState?.offscreen ?? canvas;
+  return htmlCanvasToBlob(sourceCanvas);
+}
+
+export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
+  const allowlist = options.urlAllowlist ?? defaultUrlAllowlist;
+  const hasCustomAllowlist = allowlist !== defaultUrlAllowlist;
+  const existingWorkerState = workerCanvasStates.get(canvas);
+
+  if (existingWorkerState) {
+    // Once a canvas is transferred to worker mode, it cannot safely return to
+    // main-thread 2D rendering. Keep subsequent renders in worker mode only.
+    if (existingWorkerState.disabled || !existingWorkerState.worker) {
+      canvas.dataset.renderReady = 'error';
+      console.error('[canvas-worker] renderer is unavailable for this canvas instance');
+      return;
+    }
+
+    if (hasCustomAllowlist) {
+      console.warn('[canvas-worker] custom urlAllowlist is not supported in worker mode; using default allowlist');
+    }
+
+    const renderedInWorker = renderToCanvasFromWorker(u8, canvas, options);
+    if (renderedInWorker) {
+      return;
+    }
+
+    canvas.dataset.renderReady = 'error';
+    console.error('[canvas-worker] failed to dispatch render request');
+    return;
+  }
+
+  if (!hasCustomAllowlist && canUseWorkerCanvas()) {
+    const renderedInWorker = renderToCanvasFromWorker(u8, canvas, options);
+    if (renderedInWorker) {
+      return;
+    }
+  }
+
+  renderToCanvasFromBlocksMainThread(u8, canvas, options);
 }

@@ -1,11 +1,15 @@
 import type { ThemeEditorHandle } from "../theme/theme-editor";
-import { applyTheme, getCurrentTheme } from "./theme";
+import {
+  applyTheme,
+  applyThemeUrlOverrides,
+  getCurrentTheme,
+} from "./theme";
 import type { CanvasView, HtmlView } from "./views";
 import { createElement } from "./dom";
-import { loadThemeFromUrl } from "../theme/theme-editor";
-import { getThemeBuilder } from "./theme";
 import { encodeMarkdownToBase64 } from "../data-link";
 import { deserializeTheme } from "../theme/theme-serializer";
+import { emitThemeChange } from "./theme-events";
+import { exportCanvasAsImageBlob } from "../parser/canvas-renderer";
 
 const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
 
@@ -31,7 +35,7 @@ function sanitizeStyleTagContent(css: string): string {
 /**
  * Export the rendered HTML as a self-contained HTML5 file
  */
-export function exportAsHtml(view: HtmlView | CanvasView): void {
+export function exportAsHtml(view: HtmlView): void {
   const viewer = view.shell.querySelector(".markdown-viewer");
   if (!viewer) {
     alert("No rendered content to export");
@@ -161,6 +165,27 @@ ${viewer.innerHTML}
   URL.revokeObjectURL(url);
 }
 
+async function exportAsCanvasImage(view: CanvasView): Promise<void> {
+  try {
+    const blob = await exportCanvasAsImageBlob(view.canvas);
+    if (!blob || blob.size === 0) {
+      alert("No rendered canvas content to export");
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = createElement("a");
+    a.href = url;
+    a.download = `markdown-export-${Date.now()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("Failed to export canvas image", error);
+    alert("Failed to export canvas image");
+  }
+}
+
 /**
  * Create a FAB menu with all actions
  */
@@ -241,11 +266,15 @@ export function createFabMenu(
   // Initialize with current theme
   updateThemeIcon(getCurrentTheme());
 
-  // Export HTML button
+  // Export button
+  const isCanvasView = "canvas" in view;
   const exportButton = createElement("button");
   exportButton.className = "fab-action";
   exportButton.type = "button";
-  exportButton.setAttribute("data-tooltip", "Export as HTML");
+  exportButton.setAttribute(
+    "data-tooltip",
+    isCanvasView ? "Export as Image" : "Export as HTML",
+  );
   exportButton.innerHTML = `
     <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
       <path d="M13 3a1 1 0 1 0-2 0v12.586l-3.293-3.293a1 1 0 0 0-1.414 1.414l5 5a1 1 0 0 0 1.414 0l5-5a1 1 0 0 0-1.414-1.414L13 15.586V3ZM4 17a1 1 0 1 0 0 2h16a1 1 0 1 0 0-2H4Z" fill="currentColor"/>
@@ -290,15 +319,13 @@ export function createFabMenu(
 
   themeToggleButton.addEventListener("click", (e) => {
     e.stopPropagation();
-    const themeBuilder = getThemeBuilder();
     const current = getCurrentTheme();
     const next = current === "dark" ? "light" : "dark";
-    applyTheme(next, themeEditor, false); // Apply new theme defaults
-    // Reload customizations from URL if present
-    const hasUrlTheme = loadThemeFromUrl(themeBuilder);
-    if (hasUrlTheme) {
-      themeBuilder.apply();
-      themeEditor?.refresh();
+    // Apply preset first, then merge URL overrides for the selected mode.
+    applyTheme(next, themeEditor, false, false, "toggle");
+    const hasUrlTheme = applyThemeUrlOverrides(themeEditor);
+    if (!hasUrlTheme) {
+      emitThemeChange("toggle", next);
     }
     updateThemeIcon(next);
     isMenuOpen = false;
@@ -308,10 +335,16 @@ export function createFabMenu(
 
   exportButton.addEventListener("click", (e) => {
     e.stopPropagation();
-    exportAsHtml(view);
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    void (async () => {
+      if (isCanvasView) {
+        await exportAsCanvasImage(view as CanvasView);
+      } else {
+        exportAsHtml(view as HtmlView);
+      }
+      isMenuOpen = false;
+      menu.classList.remove("is-open");
+      mainButton.setAttribute("aria-expanded", "false");
+    })();
   });
 
   shareButton.addEventListener("click", (e) => {
@@ -377,13 +410,19 @@ export function createFabMenu(
   });
 
   // Close menu when clicking outside
-  document.addEventListener("click", (e) => {
+  const onDocumentClick = (e: Event) => {
     if (isMenuOpen && !menu.contains(e.target as Node)) {
       isMenuOpen = false;
       menu.classList.remove("is-open");
       mainButton.setAttribute("aria-expanded", "false");
     }
-  });
+  };
+  document.addEventListener("click", onDocumentClick);
+  window.addEventListener(
+    "pagehide",
+    () => document.removeEventListener("click", onDocumentClick),
+    { once: true },
+  );
 
   actions.append(editButton, themeButton, themeToggleButton, exportButton, shareButton);
   menu.append(mainButton, actions);

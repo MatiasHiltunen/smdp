@@ -108,3 +108,54 @@ test("route parsing tolerates malformed percent-encoding in pathname", () => {
     }
   }
 });
+
+test("test_e2e route parses target url from path", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/test_e2e/https://raw.githubusercontent.com/acme/docs/main/README.md",
+      hash: "",
+      search: "",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "test_e2e");
+    assert.equal(route.shared, false);
+    assert.equal(
+      route.externalUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/README.md",
+    );
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});
+
+test("test_e2e route parses target url from query", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/test_e2e",
+      hash: "",
+      search: "?url=https%3A%2F%2Fexample.com%2Fnotes.md",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "test_e2e");
+    assert.equal(route.shared, false);
+    assert.equal(route.externalUrl?.toString(), "https://example.com/notes.md");
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});

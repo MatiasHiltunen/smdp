@@ -1,4 +1,4 @@
-export type RenderMode = "html" | "canvas";
+export type RenderMode = "html" | "canvas" | "test_e2e";
 
 export type RouteDetails = {
   mode: RenderMode;
@@ -53,6 +53,7 @@ export function parseRoute(): RouteDetails {
   const rawPath = safeDecodePathname(window.location.pathname);
   const hashPayload = extractHashPayload();
   const query = new URLSearchParams(window.location.search);
+  const testE2eQueryUrl = safeParseUrl(query.get("url"));
 
   // Shared (embed) mode: no FABs, no editor/theme UI, HTML render
   if (rawPath.startsWith("/shared/")) {
@@ -134,6 +135,29 @@ export function parseRoute(): RouteDetails {
     return {
       mode: "canvas",
       externalUrl: null,
+      shared: false,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+    };
+  }
+
+  if (rawPath.startsWith("/test_e2e/")) {
+    const externalPart = rawPath.slice("/test_e2e/".length);
+    return {
+      mode: "test_e2e",
+      externalUrl: safeParseUrl(externalPart || null) ?? testE2eQueryUrl,
+      shared: false,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+    };
+  }
+
+  if (rawPath === "/test_e2e") {
+    return {
+      mode: "test_e2e",
+      externalUrl: testE2eQueryUrl,
       shared: false,
       dataPayload: null,
       bookEntryUrl: null,

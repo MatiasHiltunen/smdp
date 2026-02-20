@@ -1138,3 +1138,126 @@ img {
     scroll-behavior: auto !important;
   }
 }
+
+.e2e-shell {
+  width: min(100%, 1280px);
+}
+
+.e2e-card {
+  border-radius: var(--radius-lg);
+  background: var(--bg-glass-strong);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--shadow-soft);
+  padding: clamp(1rem, 2.4vw, 1.8rem);
+}
+
+.e2e-intro {
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+.e2e-controls {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin: 1rem 0;
+}
+
+.e2e-target {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  color: var(--text-primary);
+  padding: 0.65rem 0.8rem;
+  font: inherit;
+}
+
+.e2e-run {
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.65rem 0.95rem;
+  cursor: pointer;
+}
+
+.e2e-run[disabled] {
+  opacity: 0.65;
+  cursor: progress;
+}
+
+.e2e-summary {
+  color: var(--text-primary);
+  margin-bottom: 0.8rem;
+  font-weight: 500;
+}
+
+.e2e-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.e2e-step {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass);
+  padding: 0.55rem 0.7rem;
+  color: var(--text-primary);
+}
+
+.e2e-step.is-running {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.e2e-step.is-pass {
+  border-color: var(--success-border);
+  background: color-mix(in srgb, var(--success-bg) 75%, transparent);
+}
+
+.e2e-step.is-fail {
+  border-color: var(--error-border);
+  background: color-mix(in srgb, var(--error-bg) 75%, transparent);
+}
+
+.e2e-detail {
+  margin: 0.5rem 0 0;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.e2e-preview {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.e2e-canvas-host {
+  width: min(100%, 920px);
+  max-width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-glass);
+  overflow: auto;
+}
+
+.e2e-canvas-host canvas {
+  display: block;
+  margin: 0 auto;
+}
+
+@media (max-width: 760px) {
+  .e2e-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
