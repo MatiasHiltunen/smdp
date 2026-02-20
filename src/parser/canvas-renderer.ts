@@ -20,6 +20,7 @@ const MARKER_GAP = 8;
 const BULLET_RADIUS = 3;
 const VIRTUAL_SCROLL_THRESHOLD = 1400; // px
 const MAX_IMAGE_WIDTH = 700; // max width for images in px
+const CANVAS_MAX_CONTENT_WIDTH = 980; // centered content column cap
 const RAW_HTML_ATTR_RE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 export interface CanvasThemeColors {
@@ -360,6 +361,7 @@ function renderRawHtmlTableModel(
   table: RawHtmlTableModel,
   ctx: CanvasRenderingContext2D,
   y: number,
+  contentLeft: number,
   indent: number,
   maxWidth: number,
   isMeasure: boolean,
@@ -414,7 +416,7 @@ function renderRawHtmlTableModel(
   }
 
   const tableHeight = rowOffsets[table.rowCount];
-  const tableX = MARGIN + indent;
+  const tableX = contentLeft + indent;
   const tableY = y;
   const tableRadius = 4;
 
@@ -1577,11 +1579,16 @@ function renderCanvas(
 
   ctx.textBaseline = 'top';
 
+  const availableWidth = Math.max(280, logicalWidth - 2 * MARGIN);
+  const contentWidth = Math.min(logicalWidth, Math.min(availableWidth, CANVAS_MAX_CONTENT_WIDTH));
+  const contentLeft = Math.max(0, (logicalWidth - contentWidth) / 2);
+  const contentRight = contentLeft + contentWidth;
+
   let y = MARGIN;
   let indent = 0;
-  const maxWidth = logicalWidth - 2 * MARGIN;
+  const maxWidth = contentWidth;
   let paraOpen = false;
-  let currentX = MARGIN;
+  let currentX = contentLeft;
   const listStack: CanvasListItem[] = [];
   const orderedMarkerWidths: number[] = [];
   let inCode = false;
@@ -1633,6 +1640,7 @@ function renderCanvas(
         parsed,
         ctx,
         y,
+        contentLeft,
         indent,
         maxWidth - indent,
         isMeasure,
@@ -1654,7 +1662,7 @@ function renderCanvas(
         0,
         rawBytes.length,
         ctx,
-        MARGIN + indent,
+        contentLeft + indent,
         y,
         maxWidth - indent,
         isMeasure,
@@ -1698,7 +1706,7 @@ function renderCanvas(
         if (!isMeasure && inBlockquote) {
           const bqPadding = 10;
           blockquotes.push({
-            x: MARGIN + indent - INDENT - bqPadding,
+            x: contentLeft + indent - INDENT - bqPadding,
             y: blockquoteY,
             width: maxWidth - (indent - INDENT) + bqPadding * 2,
             height: y - blockquoteY,
@@ -1717,10 +1725,10 @@ function renderCanvas(
           ctx.strokeStyle = themeColors.hr;
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.moveTo(MARGIN + indent, y);
-          ctx.lineTo(maxWidth + MARGIN - indent, y);
+          ctx.moveTo(contentLeft + indent, y);
+          ctx.lineTo(contentRight - indent, y);
           ctx.stroke();
-          const centerX = (MARGIN + indent + maxWidth + MARGIN - indent) / 2;
+          const centerX = (contentLeft + indent + contentRight - indent) / 2;
           ctx.fillStyle = themeColors.accent;
           ctx.fillRect(centerX - 30, y - 1, 60, 2);
           ctx.fillStyle = themeColors.text;
@@ -1739,7 +1747,7 @@ function renderCanvas(
           ev.s,
           ev.e,
           ctx,
-          MARGIN + indent,
+          contentLeft + indent,
           y,
           maxWidth - indent,
           isMeasure,
@@ -1756,8 +1764,8 @@ function renderCanvas(
           ctx.strokeStyle = themeColors.border;
           ctx.lineWidth = level === 0 ? 2 : 1;
           ctx.beginPath();
-          ctx.moveTo(MARGIN + indent, borderY);
-          ctx.lineTo(maxWidth + MARGIN - indent, borderY);
+          ctx.moveTo(contentLeft + indent, borderY);
+          ctx.lineTo(contentRight - indent, borderY);
           ctx.stroke();
           y += hSize * 0.4;
         }
@@ -1782,7 +1790,7 @@ function renderCanvas(
         const level = listStack.length - 1;
         const bqOffset = inBlockquote ? 20 : 0;
         const infoOffset = inInfo ? 24 : 0;
-        const textStart = MARGIN + indent + bqOffset + infoOffset;
+        const textStart = contentLeft + indent + bqOffset + infoOffset;
 
         const top = listStack[listStack.length - 1];
         const isOrdered = !!(top && top.kind === 'ol');
@@ -1800,7 +1808,7 @@ function renderCanvas(
         const markerWidth = isOrdered
           ? orderedMarkerWidths[level] || (markerText ? measureWidth(ctx, markerText, ctx.font) : BULLET_RADIUS * 2)
           : BULLET_RADIUS * 2;
-        const availableWidth = maxWidth - (textStart - MARGIN) - infoOffset;
+        const availableWidth = maxWidth - (textStart - contentLeft) - infoOffset;
 
         if (!isMeasure) {
           ctx.fillStyle = themeColors.listMarker;
@@ -1857,7 +1865,7 @@ function renderCanvas(
         ctx.font = baseSize + 'px ' + FONT_STACK;
         const bqOffset = inBlockquote ? 20 : 0;
         const infoOffset = inInfo ? 24 : 0;
-        const textStart = MARGIN + indent + bqOffset + infoOffset;
+        const textStart = contentLeft + indent + bqOffset + infoOffset;
 
         if (!paraOpen) {
           closeListsAll();
@@ -1918,7 +1926,7 @@ function renderCanvas(
         closePara();
         closeListsAll();
         const baseSize = FONT_SIZE.base;
-        const textStart = MARGIN + indent;
+        const textStart = contentLeft + indent;
         const beforeY = y;
         const rawRes = drawInline(
           u8,
@@ -1991,7 +1999,7 @@ function renderCanvas(
             codeBytes,
             codeLang,
             ctx,
-            MARGIN + indent + codePaddingX,
+            contentLeft + indent + codePaddingX,
             y,
             isMeasure,
           );
@@ -2002,7 +2010,7 @@ function renderCanvas(
           
           if (!isMeasure) {
             codeBlocks.push({
-              x: MARGIN + indent - codePaddingX / 2,
+              x: contentLeft + indent - codePaddingX / 2,
               y: codeY - codePaddingY,
               width: codeWidth + codePaddingX * 2,
               height: codeHeight + codePaddingY * 2,
@@ -2065,7 +2073,7 @@ function renderCanvas(
           // Calculate table dimensions
           const tableWidth = tableColWidths.reduce((sum, w) => sum + w, 0);
           const tableHeight = headerRowHeight + pendingTableRows.length * dataRowHeight;
-          const tableX = MARGIN + indent;
+          const tableX = contentLeft + indent;
           const tableY = y;
           const tableRadius = 4;
           
@@ -2090,7 +2098,7 @@ function renderCanvas(
           
           // Render header row
           if (!isMeasure) {
-            let x = MARGIN + indent;
+            let x = contentLeft + indent;
             for (let i = 0; i < pendingTableHeader.cells.length; i++) {
               const cell = pendingTableHeader.cells[i];
               const cellWidth = tableColWidths[i];
@@ -2123,7 +2131,7 @@ function renderCanvas(
           // Render data rows
           for (let rowIdx = 0; rowIdx < pendingTableRows.length; rowIdx++) {
             const row = pendingTableRows[rowIdx];
-            let x = MARGIN + indent;
+            let x = contentLeft + indent;
             
             // Add subtle alternating row background
             if (!isMeasure && rowIdx % 2 === 1) {
@@ -2192,7 +2200,7 @@ function renderCanvas(
           const horizontalPadding = 16;
           const infoHeight = y - infoY + verticalPadding;
           infoBlocks.push({
-            x: MARGIN + indent - horizontalPadding / 2,
+            x: contentLeft + indent - horizontalPadding / 2,
             y: infoY - verticalPadding / 2,
             width: maxWidth + horizontalPadding,
             height: infoHeight,
@@ -2215,7 +2223,7 @@ function renderCanvas(
 
   if (inCode && !isMeasure) {
     codeBlocks.push({
-      x: MARGIN + indent - 5,
+      x: contentLeft + indent - 5,
       y: codeY - 5,
       width: codeWidth + 20,
       height: codeHeight + 10,
@@ -2225,7 +2233,7 @@ function renderCanvas(
 
   if (inBlockquote && !isMeasure) {
     blockquotes.push({
-      x: MARGIN + indent - INDENT - 5,
+      x: contentLeft + indent - INDENT - 5,
       y: blockquoteY,
       width: maxWidth - (indent - INDENT) + 10,
       height: y - blockquoteY,
@@ -2336,6 +2344,32 @@ function renderCanvas(
       ctx.closePath();
       ctx.fill();
     }
+
+    const sidePadding = Math.max(0, contentLeft - MARGIN);
+    if (sidePadding > 2) {
+      const leftGradient = ctx.createLinearGradient(0, 0, contentLeft, 0);
+      leftGradient.addColorStop(0, themeColors.bgSecondary);
+      leftGradient.addColorStop(1, themeColors.bg);
+      ctx.fillStyle = leftGradient;
+      ctx.fillRect(0, 0, contentLeft, logicalHeight);
+
+      const rightGradient = ctx.createLinearGradient(contentRight, 0, logicalWidth, 0);
+      rightGradient.addColorStop(0, themeColors.bg);
+      rightGradient.addColorStop(1, themeColors.bgSecondary);
+      ctx.fillStyle = rightGradient;
+      ctx.fillRect(contentRight, 0, logicalWidth - contentRight, logicalHeight);
+
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = themeColors.border;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(contentLeft - 0.5, 0);
+      ctx.lineTo(contentLeft - 0.5, logicalHeight);
+      ctx.moveTo(contentRight + 0.5, 0);
+      ctx.lineTo(contentRight + 0.5, logicalHeight);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
     
     // Finally, fill the main background behind everything
     // Use logical dimensions since context is scaled
@@ -2354,9 +2388,9 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
   const dpr = window.devicePixelRatio || 1;
   canvas.dataset.renderReady = 'pending';
   canvas.dataset.virtualized = 'false';
-  const rect = canvas.getBoundingClientRect();
-  const styleWidth = rect.width || 800;
   const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
+  const rect = canvas.getBoundingClientRect();
+  const styleWidth = scrollEl?.clientWidth || rect.width || 800;
   const spacer = scrollEl?.querySelector<HTMLDivElement>('#canvas-spacer') ?? null;
 
   // Set up re-render callback for when images load
@@ -2770,9 +2804,9 @@ function renderToCanvasFromWorker(u8: Uint8Array, canvas: HTMLCanvasElement, opt
     return false;
   }
 
-  const rect = canvas.getBoundingClientRect();
-  const styleWidth = rect.width || 800;
   const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
+  const rect = canvas.getBoundingClientRect();
+  const styleWidth = scrollEl?.clientWidth || rect.width || 800;
   const minHeight = scrollEl ? scrollEl.clientHeight : 0;
   const dpr = window.devicePixelRatio || 1;
   const parserOptions: WorkerRenderParserOptions = {
