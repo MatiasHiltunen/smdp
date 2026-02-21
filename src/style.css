@@ -206,7 +206,7 @@ body.mode-canvas::after {
 }
 
 body.mode-canvas .app-shell.mode-canvas {
-  width: 100vw;
+  width: 100%;
   max-width: none;
   height: 100dvh;
   padding: 0;
@@ -219,7 +219,7 @@ body.mode-canvas .app-shell.mode-canvas {
 }
 
 body.mode-canvas .canvas-pane {
-  width: 100vw;
+  width: 100%;
   height: 100dvh;
   min-height: 100dvh;
   border: none;
@@ -231,16 +231,17 @@ body.mode-canvas .canvas-pane {
 }
 
 body.mode-canvas .canvas-scroll {
-  width: 100vw;
+  width: 100%;
   height: 100dvh;
   min-height: 100dvh;
   max-height: 100dvh;
   margin: 0;
   padding: 0;
+  overflow-x: hidden;
 }
 
 body.mode-canvas .md-canvas {
-  width: 100vw;
+  width: 100%;
   max-width: none;
   border: none;
   border-radius: 0;
@@ -1122,6 +1123,10 @@ img {
 }
 
 @media (max-width: 560px) {
+  .canvas-scroll {
+    scrollbar-gutter: auto;
+  }
+
   body {
     padding: clamp(0.75rem, 4vw, 1.5rem);
   }

@@ -900,6 +900,10 @@ interface CanvasRenderState {
 const canvasStates = new WeakMap<HTMLCanvasElement, CanvasRenderState>();
 const activeMainThreadCanvases = new Set<HTMLCanvasElement>();
 let mainThreadShutdownHookInstalled = false;
+const DEFAULT_CANVAS_STYLE_WIDTH = 800;
+const NARROW_VIEWPORT_MAX_WIDTH = 640;
+const MAX_NARROW_VIEWPORT_DPR = 2;
+const MAX_CANVAS_DPR = 3;
 
 function ensureMainThreadShutdownHook(): void {
   if (mainThreadShutdownHookInstalled) return;
@@ -920,6 +924,86 @@ function ensureMainThreadShutdownHook(): void {
     },
     { once: true },
   );
+}
+
+function getViewportWidth(): number {
+  if (typeof window === 'undefined') {
+    return DEFAULT_CANVAS_STYLE_WIDTH;
+  }
+
+  const visualViewportWidth = window.visualViewport?.width ?? 0;
+  if (Number.isFinite(visualViewportWidth) && visualViewportWidth > 0) {
+    return visualViewportWidth;
+  }
+
+  const documentWidth = document.documentElement?.clientWidth ?? 0;
+  if (Number.isFinite(documentWidth) && documentWidth > 0) {
+    return documentWidth;
+  }
+
+  const windowWidth = window.innerWidth ?? 0;
+  if (Number.isFinite(windowWidth) && windowWidth > 0) {
+    return windowWidth;
+  }
+
+  return DEFAULT_CANVAS_STYLE_WIDTH;
+}
+
+function resolveCanvasStyleWidth(canvas: HTMLCanvasElement, scrollEl: HTMLElement | null): number {
+  const viewportWidth = getViewportWidth();
+  let width = 0;
+
+  if (scrollEl) {
+    const scrollWidth = scrollEl.clientWidth;
+    if (Number.isFinite(scrollWidth) && scrollWidth > 0) {
+      width = scrollWidth;
+      const computed = window.getComputedStyle(scrollEl);
+      const horizontalPadding =
+        (Number.parseFloat(computed.paddingLeft) || 0) +
+        (Number.parseFloat(computed.paddingRight) || 0);
+      width = Math.max(1, width - horizontalPadding);
+    }
+  }
+
+  if (width <= 0) {
+    const parentWidth = canvas.parentElement?.getBoundingClientRect().width ?? 0;
+    if (Number.isFinite(parentWidth) && parentWidth > 0) {
+      width = parentWidth;
+    }
+  }
+
+  if (width <= 0) {
+    const rectWidth = canvas.getBoundingClientRect().width;
+    if (Number.isFinite(rectWidth) && rectWidth > 0) {
+      width = rectWidth;
+    }
+  }
+
+  if (width <= 0) {
+    width = viewportWidth;
+  }
+
+  if (viewportWidth > 0) {
+    width = Math.min(width, viewportWidth);
+  }
+
+  return Math.max(1, Math.floor(width));
+}
+
+function resolveCanvasDpr(styleWidth: number): number {
+  if (typeof window === 'undefined') {
+    return 1;
+  }
+
+  const rawDpr = window.devicePixelRatio || 1;
+  const viewportWidth = getViewportWidth();
+  const effectiveWidth = Math.min(styleWidth, viewportWidth);
+  const maxDpr =
+    effectiveWidth <= NARROW_VIEWPORT_MAX_WIDTH
+      ? MAX_NARROW_VIEWPORT_DPR
+      : MAX_CANVAS_DPR;
+
+  return Math.max(1, Math.min(rawDpr, maxDpr));
 }
 
 /**
@@ -2392,12 +2476,11 @@ function renderCanvas(
 
 function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasElement, options: ParserOptions = {}): void {
   ensureMainThreadShutdownHook();
-  const dpr = window.devicePixelRatio || 1;
   canvas.dataset.renderReady = 'pending';
   canvas.dataset.virtualized = 'false';
   const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
-  const rect = canvas.getBoundingClientRect();
-  const styleWidth = scrollEl?.clientWidth || rect.width || 800;
+  const styleWidth = resolveCanvasStyleWidth(canvas, scrollEl);
+  const dpr = resolveCanvasDpr(styleWidth);
   const spacer = scrollEl?.querySelector<HTMLDivElement>('#canvas-spacer') ?? null;
 
   // Set up re-render callback for when images load
@@ -2427,7 +2510,11 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
   }
   
   measureCtx.scale(dpr, dpr);
-  const totalHeight = renderCanvas(u8, measureCtx, true, { onImageLoad: rerender, parserOptions: options }) + MARGIN * 2;
+  const totalHeight = renderCanvas(u8, measureCtx, true, {
+    onImageLoad: rerender,
+    parserOptions: options,
+    dpr,
+  }) + MARGIN * 2;
   const minRenderHeight = scrollEl ? scrollEl.clientHeight : 0;
   const renderHeight = Math.max(totalHeight, minRenderHeight);
 
@@ -2456,7 +2543,11 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
     }
     
     ctx.scale(dpr, dpr);
-    renderCanvas(u8, ctx, false, { onImageLoad: rerender, parserOptions: options });
+    renderCanvas(u8, ctx, false, {
+      onImageLoad: rerender,
+      parserOptions: options,
+      dpr,
+    });
     canvas.dataset.virtualized = 'false';
     canvas.dataset.renderReady = 'ready';
     if (spacer) spacer.style.height = '0px';
@@ -2489,7 +2580,11 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
   }
   
   offscreenCtx.scale(dpr, dpr);
-  renderCanvas(u8, offscreenCtx, false, { onImageLoad: rerender, parserOptions: options });
+  renderCanvas(u8, offscreenCtx, false, {
+    onImageLoad: rerender,
+    parserOptions: options,
+    dpr,
+  });
 
   canvas.width = styleWidth * dpr;
   canvas.height = viewportHeight * dpr;
@@ -2812,10 +2907,9 @@ function renderToCanvasFromWorker(u8: Uint8Array, canvas: HTMLCanvasElement, opt
   }
 
   const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
-  const rect = canvas.getBoundingClientRect();
-  const styleWidth = scrollEl?.clientWidth || rect.width || 800;
+  const styleWidth = resolveCanvasStyleWidth(canvas, scrollEl);
   const minHeight = scrollEl ? scrollEl.clientHeight : 0;
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = resolveCanvasDpr(styleWidth);
   const parserOptions: WorkerRenderParserOptions = {
     ...(options.allowRawHtml !== undefined ? { allowRawHtml: options.allowRawHtml } : {}),
     ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
