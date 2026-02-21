@@ -902,7 +902,7 @@ const activeMainThreadCanvases = new Set<HTMLCanvasElement>();
 let mainThreadShutdownHookInstalled = false;
 const DEFAULT_CANVAS_STYLE_WIDTH = 800;
 const NARROW_VIEWPORT_MAX_WIDTH = 640;
-const MAX_NARROW_VIEWPORT_DPR = 2;
+const MAX_NARROW_VIEWPORT_DPR = 1;
 const MAX_CANVAS_DPR = 3;
 
 function ensureMainThreadShutdownHook(): void {
@@ -1004,6 +1004,21 @@ function resolveCanvasDpr(styleWidth: number): number {
       : MAX_CANVAS_DPR;
 
   return Math.max(1, Math.min(rawDpr, maxDpr));
+}
+
+function shouldUseWorkerRenderer(canvas: HTMLCanvasElement, hasCustomAllowlist: boolean): boolean {
+  if (hasCustomAllowlist) return false;
+  if (!canUseWorkerCanvas()) return false;
+  if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) {
+    return false;
+  }
+
+  // Worker rendering currently draws the full bitmap without virtual scrolling.
+  // On narrow viewports, wrapped content can become very tall and trigger blank
+  // canvas output on some mobile engines due to bitmap allocation limits.
+  const scrollEl = canvas.parentElement?.closest('.canvas-scroll') as HTMLElement | null;
+  const styleWidth = resolveCanvasStyleWidth(canvas, scrollEl);
+  return styleWidth > NARROW_VIEWPORT_MAX_WIDTH;
 }
 
 /**
@@ -2990,6 +3005,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
   const allowlist = options.urlAllowlist ?? defaultUrlAllowlist;
   const hasCustomAllowlist = allowlist !== defaultUrlAllowlist;
   const existingWorkerState = workerCanvasStates.get(canvas);
+  const allowWorkerForRender = shouldUseWorkerRenderer(canvas, hasCustomAllowlist);
 
   if (existingWorkerState) {
     // Once a canvas is transferred to worker mode, it cannot safely return to
@@ -3014,7 +3030,7 @@ export function renderToCanvasFromBlocks(u8: Uint8Array, canvas: HTMLCanvasEleme
     return;
   }
 
-  if (!hasCustomAllowlist && canUseWorkerCanvas()) {
+  if (allowWorkerForRender) {
     const renderedInWorker = renderToCanvasFromWorker(u8, canvas, options);
     if (renderedInWorker) {
       return;
