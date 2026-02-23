@@ -69,6 +69,26 @@ export function buildSharedEmbedSrc(
   return target.toString();
 }
 
+export function buildSharedBookEmbedSrc(
+  currentHref: string,
+  loadUrl: string,
+  entryUrl: string,
+  prefetchPayload: string | null = null,
+): string {
+  const current = new URL(currentHref);
+  const target = new URL(currentHref);
+  target.pathname = `/shared/${loadUrl}`;
+  preserveThemeQueryParams(target, current);
+  target.searchParams.set("be", entryUrl);
+  if (prefetchPayload) {
+    target.searchParams.set("bp", prefetchPayload);
+  } else {
+    target.searchParams.delete("bp");
+  }
+  target.hash = "";
+  return target.toString();
+}
+
 export function buildInlineHtmlDataSrc(htmlSource: string): string {
   const bytes = new TextEncoder().encode(htmlSource);
   const base64 = bytesToBase64(bytes);

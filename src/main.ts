@@ -41,6 +41,10 @@ import {
   setBackgroundModeSearchParam,
   setFrameModeSearchParam,
 } from "./client/frame-mode";
+import {
+  decodeBookPrefetchPayload,
+  encodeBookPrefetchPayload,
+} from "./client/book-prefetch-share";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -163,11 +167,30 @@ function buildBookUrl(
   entryUrl: string,
   partUrl: string,
   anchor?: string,
+  options: {
+    sharedMode?: boolean;
+    sharedBookPrefetchPayload?: string | null;
+  } = {},
 ): URL {
   const next = new URL(window.location.href);
-  next.pathname = `/book/${entryUrl}`;
+  if (options.sharedMode) {
+    next.pathname = `/shared/${partUrl}`;
+  } else {
+    next.pathname = `/book/${entryUrl}`;
+  }
   preserveThemeQueryParams(next);
-  next.searchParams.set("part", partUrl);
+  if (options.sharedMode) {
+    next.searchParams.set("be", entryUrl);
+    if (options.sharedBookPrefetchPayload) {
+      next.searchParams.set("bp", options.sharedBookPrefetchPayload);
+    } else {
+      next.searchParams.delete("bp");
+    }
+  } else {
+    next.searchParams.set("part", partUrl);
+    next.searchParams.delete("be");
+    next.searchParams.delete("bp");
+  }
   next.hash = anchor ? `#${anchor}` : "";
   return next;
 }
@@ -195,10 +218,42 @@ function scrollToTop(): void {
   });
 }
 
+function prioritizeCurrentBookPart(
+  parts: readonly { url: string; baseUrl: string; markdown: string }[],
+  currentPartUrl: string | null,
+): { url: string; baseUrl: string; markdown: string }[] {
+  const ordered = [...parts];
+  if (!currentPartUrl) return ordered;
+  const index = ordered.findIndex((part) => part.url === currentPartUrl);
+  if (index <= 0) return ordered;
+  const [current] = ordered.splice(index, 1);
+  ordered.unshift(current);
+  return ordered;
+}
+
+function shouldHandleBookLinkClick(
+  event: MouseEvent,
+  link: HTMLAnchorElement,
+): boolean {
+  if (event.defaultPrevented) return false;
+  if (event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return false;
+  }
+  const target = link.getAttribute("target");
+  if (target && target.toLowerCase() !== "_self") {
+    return false;
+  }
+  return true;
+}
+
 function rewriteBookLinksInViewer(
   view: HtmlView,
   loader: BookLoader,
   currentBaseUrl: string,
+  options: {
+    sharedMode: boolean;
+  },
 ): void {
   const entryUrl = loader.getEntryUrl();
   const anchors = view.viewer.querySelectorAll<HTMLAnchorElement>("a[href]");
@@ -207,11 +262,15 @@ function rewriteBookLinksInViewer(
     if (!href) continue;
     const target = canonicalizeBookLink(href, currentBaseUrl);
     if (!target) continue;
-    if (!loader.isKnownPart(target.canonicalUrl)) continue;
+    const canonicalPart = loader.registerNavigablePart(target.canonicalUrl);
+    if (!canonicalPart) continue;
 
-    const bookUrl = buildBookUrl(entryUrl, target.canonicalUrl, target.anchor);
+    const bookUrl = buildBookUrl(entryUrl, canonicalPart, target.anchor, {
+      sharedMode: options.sharedMode,
+      sharedBookPrefetchPayload: null,
+    });
     anchor.href = bookUrl.toString();
-    anchor.dataset.bookPart = target.canonicalUrl;
+    anchor.dataset.bookPart = canonicalPart;
     anchor.dataset.bookAnchor = target.anchor;
   }
 }
@@ -345,6 +404,21 @@ async function init(): Promise<void> {
       },
       enableLoadUrlEmbed: route.mode === "html",
       getCurrentLoadUrl: () => currentBaseUrl ?? null,
+      getBookEmbedContext: async () => {
+        if (!bookLoader) return null;
+        const snapshots = prioritizeCurrentBookPart(
+          bookLoader.getCachedPartsSnapshot(),
+          currentBookPartUrl,
+        );
+        const payload = await encodeBookPrefetchPayload(
+          bookLoader.getEntryUrl(),
+          snapshots,
+        );
+        return {
+          entryUrl: bookLoader.getEntryUrl(),
+          prefetchPayload: payload,
+        };
+      },
     });
     document.body.appendChild(fabMenu);
   }
@@ -375,6 +449,12 @@ async function init(): Promise<void> {
   try {
     if (route.bookEntryUrl) {
       bookLoader = new BookLoader(route.bookEntryUrl.toString());
+      if (route.bookPrefetchPayload) {
+        const prefetched = await decodeBookPrefetchPayload(route.bookPrefetchPayload);
+        if (prefetched && prefetched.entryUrl === bookLoader.getEntryUrl()) {
+          bookLoader.seedPrefetchedParts(prefetched.parts);
+        }
+      }
       const initialTarget =
         route.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
       const initialPart = await bookLoader.loadPart(initialTarget);
@@ -423,9 +503,12 @@ async function init(): Promise<void> {
 
     if (bookLoader && route.mode === "html") {
       const htmlView = view as HtmlView;
-      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl);
+      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl, {
+        sharedMode: route.shared,
+      });
       bookTopicsMenu?.update(htmlView.viewer);
       scrollToHeadingAnchor(htmlView, window.location.hash.replace(/^#/, ""));
+      bookLoader.prefetchInBackground();
     }
 
     view.textarea.value = TD.decode(resolved.bytes);
@@ -450,7 +533,9 @@ async function init(): Promise<void> {
         view.textarea.value = nextPart.markdown;
       }
 
-      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl);
+      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl, {
+        sharedMode: route.shared,
+      });
       bookTopicsMenu?.update(htmlView.viewer);
       if (anchor) {
         scrollToHeadingAnchor(htmlView, anchor);
@@ -459,7 +544,10 @@ async function init(): Promise<void> {
       }
 
       if (pushHistory) {
-        const next = buildBookUrl(bookLoader.getEntryUrl(), nextPart.url, anchor);
+        const next = buildBookUrl(bookLoader.getEntryUrl(), nextPart.url, anchor, {
+          sharedMode: route.shared,
+          sharedBookPrefetchPayload: null,
+        });
         window.history.pushState(
           { bookPartUrl: nextPart.url, bookAnchor: anchor },
           "",
@@ -471,10 +559,12 @@ async function init(): Promise<void> {
     };
 
     const onBookLinkClick = (event: Event): void => {
+      if (!(event instanceof MouseEvent)) return;
       const target = event.target as HTMLElement | null;
       if (!target) return;
       const link = target.closest("a[data-book-part]") as HTMLAnchorElement | null;
       if (!link) return;
+      if (!shouldHandleBookLinkClick(event, link)) return;
       const partUrl = link.dataset.bookPart;
       if (!partUrl) return;
       event.preventDefault();

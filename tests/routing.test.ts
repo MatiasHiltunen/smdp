@@ -77,6 +77,40 @@ test("book routes parse entry and selected part", () => {
       route.externalUrl?.toString(),
       "https://raw.githubusercontent.com/acme/docs/main/chapter-1.md",
     );
+    assert.equal(route.bookPrefetchPayload, null);
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});
+
+test("shared routes can carry embedded book navigation context", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/shared/https://raw.githubusercontent.com/acme/docs/main/chapter-2.md",
+      hash: "",
+      search:
+        "?be=https%3A%2F%2Fraw.githubusercontent.com%2Facme%2Fdocs%2Fmain%2FREADME.md&bp=prefetch-data",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "html");
+    assert.equal(route.shared, true);
+    assert.equal(
+      route.bookEntryUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/README.md",
+    );
+    assert.equal(
+      route.bookPartUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/chapter-2.md",
+    );
+    assert.equal(route.bookPrefetchPayload, "prefetch-data");
   } finally {
     if (originalWindow) {
       (globalThis as any).window = originalWindow;

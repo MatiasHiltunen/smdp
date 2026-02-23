@@ -1,4 +1,4 @@
-import { TD } from "../parser/constants";
+import { TD, TE } from "../parser/constants";
 import { fetchMarkdown } from "./fetch";
 import {
   canonicalizeBookLink,
@@ -12,6 +12,12 @@ export type BookPart = {
   markdown: string;
   title: string;
   discoveredParts: readonly string[];
+};
+
+export type BookPrefetchSnapshotPart = {
+  url: string;
+  baseUrl: string;
+  markdown: string;
 };
 
 const INLINE_LINK_RE = /\[[^\]]+\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
@@ -43,6 +49,17 @@ function extractTitle(markdown: string, fallbackUrl: string): string {
   return titleFromUrl(fallbackUrl);
 }
 
+function rawGithubScopePrefix(url: URL): string | null {
+  if (url.hostname !== "raw.githubusercontent.com") {
+    return null;
+  }
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length < 3) {
+    return null;
+  }
+  return `/${segments[0]}/${segments[1]}/${segments[2]}/`;
+}
+
 export function discoverBookLinks(
   markdown: string,
   baseUrl: string,
@@ -72,6 +89,8 @@ export function discoverBookLinks(
 
 export class BookLoader {
   private readonly entryUrl: string;
+  private readonly sourceOrigin: string;
+  private readonly sourcePathPrefix: string | null;
   private readonly knownOrder: string[] = [];
   private readonly knownSet = new Set<string>();
   private readonly parts = new Map<string, BookPart>();
@@ -86,6 +105,9 @@ export class BookLoader {
       throw new Error("Book entry URL is invalid");
     }
     this.entryUrl = canonicalEntry;
+    const parsedEntry = new URL(canonicalEntry);
+    this.sourceOrigin = parsedEntry.origin;
+    this.sourcePathPrefix = rawGithubScopePrefix(parsedEntry);
     this.registerKnownPart(canonicalEntry);
   }
 
@@ -102,6 +124,20 @@ export class BookLoader {
     return canonical ? this.parts.get(canonical) : undefined;
   }
 
+  getCachedPartsSnapshot(): BookPrefetchSnapshotPart[] {
+    const snapshot: BookPrefetchSnapshotPart[] = [];
+    for (const url of this.knownOrder) {
+      const part = this.parts.get(url);
+      if (!part) continue;
+      snapshot.push({
+        url: part.url,
+        baseUrl: part.baseUrl,
+        markdown: part.markdown,
+      });
+    }
+    return snapshot;
+  }
+
   getPartTitle(url: string): string {
     const part = this.getPart(url);
     if (part) return part.title;
@@ -111,6 +147,52 @@ export class BookLoader {
   isKnownPart(url: string): boolean {
     const canonical = canonicalizeMarkdownDocumentUrl(url);
     return canonical ? this.knownSet.has(canonical) : false;
+  }
+
+  registerNavigablePart(url: string): string | null {
+    const canonical = canonicalizeMarkdownDocumentUrl(url, this.entryUrl);
+    if (!canonical) return null;
+    if (!this.isSameSourcePart(canonical)) return null;
+    this.registerKnownPart(canonical);
+    return canonical;
+  }
+
+  seedPrefetchedParts(parts: readonly BookPrefetchSnapshotPart[]): void {
+    for (const part of parts) {
+      const canonicalUrl = this.registerNavigablePart(part.url);
+      if (!canonicalUrl) continue;
+      if (this.parts.has(canonicalUrl)) continue;
+      if (typeof part.markdown !== "string" || part.markdown.length === 0) {
+        continue;
+      }
+
+      const canonicalBaseUrl =
+        canonicalizeMarkdownDocumentUrl(part.baseUrl, canonicalUrl) ??
+        canonicalUrl;
+      const discovered = discoverBookLinks(
+        part.markdown,
+        canonicalBaseUrl,
+        MAX_DISCOVERED_LINKS_PER_PART,
+      );
+      const discoveredParts: string[] = [];
+      for (const discoveredUrl of discovered) {
+        const canonicalDiscovered = this.registerNavigablePart(discoveredUrl);
+        if (!canonicalDiscovered) continue;
+        discoveredParts.push(canonicalDiscovered);
+      }
+
+      const seededPart: BookPart = {
+        url: canonicalUrl,
+        baseUrl: canonicalBaseUrl,
+        bytes: TE.encode(part.markdown),
+        markdown: part.markdown,
+        title: extractTitle(part.markdown, canonicalUrl),
+        discoveredParts,
+      };
+      this.parts.set(canonicalUrl, seededPart);
+      this.failures.delete(canonicalUrl);
+      this.prefetchClaimed.delete(canonicalUrl);
+    }
   }
 
   async loadPart(url: string): Promise<BookPart> {
@@ -205,6 +287,21 @@ export class BookLoader {
     this.knownOrder.push(url);
   }
 
+  private isSameSourcePart(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      if (parsed.origin !== this.sourceOrigin) {
+        return false;
+      }
+      if (!this.sourcePathPrefix) {
+        return true;
+      }
+      return parsed.pathname.startsWith(this.sourcePathPrefix);
+    } catch {
+      return false;
+    }
+  }
+
   private async fetchPart(canonicalUrl: string): Promise<BookPart> {
     try {
       const result = await fetchMarkdown(new URL(canonicalUrl));
@@ -214,8 +311,11 @@ export class BookLoader {
         result.baseUrl,
         MAX_DISCOVERED_LINKS_PER_PART,
       );
+      const navigableDiscoveredParts: string[] = [];
       for (const partUrl of discoveredParts) {
-        this.registerKnownPart(partUrl);
+        const canonicalPart = this.registerNavigablePart(partUrl);
+        if (!canonicalPart) continue;
+        navigableDiscoveredParts.push(canonicalPart);
       }
 
       const part: BookPart = {
@@ -224,7 +324,7 @@ export class BookLoader {
         bytes: result.bytes,
         markdown,
         title: extractTitle(markdown, canonicalUrl),
-        discoveredParts,
+        discoveredParts: navigableDiscoveredParts,
       };
       this.parts.set(canonicalUrl, part);
       return part;

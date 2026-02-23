@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { discoverBookLinks } from "../src/client/book";
+import { BookLoader, discoverBookLinks } from "../src/client/book";
 
 test("discovers markdown chapter links in reading order", () => {
   const markdown = `
@@ -22,4 +22,23 @@ test("discovers markdown chapter links in reading order", () => {
     "https://raw.githubusercontent.com/org/repo/main/docs/chapter-1.md",
     "https://raw.githubusercontent.com/org/repo/main/docs/chapter-2.md",
   ]);
+});
+
+test("book loader keeps SPA navigation scoped to same source", () => {
+  const loader = new BookLoader(
+    "https://raw.githubusercontent.com/org/repo/main/docs/README.md",
+  );
+
+  const sameSource = loader.registerNavigablePart(
+    "https://raw.githubusercontent.com/org/repo/main/docs/chapter-1.md",
+  );
+  const otherSource = loader.registerNavigablePart(
+    "https://raw.githubusercontent.com/other/repo/main/docs/chapter-1.md",
+  );
+
+  assert.equal(
+    sameSource,
+    "https://raw.githubusercontent.com/org/repo/main/docs/chapter-1.md",
+  );
+  assert.equal(otherSource, null);
 });

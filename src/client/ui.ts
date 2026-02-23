@@ -13,6 +13,7 @@ import { exportCanvasAsImageBlob } from "../parser/canvas-renderer";
 import {
   buildIframeEmbedCode,
   buildInlineHtmlDataSrc,
+  buildSharedBookEmbedSrc,
   buildSharedEmbedSrc,
 } from "./embed";
 import {
@@ -304,6 +305,15 @@ export type FabMenuOptions = {
   onToggleEditor?: () => void;
   enableLoadUrlEmbed?: boolean;
   getCurrentLoadUrl?: () => string | null;
+  getBookEmbedContext?: () =>
+    | BookEmbedContext
+    | Promise<BookEmbedContext | null>
+    | null;
+};
+
+export type BookEmbedContext = {
+  entryUrl: string;
+  prefetchPayload: string | null;
 };
 
 /**
@@ -553,7 +563,17 @@ export function createFabMenu(
             alert("Unable to resolve current load URL.");
             return;
           }
-          src = buildSharedEmbedSrc(window.location.href, loadUrl);
+          const bookContext = (await options.getBookEmbedContext?.()) ?? null;
+          if (bookContext?.entryUrl) {
+            src = buildSharedBookEmbedSrc(
+              window.location.href,
+              loadUrl,
+              bookContext.entryUrl,
+              bookContext.prefetchPayload,
+            );
+          } else {
+            src = buildSharedEmbedSrc(window.location.href, loadUrl);
+          }
         } else {
           alert("Select option 1 or 2.");
           return;

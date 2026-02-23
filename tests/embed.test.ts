@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildIframeEmbedCode,
   buildInlineHtmlDataSrc,
+  buildSharedBookEmbedSrc,
   buildSharedEmbedSrc,
 } from "../src/client/embed";
 
@@ -30,6 +31,36 @@ test("buildSharedEmbedSrc keeps only theme query params and strips hash", () => 
   assert.equal(shared.searchParams.get("bg"), "soft");
   assert.equal(shared.searchParams.get("fm"), "none");
   assert.equal(shared.searchParams.get("x"), null);
+  assert.equal(shared.hash, "");
+  assert.equal(
+    decodeURIComponent(shared.pathname.slice("/shared/".length)),
+    loadUrl,
+  );
+});
+
+test("buildSharedBookEmbedSrc preserves style params and adds book payload", () => {
+  const currentHref =
+    "https://md2.at/book/https://github.com/acme/docs/blob/main/README.md?part=https%3A%2F%2Fraw.githubusercontent.com%2Facme%2Fdocs%2Fmain%2Fchapter-1.md&d=dark-theme&l=light-theme&bg=none&fm=minimal#intro";
+  const loadUrl =
+    "https://raw.githubusercontent.com/acme/docs/main/chapter-3.md";
+  const entryUrl =
+    "https://raw.githubusercontent.com/acme/docs/main/README.md";
+  const prefetchPayload = "prefetched-cache";
+
+  const sharedHref = buildSharedBookEmbedSrc(
+    currentHref,
+    loadUrl,
+    entryUrl,
+    prefetchPayload,
+  );
+  const shared = new URL(sharedHref);
+  assert.equal(shared.origin, "https://md2.at");
+  assert.equal(shared.searchParams.get("d"), "dark-theme");
+  assert.equal(shared.searchParams.get("l"), "light-theme");
+  assert.equal(shared.searchParams.get("bg"), "none");
+  assert.equal(shared.searchParams.get("fm"), "minimal");
+  assert.equal(shared.searchParams.get("be"), entryUrl);
+  assert.equal(shared.searchParams.get("bp"), prefetchPayload);
   assert.equal(shared.hash, "");
   assert.equal(
     decodeURIComponent(shared.pathname.slice("/shared/".length)),

@@ -7,6 +7,7 @@ export type RouteDetails = {
   dataPayload: string | null;
   bookEntryUrl: URL | null;
   bookPartUrl: URL | null;
+  bookPrefetchPayload: string | null;
 };
 
 function safeDecodePathname(pathname: string): string {
@@ -54,17 +55,22 @@ export function parseRoute(): RouteDetails {
   const hashPayload = extractHashPayload();
   const query = new URLSearchParams(window.location.search);
   const testE2eQueryUrl = safeParseUrl(query.get("url"));
+  const sharedBookEntry = safeParseUrl(query.get("be"));
+  const sharedBookPrefetch = query.get("bp");
 
   // Shared (embed) mode: no FABs, no editor/theme UI, HTML render
   if (rawPath.startsWith("/shared/")) {
     const externalPart = rawPath.slice("/shared/".length);
+    const externalUrl = safeParseUrl(externalPart || null);
+    const sharedBookPart = sharedBookEntry ? externalUrl : null;
     return {
       mode: "html",
-      externalUrl: safeParseUrl(externalPart || null),
+      externalUrl,
       shared: true,
       dataPayload: null,
-      bookEntryUrl: null,
-      bookPartUrl: null,
+      bookEntryUrl: sharedBookEntry,
+      bookPartUrl: sharedBookPart,
+      bookPrefetchPayload: sharedBookEntry ? sharedBookPrefetch : null,
     };
   }
 
@@ -74,8 +80,9 @@ export function parseRoute(): RouteDetails {
       externalUrl: null,
       shared: true,
       dataPayload: null,
-      bookEntryUrl: null,
+      bookEntryUrl: sharedBookEntry,
       bookPartUrl: null,
+      bookPrefetchPayload: sharedBookEntry ? sharedBookPrefetch : null,
     };
   }
 
@@ -91,6 +98,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: payload,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -105,6 +113,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: entryUrl,
       bookPartUrl: partUrl,
+      bookPrefetchPayload: query.get("bp"),
     };
   }
 
@@ -116,6 +125,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -128,6 +138,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -139,6 +150,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -151,6 +163,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -162,6 +175,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -174,6 +188,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -185,6 +200,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -196,6 +212,7 @@ export function parseRoute(): RouteDetails {
       dataPayload: null,
       bookEntryUrl: null,
       bookPartUrl: null,
+      bookPrefetchPayload: null,
     };
   }
 
@@ -207,5 +224,6 @@ export function parseRoute(): RouteDetails {
     dataPayload: null,
     bookEntryUrl: null,
     bookPartUrl: null,
+    bookPrefetchPayload: null,
   };
 }
