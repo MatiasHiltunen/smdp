@@ -30,7 +30,11 @@ import { shouldAllowRawHtmlForRoute } from "./client/render-options";
 import {
   applyFrameMode,
   applyFrameModeFromUrl,
+  applyBackgroundMode,
+  applyBackgroundModeFromUrl,
+  parseBackgroundMode,
   parseFrameMode,
+  setBackgroundModeSearchParam,
   setFrameModeSearchParam,
 } from "./client/frame-mode";
 
@@ -144,6 +148,8 @@ function preserveThemeQueryParams(target: URL): void {
   const light = current.get("l");
   if (dark) next.set("d", dark);
   if (light) next.set("l", light);
+  const backgroundMode = parseBackgroundMode(current.get("bg"));
+  setBackgroundModeSearchParam(next, backgroundMode);
   const frameMode = parseFrameMode(current.get("fm"));
   setFrameModeSearchParam(next, frameMode);
   target.search = next.toString();
@@ -176,6 +182,12 @@ function scrollToHeadingAnchor(view: HtmlView, anchor: string): void {
   requestAnimationFrame(() => {
     const target = view.viewer.querySelector<HTMLElement>(`#${escaped}`);
     target?.scrollIntoView({ block: "start" });
+  });
+}
+
+function scrollToTop(): void {
+  requestAnimationFrame(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   });
 }
 
@@ -231,8 +243,10 @@ async function init(): Promise<void> {
 
   const route = parseRoute();
   if (route.mode === "html") {
+    applyBackgroundModeFromUrl();
     applyFrameModeFromUrl();
   } else {
+    applyBackgroundMode("full");
     applyFrameMode("full");
   }
   document.body.classList.toggle("mode-canvas", route.mode === "canvas");
@@ -423,6 +437,8 @@ async function init(): Promise<void> {
       rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl);
       if (anchor) {
         scrollToHeadingAnchor(htmlView, anchor);
+      } else {
+        scrollToTop();
       }
 
       if (pushHistory) {

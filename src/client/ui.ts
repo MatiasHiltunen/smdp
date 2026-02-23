@@ -15,7 +15,12 @@ import {
   buildInlineHtmlDataSrc,
   buildSharedEmbedSrc,
 } from "./embed";
-import { parseFrameMode, setFrameModeSearchParam } from "./frame-mode";
+import {
+  parseBackgroundMode,
+  parseFrameMode,
+  setBackgroundModeSearchParam,
+  setFrameModeSearchParam,
+} from "./frame-mode";
 
 const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
 
@@ -47,6 +52,8 @@ function preserveThemeQueryParams(
   const light = sourceParams.get("l");
   if (dark) next.set("d", dark);
   if (light) next.set("l", light);
+  const backgroundMode = parseBackgroundMode(sourceParams.get("bg"));
+  setBackgroundModeSearchParam(next, backgroundMode);
   const frameMode = parseFrameMode(sourceParams.get("fm"));
   setFrameModeSearchParam(next, frameMode);
   target.search = next.toString();
@@ -182,12 +189,16 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
   }
 
   const safeStyleContent = sanitizeStyleTagContent(`${styles}${themeOverrides}`);
-  const frameModeClass = [
+  const visualModeClasses = [
+    "background-mode-full",
+    "background-mode-soft",
+    "background-mode-none",
     "frame-mode-full",
     "frame-mode-minimal",
     "frame-mode-none",
-  ].find((className) => document.body.classList.contains(className));
-  const bodyClassAttr = frameModeClass ? ` class="${frameModeClass}"` : "";
+  ].filter((className) => document.body.classList.contains(className));
+  const bodyClassAttr =
+    visualModeClasses.length > 0 ? ` class="${visualModeClasses.join(" ")}"` : "";
 
   return `<!DOCTYPE html>
 <html lang="en" data-theme="${currentTheme}">

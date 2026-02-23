@@ -7,9 +7,13 @@ import {
 import { serializeTheme, deserializeTheme } from './theme-serializer';
 import { emitThemeChange } from '../client/theme-events';
 import {
+  applyBackgroundMode,
   applyFrameMode,
+  getBackgroundModeFromSearch,
   getFrameModeFromSearch,
+  parseBackgroundMode,
   parseFrameMode,
+  saveBackgroundModeToUrl,
   saveFrameModeToUrl,
 } from '../client/frame-mode';
 
@@ -70,6 +74,7 @@ const FONT_WEIGHTS = ['300', '400', '500', '600', '700'] as const;
 const LINE_HEIGHTS = ['1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '2.0'] as const;
 
 const FRAME_MODES = ['full', 'minimal', 'none'] as const;
+const BACKGROUND_MODES = ['full', 'soft', 'none'] as const;
 
 const TOKEN_GROUPS: ReadonlyArray<{ title: string; fields: readonly TokenField[] }> = [
   {
@@ -267,6 +272,7 @@ function createInputField(labelText: string, id: string, key: string): { field: 
   else if (key === 'fontWeight') options = FONT_WEIGHTS;
   else if (key === 'lineHeight') options = LINE_HEIGHTS;
   else if (key === 'frameMode') options = FRAME_MODES;
+  else if (key === 'backgroundMode') options = BACKGROUND_MODES;
   
   if (options) {
     const select = document.createElement('select');
@@ -276,7 +282,7 @@ function createInputField(labelText: string, id: string, key: string): { field: 
     for (const option of options) {
       const opt = document.createElement('option');
       opt.value = option;
-      if (key === 'frameMode') {
+      if (key === 'frameMode' || key === 'backgroundMode') {
         opt.textContent = option.charAt(0).toUpperCase() + option.slice(1);
       } else {
         opt.textContent = option;
@@ -430,6 +436,17 @@ export function initializeThemeEditor(
   viewerFieldsContainer.append(frameModeField);
   inputs.set('viewer:frameMode', frameModeInput);
 
+  const backgroundModeFieldId = 'theme-viewer-background-mode';
+  const { field: backgroundModeField, input: backgroundModeInput } = createInputField(
+    'Background effects',
+    backgroundModeFieldId,
+    'backgroundMode',
+  );
+  backgroundModeInput.dataset.section = 'viewer';
+  backgroundModeInput.dataset.key = 'backgroundMode';
+  viewerFieldsContainer.append(backgroundModeField);
+  inputs.set('viewer:backgroundMode', backgroundModeInput);
+
   viewerSection.append(viewerHeading, viewerFieldsContainer);
 
   const tokenSections = TOKEN_GROUPS.map((group) => {
@@ -484,7 +501,6 @@ export function initializeThemeEditor(
 
   let focusableElements: HTMLElement[] = [];
   let restoreFocus: HTMLElement | null = null;
-  let previousBodyOverflow: string | null = null;
 
   const handleKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
@@ -541,6 +557,11 @@ export function initializeThemeEditor(
       const mode = getFrameModeFromSearch(window.location.search);
       viewerFrameMode.value = mode;
     }
+    const viewerBackgroundMode = inputs.get('viewer:backgroundMode');
+    if (viewerBackgroundMode && document.activeElement !== viewerBackgroundMode) {
+      const mode = getBackgroundModeFromSearch(window.location.search);
+      viewerBackgroundMode.value = mode;
+    }
     TOKEN_GROUPS.forEach((group) => {
       group.fields.forEach((fieldDef) => {
         const key = `token:${fieldDef.key}`;
@@ -575,8 +596,6 @@ export function initializeThemeEditor(
     document.body.classList.add('show-theme-editor');
     document.addEventListener('keydown', handleKeydown);
     restoreFocus = (document.activeElement as HTMLElement) ?? null;
-    previousBodyOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     queueMicrotask(() => {
       if (document.body.classList.contains('show-theme-editor')) {
         const target = focusableElements[0] ?? firstInput ?? panel;
@@ -594,8 +613,6 @@ export function initializeThemeEditor(
     wrapper.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('show-theme-editor');
     document.removeEventListener('keydown', handleKeydown);
-    document.body.style.overflow = previousBodyOverflow ?? '';
-    previousBodyOverflow = null;
     if (restoreFocus) {
       restoreFocus.focus({ preventScroll: true });
     }
@@ -624,6 +641,13 @@ export function initializeThemeEditor(
       const mode = parseFrameMode(value);
       applyFrameMode(mode);
       saveFrameModeToUrl(mode);
+      emitThemeChange('editor');
+      return;
+    }
+    if (section === 'viewer' && key === 'backgroundMode') {
+      const mode = parseBackgroundMode(value);
+      applyBackgroundMode(mode);
+      saveBackgroundModeToUrl(mode);
       emitThemeChange('editor');
       return;
     }
@@ -682,6 +706,8 @@ export function initializeThemeEditor(
     builder.withCustomProperties(defaultTheme.customProperties);
     builder.apply();
     saveThemeToUrl(builder);
+    applyBackgroundMode('full');
+    saveBackgroundModeToUrl('full');
     applyFrameMode('full');
     saveFrameModeToUrl('full');
     refresh();

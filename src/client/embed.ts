@@ -1,4 +1,9 @@
-import { parseFrameMode, setFrameModeSearchParam } from "./frame-mode";
+import {
+  parseBackgroundMode,
+  parseFrameMode,
+  setBackgroundModeSearchParam,
+  setFrameModeSearchParam,
+} from "./frame-mode";
 
 type Base64Options = {
   alphabet?: "base64" | "base64url";
@@ -45,6 +50,8 @@ function preserveThemeQueryParams(target: URL, source: URL): void {
   const light = source.searchParams.get("l");
   if (dark) next.set("d", dark);
   if (light) next.set("l", light);
+  const backgroundMode = parseBackgroundMode(source.searchParams.get("bg"));
+  setBackgroundModeSearchParam(next, backgroundMode);
   const frameMode = parseFrameMode(source.searchParams.get("fm"));
   setFrameModeSearchParam(next, frameMode);
   target.search = next.toString();

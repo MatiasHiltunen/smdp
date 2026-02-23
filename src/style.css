@@ -124,6 +124,51 @@ body::after {
   opacity: 0.25;
 }
 
+body.background-mode-soft {
+  background: radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--bg-glow-a, rgba(56, 189, 248, 0.12)) 55%, transparent) 0%, transparent 55%),
+    radial-gradient(circle at 82% 12%, color-mix(in srgb, var(--bg-glow-b, rgba(94, 234, 212, 0.12)) 55%, transparent) 0%, transparent 60%),
+    var(--bg-base);
+}
+
+body.background-mode-soft::before {
+  opacity: 0.28;
+}
+
+body.background-mode-soft::after {
+  opacity: 0.1;
+  backdrop-filter: blur(36px);
+  -webkit-backdrop-filter: blur(36px);
+}
+
+body.background-mode-soft .app-shell.mode-html,
+body.background-mode-soft .app-shell.mode-html .viewer-pane,
+body.background-mode-soft .app-shell.mode-html .editor-pane {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+body.background-mode-none {
+  background: var(--bg-base);
+}
+
+body.background-mode-none::before,
+body.background-mode-none::after {
+  display: none;
+}
+
+body.background-mode-none .app-shell.mode-html {
+  background: transparent;
+  box-shadow: none;
+}
+
+body.background-mode-none .app-shell.mode-html .viewer-pane,
+body.background-mode-none .app-shell.mode-html .editor-pane {
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 body.hydrating {
   cursor: progress;
 }
@@ -640,7 +685,7 @@ body.is-editing .editor-pane {
 
 .editor {
   width: 100%;
-  min-height: clamp(280px, 40vh, 520px);
+  min-height: clamp(180px, 30vh, 360px);
   resize: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -1115,7 +1160,7 @@ img {
 
 @media (min-width: 960px) {
   body.is-editing .app-shell {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
     align-items: start;
   }
 
