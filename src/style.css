@@ -835,6 +835,7 @@ body.is-editing .editor-pane {
   flex-direction: column;
   align-items: flex-start;
   gap: 0.6rem;
+  pointer-events: none;
 }
 
 .book-topics-toggle {
@@ -851,6 +852,7 @@ body.is-editing .editor-pane {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  pointer-events: auto;
 }
 
 .book-topics-toggle:hover,

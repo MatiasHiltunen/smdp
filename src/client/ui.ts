@@ -247,7 +247,7 @@ ${safeStyleContent}
   </style>
 </head>
 <body${bodyClassAttr}>
-  <div class="app-shell">
+  <div class="app-shell mode-html">
     <div class="viewer-pane">
       <article class="markdown-viewer">
 ${viewer.innerHTML}
