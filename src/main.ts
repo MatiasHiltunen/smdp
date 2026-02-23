@@ -26,6 +26,10 @@ import { createFabMenu, displayError } from "./client/ui";
 import { TD } from "./parser/constants";
 import { onThemeChange } from "./client/theme-events";
 import { mountE2ETestRunner } from "./client/e2e";
+import {
+  createBookTopicsMenu,
+  type BookTopicsMenuHandle,
+} from "./client/book-topics";
 import { shouldAllowRawHtmlForRoute } from "./client/render-options";
 import {
   applyFrameMode,
@@ -309,6 +313,7 @@ async function init(): Promise<void> {
   let currentBaseUrl: string | undefined;
   let bookLoader: BookLoader | null = null;
   let currentBookPartUrl: string | null = null;
+  let bookTopicsMenu: BookTopicsMenuHandle | null = null;
 
   const rerenderCurrent = async (): Promise<void> => {
     if (!latestBytes || latestBytes.byteLength === 0) {
@@ -355,6 +360,16 @@ async function init(): Promise<void> {
       }
     });
     themeEditorViewListenerAttached = true;
+  }
+
+  if (route.mode === "html" && route.bookEntryUrl) {
+    bookTopicsMenu = createBookTopicsMenu();
+    document.body.appendChild(bookTopicsMenu.root);
+    registerCleanup(() => {
+      bookTopicsMenu?.destroy();
+      bookTopicsMenu?.root.remove();
+      bookTopicsMenu = null;
+    });
   }
 
   try {
@@ -409,6 +424,7 @@ async function init(): Promise<void> {
     if (bookLoader && route.mode === "html") {
       const htmlView = view as HtmlView;
       rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl);
+      bookTopicsMenu?.update(htmlView.viewer);
       scrollToHeadingAnchor(htmlView, window.location.hash.replace(/^#/, ""));
     }
 
@@ -435,6 +451,7 @@ async function init(): Promise<void> {
       }
 
       rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl);
+      bookTopicsMenu?.update(htmlView.viewer);
       if (anchor) {
         scrollToHeadingAnchor(htmlView, anchor);
       } else {
