@@ -6,6 +6,12 @@ import {
 } from './theme-builder';
 import { serializeTheme, deserializeTheme } from './theme-serializer';
 import { emitThemeChange } from '../client/theme-events';
+import {
+  applyFrameMode,
+  getFrameModeFromSearch,
+  parseFrameMode,
+  saveFrameModeToUrl,
+} from '../client/frame-mode';
 
 export type ThemeEditorHandle = {
   root: HTMLElement;
@@ -62,6 +68,8 @@ const FONT_SIZES = ['12px', '13px', '14px', '15px', '16px', '17px', '18px', '20p
 const FONT_WEIGHTS = ['300', '400', '500', '600', '700'] as const;
 
 const LINE_HEIGHTS = ['1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '2.0'] as const;
+
+const FRAME_MODES = ['full', 'minimal', 'none'] as const;
 
 const TOKEN_GROUPS: ReadonlyArray<{ title: string; fields: readonly TokenField[] }> = [
   {
@@ -258,6 +266,7 @@ function createInputField(labelText: string, id: string, key: string): { field: 
   else if (key === 'fontSize') options = FONT_SIZES;
   else if (key === 'fontWeight') options = FONT_WEIGHTS;
   else if (key === 'lineHeight') options = LINE_HEIGHTS;
+  else if (key === 'frameMode') options = FRAME_MODES;
   
   if (options) {
     const select = document.createElement('select');
@@ -267,7 +276,11 @@ function createInputField(labelText: string, id: string, key: string): { field: 
     for (const option of options) {
       const opt = document.createElement('option');
       opt.value = option;
-      opt.textContent = option;
+      if (key === 'frameMode') {
+        opt.textContent = option.charAt(0).toUpperCase() + option.slice(1);
+      } else {
+        opt.textContent = option;
+      }
       select.appendChild(opt);
     }
     
@@ -396,6 +409,29 @@ export function initializeThemeEditor(
 
   metaSection.append(metaHeading, metaFieldsContainer);
 
+  const viewerSection = document.createElement('section');
+  viewerSection.className = 'theme-editor-section';
+
+  const viewerHeading = document.createElement('h3');
+  viewerHeading.className = 'theme-editor-section-title';
+  viewerHeading.textContent = 'Viewer';
+
+  const viewerFieldsContainer = document.createElement('div');
+  viewerFieldsContainer.className = 'theme-editor-fields';
+
+  const frameModeFieldId = 'theme-viewer-frame-mode';
+  const { field: frameModeField, input: frameModeInput } = createInputField(
+    'Frame mode',
+    frameModeFieldId,
+    'frameMode',
+  );
+  frameModeInput.dataset.section = 'viewer';
+  frameModeInput.dataset.key = 'frameMode';
+  viewerFieldsContainer.append(frameModeField);
+  inputs.set('viewer:frameMode', frameModeInput);
+
+  viewerSection.append(viewerHeading, viewerFieldsContainer);
+
   const tokenSections = TOKEN_GROUPS.map((group) => {
     const section = document.createElement('section');
     section.className = 'theme-editor-section';
@@ -434,7 +470,7 @@ export function initializeThemeEditor(
   footer.className = 'theme-editor-footer';
   footer.append(resetButton);
 
-  content.append(metaSection, ...tokenSections);
+  content.append(metaSection, viewerSection, ...tokenSections);
   panel.append(header, content, footer);
   wrapper.append(overlay, panel);
 
@@ -500,6 +536,11 @@ export function initializeThemeEditor(
         }
       }
     });
+    const viewerFrameMode = inputs.get('viewer:frameMode');
+    if (viewerFrameMode && document.activeElement !== viewerFrameMode) {
+      const mode = getFrameModeFromSearch(window.location.search);
+      viewerFrameMode.value = mode;
+    }
     TOKEN_GROUPS.forEach((group) => {
       group.fields.forEach((fieldDef) => {
         const key = `token:${fieldDef.key}`;
@@ -579,6 +620,13 @@ export function initializeThemeEditor(
     const key = input.dataset.key;
     if (!section || !key) return;
     const value = input.value;
+    if (section === 'viewer' && key === 'frameMode') {
+      const mode = parseFrameMode(value);
+      applyFrameMode(mode);
+      saveFrameModeToUrl(mode);
+      emitThemeChange('editor');
+      return;
+    }
     if (section === 'meta') {
       const partial: Partial<ThemeMeta> = {};
       (partial as Record<string, string>)[key] = value;
@@ -634,6 +682,8 @@ export function initializeThemeEditor(
     builder.withCustomProperties(defaultTheme.customProperties);
     builder.apply();
     saveThemeToUrl(builder);
+    applyFrameMode('full');
+    saveFrameModeToUrl('full');
     refresh();
     emitThemeChange('reset');
   });

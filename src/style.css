@@ -158,6 +158,37 @@ body.is-editing .floating-toggle {
   -webkit-backdrop-filter: blur(24px);
 }
 
+body.frame-mode-minimal .app-shell.mode-html {
+  background: var(--bg-glass);
+  box-shadow: none;
+}
+
+body.frame-mode-minimal .app-shell.mode-html .viewer-pane {
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body.frame-mode-none {
+  padding: clamp(0.4rem, 1.3vw, 0.8rem);
+}
+
+body.frame-mode-none .app-shell.mode-html {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.frame-mode-none .app-shell.mode-html .viewer-pane {
+  padding: 0;
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .canvas-pane {
   display: flex;
   flex-direction: column;

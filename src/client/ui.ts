@@ -15,6 +15,7 @@ import {
   buildInlineHtmlDataSrc,
   buildSharedEmbedSrc,
 } from "./embed";
+import { parseFrameMode, setFrameModeSearchParam } from "./frame-mode";
 
 const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
 
@@ -46,6 +47,8 @@ function preserveThemeQueryParams(
   const light = sourceParams.get("l");
   if (dark) next.set("d", dark);
   if (light) next.set("l", light);
+  const frameMode = parseFrameMode(sourceParams.get("fm"));
+  setFrameModeSearchParam(next, frameMode);
   target.search = next.toString();
 }
 
@@ -179,6 +182,12 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
   }
 
   const safeStyleContent = sanitizeStyleTagContent(`${styles}${themeOverrides}`);
+  const frameModeClass = [
+    "frame-mode-full",
+    "frame-mode-minimal",
+    "frame-mode-none",
+  ].find((className) => document.body.classList.contains(className));
+  const bodyClassAttr = frameModeClass ? ` class="${frameModeClass}"` : "";
 
   return `<!DOCTYPE html>
 <html lang="en" data-theme="${currentTheme}">
@@ -191,7 +200,7 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
 ${safeStyleContent}
   </style>
 </head>
-<body>
+<body${bodyClassAttr}>
   <div class="app-shell">
     <div class="viewer-pane">
       <article class="markdown-viewer">

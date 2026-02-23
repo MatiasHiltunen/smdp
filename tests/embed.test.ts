@@ -18,7 +18,7 @@ test("buildInlineHtmlDataSrc encodes HTML as base64 data URI", () => {
 
 test("buildSharedEmbedSrc keeps only theme query params and strips hash", () => {
   const currentHref =
-    "https://md2.at/book/https://github.com/acme/docs/blob/main/README.md?part=https%3A%2F%2Fraw.githubusercontent.com%2Facme%2Fdocs%2Fmain%2Fchapter-1.md&d=dark-theme&l=light-theme&x=drop#intro";
+    "https://md2.at/book/https://github.com/acme/docs/blob/main/README.md?part=https%3A%2F%2Fraw.githubusercontent.com%2Facme%2Fdocs%2Fmain%2Fchapter-1.md&d=dark-theme&l=light-theme&fm=none&x=drop#intro";
   const loadUrl =
     "https://raw.githubusercontent.com/acme/docs/main/chapter-2.md?plain=1";
 
@@ -27,6 +27,7 @@ test("buildSharedEmbedSrc keeps only theme query params and strips hash", () => 
   assert.equal(shared.origin, "https://md2.at");
   assert.equal(shared.searchParams.get("d"), "dark-theme");
   assert.equal(shared.searchParams.get("l"), "light-theme");
+  assert.equal(shared.searchParams.get("fm"), "none");
   assert.equal(shared.searchParams.get("x"), null);
   assert.equal(shared.hash, "");
   assert.equal(

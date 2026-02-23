@@ -27,6 +27,12 @@ import { TD } from "./parser/constants";
 import { onThemeChange } from "./client/theme-events";
 import { mountE2ETestRunner } from "./client/e2e";
 import { shouldAllowRawHtmlForRoute } from "./client/render-options";
+import {
+  applyFrameMode,
+  applyFrameModeFromUrl,
+  parseFrameMode,
+  setFrameModeSearchParam,
+} from "./client/frame-mode";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -138,6 +144,8 @@ function preserveThemeQueryParams(target: URL): void {
   const light = current.get("l");
   if (dark) next.set("d", dark);
   if (light) next.set("l", light);
+  const frameMode = parseFrameMode(current.get("fm"));
+  setFrameModeSearchParam(next, frameMode);
   target.search = next.toString();
 }
 
@@ -222,6 +230,11 @@ async function init(): Promise<void> {
   }
 
   const route = parseRoute();
+  if (route.mode === "html") {
+    applyFrameModeFromUrl();
+  } else {
+    applyFrameMode("full");
+  }
   document.body.classList.toggle("mode-canvas", route.mode === "canvas");
   if (route.mode === "test_e2e") {
     document.body.classList.remove("hydrating");
