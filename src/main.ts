@@ -26,6 +26,7 @@ import { createFabMenu, displayError } from "./client/ui";
 import { TD } from "./parser/constants";
 import { onThemeChange } from "./client/theme-events";
 import { mountE2ETestRunner } from "./client/e2e";
+import { shouldAllowRawHtmlForRoute } from "./client/render-options";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -227,9 +228,9 @@ async function init(): Promise<void> {
     mountE2ETestRunner(route.externalUrl);
     return;
   }
-  // Canvas mode keeps raw HTML enabled so supported safe tags (tables, links,
-  // emphasis, inline images, etc.) render consistently with book mode.
-  const allowRawHtml = route.bookEntryUrl !== null || route.mode === "canvas";
+  // HTML and canvas modes keep raw HTML enabled so sanitized tags (tables,
+  // links, emphasis, inline images, etc.) render consistently by default.
+  const allowRawHtml = shouldAllowRawHtmlForRoute(route);
 
   let view: HtmlView | CanvasView;
   let applyRender: (
@@ -277,6 +278,11 @@ async function init(): Promise<void> {
     await applyRender(bytes, baseUrl, latestAllowRawHtml);
   };
 
+  let resolved: MarkdownFetchResult | null = null;
+  let currentBaseUrl: string | undefined;
+  let bookLoader: BookLoader | null = null;
+  let currentBookPartUrl: string | null = null;
+
   const rerenderCurrent = async (): Promise<void> => {
     if (!latestBytes || latestBytes.byteLength === 0) {
       return;
@@ -294,15 +300,19 @@ async function init(): Promise<void> {
     document.body.appendChild(themeEditorLocal.root);
 
     // Create FAB menu with editor toggle callback
-    const fabMenu = createFabMenu(view, themeEditorLocal, () => {
-      const isEditing = document.body.classList.toggle("is-editing");
-      view.shell.classList.toggle("show-editor", isEditing);
-      view.editorPane.setAttribute("aria-hidden", String(!isEditing));
-      view.editorPane.toggleAttribute("inert", !isEditing);
-      if (isEditing) {
-        view.textarea.focus();
-        themeEditorLocal?.close();
-      }
+    const fabMenu = createFabMenu(view, themeEditorLocal, {
+      onToggleEditor: () => {
+        const isEditing = document.body.classList.toggle("is-editing");
+        view.shell.classList.toggle("show-editor", isEditing);
+        view.editorPane.setAttribute("aria-hidden", String(!isEditing));
+        view.editorPane.toggleAttribute("inert", !isEditing);
+        if (isEditing) {
+          view.textarea.focus();
+          themeEditorLocal?.close();
+        }
+      },
+      enableLoadUrlEmbed: route.mode === "html",
+      getCurrentLoadUrl: () => currentBaseUrl ?? null,
     });
     document.body.appendChild(fabMenu);
   }
@@ -319,11 +329,6 @@ async function init(): Promise<void> {
     });
     themeEditorViewListenerAttached = true;
   }
-
-  let resolved: MarkdownFetchResult | null = null;
-  let currentBaseUrl: string | undefined;
-  let bookLoader: BookLoader | null = null;
-  let currentBookPartUrl: string | null = null;
 
   try {
     if (route.bookEntryUrl) {

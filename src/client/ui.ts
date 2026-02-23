@@ -10,6 +10,11 @@ import { encodeMarkdownToBase64 } from "../data-link";
 import { deserializeTheme } from "../theme/theme-serializer";
 import { emitThemeChange } from "./theme-events";
 import { exportCanvasAsImageBlob } from "../parser/canvas-renderer";
+import {
+  buildIframeEmbedCode,
+  buildInlineHtmlDataSrc,
+  buildSharedEmbedSrc,
+} from "./embed";
 
 const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
 
@@ -32,14 +37,55 @@ function sanitizeStyleTagContent(css: string): string {
   return css.replace(/<\/style/gi, "<\\/style");
 }
 
-/**
- * Export the rendered HTML as a self-contained HTML5 file
- */
-export function exportAsHtml(view: HtmlView): void {
+function preserveThemeQueryParams(
+  target: URL,
+  sourceParams: URLSearchParams,
+): void {
+  const next = new URLSearchParams();
+  const dark = sourceParams.get("d");
+  const light = sourceParams.get("l");
+  if (dark) next.set("d", dark);
+  if (light) next.set("l", light);
+  target.search = next.toString();
+}
+
+async function copyTextToClipboard(
+  value: string,
+  promptLabel: string,
+): Promise<boolean> {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (error) {
+    console.warn("Clipboard API write failed, falling back to textarea copy", error);
+  }
+
+  const textArea = createElement("textarea");
+  textArea.value = value;
+  textArea.style.position = "fixed";
+  textArea.style.left = "-999999px";
+  textArea.style.top = "-999999px";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  try {
+    const copied = document.execCommand("copy");
+    return copied;
+  } catch (error) {
+    console.warn("execCommand copy failed, falling back to prompt", error);
+    window.prompt(promptLabel, value);
+    return false;
+  } finally {
+    document.body.removeChild(textArea);
+  }
+}
+
+export function buildExportHtmlDocument(view: HtmlView): string | null {
   const viewer = view.shell.querySelector(".markdown-viewer");
   if (!viewer) {
-    alert("No rendered content to export");
-    return;
+    return null;
   }
 
   // Get all styles from the document
@@ -49,7 +95,7 @@ export function exportAsHtml(view: HtmlView): void {
         return Array.from(sheet.cssRules)
           .map((rule) => rule.cssText)
           .join("\n");
-      } catch (e) {
+      } catch {
         // Can't access cross-origin stylesheets
         return "";
       }
@@ -66,11 +112,15 @@ export function exportAsHtml(view: HtmlView): void {
   const lightCustomProps: string[] = [];
 
   // Helper to convert deserialized theme config to CSS properties
-  const convertThemeToCss = (serialized: string | null, mode: 'light' | 'dark', targetArray: string[]) => {
+  const convertThemeToCss = (
+    serialized: string | null,
+    mode: "light" | "dark",
+    targetArray: string[],
+  ) => {
     if (!serialized) return;
-    
+
     const config = deserializeTheme(serialized, mode);
-    
+
     // Add meta properties
     if (config.meta) {
       const fontFamily = sanitizeCssDeclarationValue(config.meta.fontFamily);
@@ -108,10 +158,10 @@ export function exportAsHtml(view: HtmlView): void {
   };
 
   // Extract dark mode customizations
-  convertThemeToCss(params.get('d'), 'dark', darkCustomProps);
+  convertThemeToCss(params.get("d"), "dark", darkCustomProps);
 
   // Extract light mode customizations
-  convertThemeToCss(params.get('l'), 'light', lightCustomProps);
+  convertThemeToCss(params.get("l"), "light", lightCustomProps);
 
   // Build theme override styles
   let themeOverrides = "";
@@ -130,8 +180,7 @@ export function exportAsHtml(view: HtmlView): void {
 
   const safeStyleContent = sanitizeStyleTagContent(`${styles}${themeOverrides}`);
 
-  // Create HTML5 document
-  const html = `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en" data-theme="${currentTheme}">
 <head>
   <meta charset="UTF-8">
@@ -152,6 +201,17 @@ ${viewer.innerHTML}
   </div>
 </body>
 </html>`;
+}
+
+/**
+ * Export the rendered HTML as a self-contained HTML5 file
+ */
+export function exportAsHtml(view: HtmlView): void {
+  const html = buildExportHtmlDocument(view);
+  if (!html) {
+    alert("No rendered content to export");
+    return;
+  }
 
   // Create blob and download
   const blob = new Blob([html], { type: "text/html" });
@@ -186,14 +246,23 @@ async function exportAsCanvasImage(view: CanvasView): Promise<void> {
   }
 }
 
+export type FabMenuOptions = {
+  onToggleEditor?: () => void;
+  enableLoadUrlEmbed?: boolean;
+  getCurrentLoadUrl?: () => string | null;
+};
+
 /**
  * Create a FAB menu with all actions
  */
 export function createFabMenu(
   view: HtmlView | CanvasView,
   themeEditor: ThemeEditorHandle,
-  onToggleEditor?: () => void,
+  options: FabMenuOptions = {},
 ): HTMLElement {
+  const isCanvasView = "canvas" in view;
+  const isHtmlView = !isCanvasView;
+
   const menu = createElement("div");
   menu.className = "fab-menu";
 
@@ -267,7 +336,6 @@ export function createFabMenu(
   updateThemeIcon(getCurrentTheme());
 
   // Export button
-  const isCanvasView = "canvas" in view;
   const exportButton = createElement("button");
   exportButton.className = "fab-action";
   exportButton.type = "button";
@@ -292,6 +360,18 @@ export function createFabMenu(
     </svg>
   `;
 
+  const copyEmbeddedButton = isHtmlView ? createElement("button") : null;
+  if (copyEmbeddedButton) {
+    copyEmbeddedButton.className = "fab-action";
+    copyEmbeddedButton.type = "button";
+    copyEmbeddedButton.setAttribute("data-tooltip", "Copy Embedded Iframe");
+    copyEmbeddedButton.innerHTML = `
+      <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
+        <path d="M5 4a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1a1 1 0 1 0-2 0v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1a1 1 0 1 0 0-2H5Zm7 0a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h7a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3h-7Zm0 2h7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" fill="currentColor"/>
+      </svg>
+    `;
+  }
+
   // Event handlers
   let isMenuOpen = false;
 
@@ -303,7 +383,7 @@ export function createFabMenu(
 
   editButton.addEventListener("click", (e) => {
     e.stopPropagation();
-    onToggleEditor?.();
+    options.onToggleEditor?.();
     isMenuOpen = false;
     menu.classList.remove("is-open");
     mainButton.setAttribute("aria-expanded", "false");
@@ -362,39 +442,14 @@ export function createFabMenu(
         const shareUrl = new URL(window.location.href);
         shareUrl.pathname = "/data";
         shareUrl.hash = base64;
-        
-        // Preserve theme customizations from current URL
-        const currentParams = new URLSearchParams(window.location.search);
-        const newParams = new URLSearchParams();
-        
-        // Copy theme params (d and l) to shared URL
-        const darkTheme = currentParams.get('d');
-        const lightTheme = currentParams.get('l');
-        if (darkTheme) newParams.set('d', darkTheme);
-        if (lightTheme) newParams.set('l', lightTheme);
-        
-        shareUrl.search = newParams.toString();
-        
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(shareUrl.toString());
+        preserveThemeQueryParams(shareUrl, new URLSearchParams(window.location.search));
+
+        const copied = await copyTextToClipboard(
+          shareUrl.toString(),
+          "Copy this shareable link:",
+        );
+        if (copied) {
           alert("Shareable link copied to clipboard!");
-        } else {
-          // Fallback for browsers without clipboard API
-          const textArea = createElement("textarea");
-          textArea.value = shareUrl.toString();
-          textArea.style.position = "fixed";
-          textArea.style.left = "-999999px";
-          textArea.style.top = "-999999px";
-          document.body.appendChild(textArea);
-          textArea.focus();
-          textArea.select();
-          try {
-            document.execCommand("copy");
-            alert("Shareable link copied to clipboard!");
-          } catch (err) {
-            window.prompt("Copy this shareable link:", shareUrl.toString());
-          }
-          document.body.removeChild(textArea);
         }
       } catch (error) {
         console.error("Failed to create shareable link", error);
@@ -402,6 +457,68 @@ export function createFabMenu(
       } finally {
         shareButton.disabled = false;
         shareButton.removeAttribute("aria-busy");
+        isMenuOpen = false;
+        menu.classList.remove("is-open");
+        mainButton.setAttribute("aria-expanded", "false");
+      }
+    })();
+  });
+
+  copyEmbeddedButton?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const htmlView = view as HtmlView;
+    void (async () => {
+      copyEmbeddedButton.disabled = true;
+      copyEmbeddedButton.setAttribute("aria-busy", "true");
+      try {
+        const selection = window.prompt(
+          "Copy embedded iframe:\n1 = inline base64 HTML source\n2 = current load URL as src",
+          "1",
+        );
+        if (selection === null) {
+          return;
+        }
+
+        const option = selection.trim();
+        let src: string;
+
+        if (option === "1") {
+          const html = buildExportHtmlDocument(htmlView);
+          if (!html) {
+            alert("No rendered content to embed.");
+            return;
+          }
+          src = buildInlineHtmlDataSrc(html);
+        } else if (option === "2") {
+          if (!options.enableLoadUrlEmbed) {
+            alert("Current load URL embedding is available only in HTML/book modes.");
+            return;
+          }
+          const loadUrl = options.getCurrentLoadUrl?.();
+          if (!loadUrl) {
+            alert("Unable to resolve current load URL.");
+            return;
+          }
+          src = buildSharedEmbedSrc(window.location.href, loadUrl);
+        } else {
+          alert("Select option 1 or 2.");
+          return;
+        }
+
+        const iframeCode = buildIframeEmbedCode(src);
+        const copied = await copyTextToClipboard(
+          iframeCode,
+          "Copy this embedded iframe code:",
+        );
+        if (copied) {
+          alert("Embedded iframe code copied to clipboard!");
+        }
+      } catch (error) {
+        console.error("Failed to build embedded iframe code", error);
+        displayError("Unable to generate embedded iframe code");
+      } finally {
+        copyEmbeddedButton.disabled = false;
+        copyEmbeddedButton.removeAttribute("aria-busy");
         isMenuOpen = false;
         menu.classList.remove("is-open");
         mainButton.setAttribute("aria-expanded", "false");
@@ -424,7 +541,18 @@ export function createFabMenu(
     { once: true },
   );
 
-  actions.append(editButton, themeButton, themeToggleButton, exportButton, shareButton);
+  if (copyEmbeddedButton) {
+    actions.append(
+      editButton,
+      themeButton,
+      themeToggleButton,
+      exportButton,
+      shareButton,
+      copyEmbeddedButton,
+    );
+  } else {
+    actions.append(editButton, themeButton, themeToggleButton, exportButton, shareButton);
+  }
   menu.append(mainButton, actions);
 
   return menu;
