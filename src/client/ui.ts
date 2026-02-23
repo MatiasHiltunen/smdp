@@ -23,6 +23,7 @@ import {
 } from "./frame-mode";
 
 const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
+const SAFE_CSS_PROPERTY_RE = /^[a-z-]{1,64}$/i;
 
 function sanitizeCssDeclarationValue(value: string): string | null {
   const trimmed = value.trim();
@@ -41,6 +42,32 @@ function sanitizeCssCustomPropertyName(name: string): string | null {
 function sanitizeStyleTagContent(css: string): string {
   // Prevent untrusted values from terminating the enclosing <style> element.
   return css.replace(/<\/style/gi, "<\\/style");
+}
+
+function readInlineRootDeclarations(): string[] {
+  const style = document.documentElement.style;
+  const declarations: string[] = [];
+
+  for (let index = 0; index < style.length; index += 1) {
+    const name = style.item(index);
+    if (!name) continue;
+
+    const rawValue = style.getPropertyValue(name);
+    const safeValue = sanitizeCssDeclarationValue(rawValue);
+    if (!safeValue) continue;
+
+    if (name.startsWith("--")) {
+      const safeName = sanitizeCssCustomPropertyName(name);
+      if (!safeName) continue;
+      declarations.push(`  ${safeName}: ${safeValue};`);
+      continue;
+    }
+
+    if (!SAFE_CSS_PROPERTY_RE.test(name)) continue;
+    declarations.push(`  ${name}: ${safeValue};`);
+  }
+
+  return declarations;
 }
 
 function preserveThemeQueryParams(
@@ -186,6 +213,13 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
     themeOverrides += `\n:root[data-theme="light"] {\n${lightCustomProps.join(
       "\n",
     )}\n}`;
+  }
+
+  const inlineRootDeclarations = readInlineRootDeclarations();
+  if (inlineRootDeclarations.length > 0) {
+    // Preserve the exact runtime-applied root styles (including active theme
+    // customizations) for exports and inline embeds.
+    themeOverrides += `\n:root {\n${inlineRootDeclarations.join("\n")}\n}`;
   }
 
   const safeStyleContent = sanitizeStyleTagContent(`${styles}${themeOverrides}`);
