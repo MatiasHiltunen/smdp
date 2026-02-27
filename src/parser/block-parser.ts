@@ -70,6 +70,33 @@ function hasSummaryCloseTagOnLine(u8: Uint8Array, s: number, e: number): boolean
   return TD.decode(u8.subarray(s, e)).toLowerCase().includes('</summary');
 }
 
+function skipBlockquotePrefixes(
+  u8: Uint8Array,
+  s: number,
+  e: number,
+  maxPrefixes: number,
+): { index: number; count: number } {
+  let i = s;
+  let count = 0;
+
+  while (i < e && count < maxPrefixes) {
+    const c = u8[i];
+    if (isSpace(c)) {
+      i++;
+      continue;
+    }
+    if (c === 0x3e) { // >
+      count++;
+      i++;
+      if (i < e && u8[i] === 0x20) i++;
+      continue;
+    }
+    break;
+  }
+
+  return { index: i, count };
+}
+
 /**
  * Events:
  *  bqOpen / bqClose
@@ -121,7 +148,15 @@ export function* blocks(
     }
     
     if (st.inFence) {
-      let i = skipSpaces(u8, start, end);
+      let lineStart = start;
+      if (st.bqLevel > 0) {
+        const stripped = skipBlockquotePrefixes(u8, start, end, st.bqLevel);
+        if (stripped.count > 0) {
+          lineStart = stripped.index;
+        }
+      }
+
+      let i = skipSpaces(u8, lineStart, end);
       if (hasRepeat(u8, i, end, st.fenceCh, st.fenceLen)) {
         st.inFence = false;
         st.fenceCh = 0;
@@ -130,7 +165,7 @@ export function* blocks(
         yield { type: 'codeClose' };
         continue;
       }
-      yield { type: 'codeText', s: start, e: end };
+      yield { type: 'codeText', s: lineStart, e: end };
       continue;
     }
 
