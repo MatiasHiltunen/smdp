@@ -12,7 +12,7 @@ import {
   getThemeBuilder,
 } from "./client/theme";
 import { parseRoute } from "./client/routing";
-import { BookLoader } from "./client/book";
+import { BookLoader, type BookPart } from "./client/book";
 import {
   createCanvasView,
   createHtmlView,
@@ -22,7 +22,11 @@ import {
 import { fetchMarkdown, type MarkdownFetchResult } from "./client/fetch";
 import { canonicalizeBookLink } from "./client/github-url";
 import { sanitizeSharedDataBaseUrl } from "./client/shared-data";
-import { createFabMenu, displayError } from "./client/ui";
+import {
+  buildExportHtmlDocumentFromViewerHtml,
+  createFabMenu,
+  displayError,
+} from "./client/ui";
 import { TD } from "./parser/constants";
 import { onThemeChange } from "./client/theme-events";
 import { mountE2ETestRunner } from "./client/e2e";
@@ -275,6 +279,190 @@ function rewriteBookLinksInViewer(
   }
 }
 
+const MAX_INLINE_BOOK_EXPORT_PARTS = 128;
+
+const EMBEDDED_BOOK_EXPORT_STYLES = `
+.embedded-book-nav {
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+.embedded-book-nav-title {
+  display: inline-block;
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+}
+.embedded-book-nav-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.4rem;
+}
+.embedded-book-part {
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-glass);
+}
+.embedded-book-part:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+`;
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function escapeHtmlAttr(value: string): string {
+  return escapeHtmlText(value).replaceAll('"', "&quot;");
+}
+
+function buildEmbeddedBookPartId(index: number): string {
+  return `embedded-book-part-${index + 1}`;
+}
+
+function rewriteEmbeddedBookPartLinks(
+  chapterHtml: string,
+  currentBaseUrl: string,
+  currentPartUrl: string,
+  partIdByUrl: ReadonlyMap<string, string>,
+): string {
+  if (typeof document === "undefined" || !document.createElement) {
+    return chapterHtml;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = chapterHtml;
+  const links = wrapper.querySelectorAll<HTMLAnchorElement>("a[href]");
+  for (const link of links) {
+    const href = link.getAttribute("href");
+    if (!href) continue;
+    const target = canonicalizeBookLink(href, currentBaseUrl);
+    if (!target) continue;
+
+    if (target.canonicalUrl === currentPartUrl && target.anchor) {
+      link.setAttribute("href", `#${encodeURIComponent(target.anchor)}`);
+      continue;
+    }
+
+    const targetPartId = partIdByUrl.get(target.canonicalUrl);
+    if (!targetPartId) continue;
+    link.setAttribute("href", `#${targetPartId}`);
+  }
+
+  return wrapper.innerHTML;
+}
+
+async function collectBookPartsForInlineExport(
+  loader: BookLoader,
+  currentPartUrl: string | null,
+): Promise<BookPart[]> {
+  const queue: string[] = [];
+  const enqueued = new Set<string>();
+  const visited = new Set<string>();
+  const collected: BookPart[] = [];
+
+  const currentPart = currentPartUrl
+    ? loader.registerNavigablePart(currentPartUrl)
+    : null;
+  if (currentPart) {
+    queue.push(currentPart);
+    enqueued.add(currentPart);
+  }
+
+  const entryUrl = loader.getEntryUrl();
+  if (!enqueued.has(entryUrl)) {
+    queue.push(entryUrl);
+    enqueued.add(entryUrl);
+  }
+
+  while (queue.length > 0 && collected.length < MAX_INLINE_BOOK_EXPORT_PARTS) {
+    const target = queue.shift()!;
+    if (visited.has(target)) continue;
+    visited.add(target);
+
+    let part: BookPart;
+    try {
+      part = await loader.loadPart(target);
+    } catch (error) {
+      console.warn("Book export skipped an unreadable chapter", target, error);
+      continue;
+    }
+
+    collected.push(part);
+    for (const discoveredUrl of part.discoveredParts) {
+      if (visited.has(discoveredUrl) || enqueued.has(discoveredUrl)) continue;
+      enqueued.add(discoveredUrl);
+      queue.push(discoveredUrl);
+      if (enqueued.size >= MAX_INLINE_BOOK_EXPORT_PARTS * 4) {
+        break;
+      }
+    }
+  }
+
+  return collected;
+}
+
+async function buildInlineBookEmbedHtmlSource(
+  loader: BookLoader,
+  currentPartUrl: string | null,
+  allowRawHtml: boolean,
+): Promise<string | null> {
+  const parts = await collectBookPartsForInlineExport(loader, currentPartUrl);
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const partIdByUrl = new Map<string, string>();
+  parts.forEach((part, index) => {
+    partIdByUrl.set(part.url, buildEmbeddedBookPartId(index));
+  });
+
+  const chapterSections: string[] = [];
+  const tocItems: string[] = [];
+
+  for (const part of parts) {
+    const renderOptions: { baseUrl: string; allowRawHtml?: true } = {
+      baseUrl: part.baseUrl,
+    };
+    if (allowRawHtml) {
+      renderOptions.allowRawHtml = true;
+    }
+    const rendered = await parser.parse(part.bytes, renderOptions);
+    const rewritten = rewriteEmbeddedBookPartLinks(
+      rendered,
+      part.baseUrl,
+      part.url,
+      partIdByUrl,
+    );
+    const chapterId = partIdByUrl.get(part.url)!;
+    tocItems.push(
+      `<li><a href="#${chapterId}">${escapeHtmlText(part.title)}</a></li>`,
+    );
+    chapterSections.push(
+      `<section class="embedded-book-part" id="${chapterId}" data-book-source="${escapeHtmlAttr(part.url)}">\n${rewritten}\n</section>`,
+    );
+  }
+
+  const viewerHtml = `<nav class="embedded-book-nav" aria-label="Book chapters">
+  <span class="embedded-book-nav-title">Contents</span>
+  <ol class="embedded-book-nav-list">
+    ${tocItems.join("\n    ")}
+  </ol>
+</nav>
+${chapterSections.join("\n")}`;
+
+  return buildExportHtmlDocumentFromViewerHtml(viewerHtml, {
+    extraStyles: EMBEDDED_BOOK_EXPORT_STYLES,
+  });
+}
+
 async function init(): Promise<void> {
   document.body.classList.add("hydrating");
   const cleanupFns: Array<() => void> = [];
@@ -404,6 +592,14 @@ async function init(): Promise<void> {
       },
       enableLoadUrlEmbed: route.mode === "html",
       getCurrentLoadUrl: () => currentBaseUrl ?? null,
+      buildInlineEmbedHtmlSource: async () => {
+        if (!bookLoader) return null;
+        return buildInlineBookEmbedHtmlSource(
+          bookLoader,
+          currentBookPartUrl,
+          allowRawHtml,
+        );
+      },
       getBookEmbedContext: async () => {
         if (!bookLoader) return null;
         const snapshots = prioritizeCurrentBookPart(

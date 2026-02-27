@@ -120,14 +120,14 @@ async function copyTextToClipboard(
   }
 }
 
-export function buildExportHtmlDocument(view: HtmlView): string | null {
-  const viewer = view.shell.querySelector(".markdown-viewer");
-  if (!viewer) {
-    return null;
-  }
+type ExportDocumentSnapshot = {
+  currentTheme: string;
+  bodyClassAttr: string;
+  styleContent: string;
+};
 
-  // Get all styles from the document
-  const styles = Array.from(document.styleSheets)
+function readDocumentStylesheets(): string {
+  return Array.from(document.styleSheets)
     .map((sheet) => {
       try {
         return Array.from(sheet.cssRules)
@@ -139,77 +139,61 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
       }
     })
     .join("\n");
+}
 
-  // Get current theme attribute
-  const currentTheme =
-    document.documentElement.getAttribute("data-theme") || "dark";
+function appendSerializedThemeCss(
+  serialized: string | null,
+  mode: "light" | "dark",
+  targetArray: string[],
+): void {
+  if (!serialized) return;
+  const config = deserializeTheme(serialized, mode);
 
-  // Parse URL parameters to extract compact theme customizations
+  if (config.meta) {
+    const fontFamily = sanitizeCssDeclarationValue(config.meta.fontFamily);
+    if (fontFamily) targetArray.push(`  font-family: ${fontFamily};`);
+    const fontSize = sanitizeCssDeclarationValue(config.meta.fontSize);
+    if (fontSize) targetArray.push(`  font-size: ${fontSize};`);
+    const fontWeight = sanitizeCssDeclarationValue(config.meta.fontWeight);
+    if (fontWeight) targetArray.push(`  font-weight: ${fontWeight};`);
+    const lineHeight = sanitizeCssDeclarationValue(config.meta.lineHeight);
+    if (lineHeight) targetArray.push(`  line-height: ${lineHeight};`);
+    const monoFontFamily = sanitizeCssDeclarationValue(config.meta.monoFontFamily);
+    if (monoFontFamily) targetArray.push(`  --font-mono: ${monoFontFamily};`);
+  }
+
+  if (config.tokens) {
+    for (const [key, value] of Object.entries(config.tokens)) {
+      const cssVarName = `--${key.replace(/([A-Z])/g, "-$1").toLowerCase()}`;
+      const safeValue = sanitizeCssDeclarationValue(value);
+      if (!safeValue) continue;
+      targetArray.push(`  ${cssVarName}: ${safeValue};`);
+    }
+  }
+
+  if (config.customProperties) {
+    for (const [key, value] of Object.entries(config.customProperties)) {
+      const safeKey = sanitizeCssCustomPropertyName(key);
+      const safeValue = sanitizeCssDeclarationValue(value);
+      if (!safeKey || !safeValue) continue;
+      targetArray.push(`  ${safeKey}: ${safeValue};`);
+    }
+  }
+}
+
+function buildThemeOverrideStyles(): string {
   const params = new URLSearchParams(window.location.search);
   const darkCustomProps: string[] = [];
   const lightCustomProps: string[] = [];
+  appendSerializedThemeCss(params.get("d"), "dark", darkCustomProps);
+  appendSerializedThemeCss(params.get("l"), "light", lightCustomProps);
 
-  // Helper to convert deserialized theme config to CSS properties
-  const convertThemeToCss = (
-    serialized: string | null,
-    mode: "light" | "dark",
-    targetArray: string[],
-  ) => {
-    if (!serialized) return;
-
-    const config = deserializeTheme(serialized, mode);
-
-    // Add meta properties
-    if (config.meta) {
-      const fontFamily = sanitizeCssDeclarationValue(config.meta.fontFamily);
-      if (fontFamily) targetArray.push(`  font-family: ${fontFamily};`);
-      const fontSize = sanitizeCssDeclarationValue(config.meta.fontSize);
-      if (fontSize) targetArray.push(`  font-size: ${fontSize};`);
-      const fontWeight = sanitizeCssDeclarationValue(config.meta.fontWeight);
-      if (fontWeight) targetArray.push(`  font-weight: ${fontWeight};`);
-      const lineHeight = sanitizeCssDeclarationValue(config.meta.lineHeight);
-      if (lineHeight) targetArray.push(`  line-height: ${lineHeight};`);
-      const monoFontFamily = sanitizeCssDeclarationValue(config.meta.monoFontFamily);
-      if (monoFontFamily) targetArray.push(`  --font-mono: ${monoFontFamily};`);
-    }
-
-    // Add token properties (converted to CSS variables)
-    if (config.tokens) {
-      Object.entries(config.tokens).forEach(([key, value]) => {
-        // Convert camelCase token names to kebab-case CSS variable names
-        const cssVarName = `--${key.replace(/([A-Z])/g, "-$1").toLowerCase()}`;
-        const safeValue = sanitizeCssDeclarationValue(value);
-        if (!safeValue) return;
-        targetArray.push(`  ${cssVarName}: ${safeValue};`);
-      });
-    }
-
-    // Add custom properties
-    if (config.customProperties) {
-      Object.entries(config.customProperties).forEach(([key, value]) => {
-        const safeKey = sanitizeCssCustomPropertyName(key);
-        const safeValue = sanitizeCssDeclarationValue(value);
-        if (!safeKey || !safeValue) return;
-        targetArray.push(`  ${safeKey}: ${safeValue};`);
-      });
-    }
-  };
-
-  // Extract dark mode customizations
-  convertThemeToCss(params.get("d"), "dark", darkCustomProps);
-
-  // Extract light mode customizations
-  convertThemeToCss(params.get("l"), "light", lightCustomProps);
-
-  // Build theme override styles
   let themeOverrides = "";
-
   if (darkCustomProps.length > 0) {
     themeOverrides += `\n:root, :root[data-theme="dark"] {\n${darkCustomProps.join(
       "\n",
     )}\n}`;
   }
-
   if (lightCustomProps.length > 0) {
     themeOverrides += `\n:root[data-theme="light"] {\n${lightCustomProps.join(
       "\n",
@@ -218,12 +202,18 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
 
   const inlineRootDeclarations = readInlineRootDeclarations();
   if (inlineRootDeclarations.length > 0) {
-    // Preserve the exact runtime-applied root styles (including active theme
-    // customizations) for exports and inline embeds.
+    // Preserve exact runtime-applied root styles for exports and inline embeds.
     themeOverrides += `\n:root {\n${inlineRootDeclarations.join("\n")}\n}`;
   }
+  return themeOverrides;
+}
 
-  const safeStyleContent = sanitizeStyleTagContent(`${styles}${themeOverrides}`);
+function captureExportDocumentSnapshot(
+  extraStyles: string = "",
+): ExportDocumentSnapshot {
+  const styles = readDocumentStylesheets();
+  const currentTheme =
+    document.documentElement.getAttribute("data-theme") || "dark";
   const visualModeClasses = [
     "background-mode-full",
     "background-mode-soft",
@@ -234,28 +224,50 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
   ].filter((className) => document.body.classList.contains(className));
   const bodyClassAttr =
     visualModeClasses.length > 0 ? ` class="${visualModeClasses.join(" ")}"` : "";
+  const safeStyleContent = sanitizeStyleTagContent(
+    `${styles}${buildThemeOverrideStyles()}${extraStyles}`,
+  );
+  return {
+    currentTheme,
+    bodyClassAttr,
+    styleContent: safeStyleContent,
+  };
+}
 
+export function buildExportHtmlDocumentFromViewerHtml(
+  viewerHtml: string,
+  options: { extraStyles?: string } = {},
+): string {
+  const snapshot = captureExportDocumentSnapshot(options.extraStyles ?? "");
   return `<!DOCTYPE html>
-<html lang="en" data-theme="${currentTheme}">
+<html lang="en" data-theme="${snapshot.currentTheme}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="generator" content="SMDP - Simple Markdown Parser">
   <title>Exported Markdown</title>
   <style>
-${safeStyleContent}
+${snapshot.styleContent}
   </style>
 </head>
-<body${bodyClassAttr}>
+<body${snapshot.bodyClassAttr}>
   <div class="app-shell mode-html">
     <div class="viewer-pane">
       <article class="markdown-viewer">
-${viewer.innerHTML}
+${viewerHtml}
       </article>
     </div>
   </div>
 </body>
 </html>`;
+}
+
+export function buildExportHtmlDocument(view: HtmlView): string | null {
+  const viewer = view.shell.querySelector(".markdown-viewer");
+  if (!viewer) {
+    return null;
+  }
+  return buildExportHtmlDocumentFromViewerHtml(viewer.innerHTML);
 }
 
 /**
@@ -305,6 +317,9 @@ export type FabMenuOptions = {
   onToggleEditor?: () => void;
   enableLoadUrlEmbed?: boolean;
   getCurrentLoadUrl?: () => string | null;
+  buildInlineEmbedHtmlSource?: (
+    view: HtmlView,
+  ) => string | Promise<string | null> | null;
   getBookEmbedContext?: () =>
     | BookEmbedContext
     | Promise<BookEmbedContext | null>
@@ -547,7 +562,10 @@ export function createFabMenu(
         let src: string;
 
         if (option === "1") {
-          const html = buildExportHtmlDocument(htmlView);
+          const inlineHtmlSource =
+            (await options.buildInlineEmbedHtmlSource?.(htmlView)) ??
+            buildExportHtmlDocument(htmlView);
+          const html = inlineHtmlSource ?? null;
           if (!html) {
             alert("No rendered content to embed.");
             return;
