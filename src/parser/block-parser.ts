@@ -26,6 +26,8 @@ export interface BlockParseOptions {
 }
 
 const RAW_HTML_BLOCK_TAGS = new Set([
+  'details',
+  'summary',
   'table',
   'thead',
   'tbody',
@@ -43,16 +45,29 @@ function isAsciiAlphaNum(byte: number): boolean {
   return (lower >= 0x61 && lower <= 0x7a) || (byte >= 0x30 && byte <= 0x39);
 }
 
-function isRawHtmlBlockLine(u8: Uint8Array, s: number, e: number): boolean {
+type RawHtmlBlockTag = {
+  tagName: string;
+  isClosing: boolean;
+};
+
+function parseRawHtmlBlockTag(u8: Uint8Array, s: number, e: number): RawHtmlBlockTag | null {
   let i = skipSpaces(u8, s, e);
-  if (i >= e || u8[i] !== 0x3c) return false; // <
+  if (i >= e || u8[i] !== 0x3c) return null; // <
   i++;
-  if (i < e && u8[i] === 0x2f) i++; // optional /
+  let isClosing = false;
+  if (i < e && u8[i] === 0x2f) {
+    isClosing = true;
+    i++;
+  } // optional /
   const nameStart = i;
   while (i < e && isAsciiAlphaNum(u8[i])) i++;
-  if (i <= nameStart) return false;
+  if (i <= nameStart) return null;
   const tagName = TD.decode(u8.subarray(nameStart, i)).toLowerCase();
-  return RAW_HTML_BLOCK_TAGS.has(tagName);
+  return { tagName, isClosing };
+}
+
+function hasSummaryCloseTagOnLine(u8: Uint8Array, s: number, e: number): boolean {
+  return TD.decode(u8.subarray(s, e)).toLowerCase().includes('</summary');
 }
 
 /**
@@ -76,6 +91,7 @@ export function* blocks(
     fenceCh: 0,
     fenceLen: 0,
     fenceInfo: undefined,
+    inRawSummary: false,
     inTable: false,
     tableAlignments: [],
     inInfo: false,
@@ -146,6 +162,15 @@ export function* blocks(
       yield { type: 'bqClose' };
     }
 
+    if (allowRawHtml && st.inRawSummary) {
+      yield { type: 'rawHtmlLine', s: i, e: end };
+      const rawTag = parseRawHtmlBlockTag(u8, i, end);
+      if (rawTag && rawTag.tagName === 'summary' && rawTag.isClosing) {
+        st.inRawSummary = false;
+      }
+      continue;
+    }
+
     if (isBlank(u8, i, end)) {
       // Blank line closes lists
       while (st.listStack.length) {
@@ -155,9 +180,21 @@ export function* blocks(
       continue;
     }
 
-    if (allowRawHtml && isRawHtmlBlockLine(u8, i, end)) {
-      yield { type: 'rawHtmlLine', s: i, e: end };
-      continue;
+    if (allowRawHtml) {
+      const rawTag = parseRawHtmlBlockTag(u8, i, end);
+      if (rawTag && RAW_HTML_BLOCK_TAGS.has(rawTag.tagName)) {
+        if (
+          rawTag.tagName === 'summary' &&
+          !rawTag.isClosing &&
+          !hasSummaryCloseTagOnLine(u8, i, end)
+        ) {
+          st.inRawSummary = true;
+        } else if (rawTag.tagName === 'summary' && rawTag.isClosing) {
+          st.inRawSummary = false;
+        }
+        yield { type: 'rawHtmlLine', s: i, e: end };
+        continue;
+      }
     }
 
     // Headings

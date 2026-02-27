@@ -76,6 +76,7 @@ export interface BlockState {
   fenceCh: number;
   fenceLen: number;
   fenceInfo: FenceMeta | undefined;
+  inRawSummary: boolean;
   inTable: boolean;
   tableAlignments: Array<'left' | 'center' | 'right'>;
   inInfo: boolean;

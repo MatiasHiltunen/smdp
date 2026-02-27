@@ -97,6 +97,30 @@ test("allowRawHtml supports sanitized html table blocks", async () => {
   assert.ok(!html.includes("</br>"));
 });
 
+test("allowRawHtml preserves details and multiline summary blocks", async () => {
+  const parser = new MDParser();
+  const markdown = `
+<details open>
+<summary>
+Autodiff backend decorator
+</summary>
+<br />
+
+Contrary to the base backends, _Autodiff_ wraps another backend.
+</details>
+`.trim();
+
+  const html = await parser.parse(u8(markdown), { allowRawHtml: true });
+
+  assert.ok(html.includes('<details open="">'));
+  assert.ok(html.includes("<summary>"));
+  assert.ok(html.includes("Autodiff backend decorator"));
+  assert.ok(html.includes("</summary>"));
+  assert.ok(html.includes("<br>"));
+  assert.ok(html.includes("</details>"));
+  assert.ok(!/<summary>\s*<p>/i.test(html));
+});
+
 test("allowRawHtml rewrites GitHub blob URLs only for markdown and images", async () => {
   const parser = new MDParser();
   const markdown = [

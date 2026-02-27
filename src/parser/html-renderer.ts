@@ -30,6 +30,7 @@ const ALLOWED_RAW_HTML_TAGS = new Set([
   'b',
   'br',
   'code',
+  'details',
   'del',
   'em',
   'i',
@@ -41,6 +42,7 @@ const ALLOWED_RAW_HTML_TAGS = new Set([
   'span',
   'strong',
   'sub',
+  'summary',
   'sup',
   'table',
   'thead',
@@ -78,6 +80,7 @@ const IMG_ALLOWED_ATTRS = new Set([
 const TABLE_CELL_ALLOWED_ATTRS = new Set(['rowspan', 'colspan', 'scope']);
 const COLGROUP_ALLOWED_ATTRS = new Set(['span']);
 const COL_ALLOWED_ATTRS = new Set(['span']);
+const DETAILS_ALLOWED_ATTRS = new Set(['open', 'name']);
 
 const ATTR_RE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
@@ -94,6 +97,7 @@ function isAttrAllowed(tagName: string, attrName: string): boolean {
   if (GLOBAL_ALLOWED_ATTRS.has(attrName)) return true;
   if (tagName === 'a') return A_ALLOWED_ATTRS.has(attrName);
   if (tagName === 'img') return IMG_ALLOWED_ATTRS.has(attrName);
+  if (tagName === 'details') return DETAILS_ALLOWED_ATTRS.has(attrName);
   if (tagName === 'th' || tagName === 'td') return TABLE_CELL_ALLOWED_ATTRS.has(attrName);
   if (tagName === 'colgroup') return COLGROUP_ALLOWED_ATTRS.has(attrName);
   if (tagName === 'col') return COL_ALLOWED_ATTRS.has(attrName);
