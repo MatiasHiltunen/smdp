@@ -59,12 +59,13 @@ test("buildSharedBookEmbedSrc preserves style params and adds book payload", () 
   assert.equal(shared.searchParams.get("l"), "light-theme");
   assert.equal(shared.searchParams.get("bg"), "none");
   assert.equal(shared.searchParams.get("fm"), "minimal");
-  assert.equal(shared.searchParams.get("be"), entryUrl);
+  assert.equal(shared.searchParams.get("part"), loadUrl);
+  assert.equal(shared.searchParams.get("be"), null);
   assert.equal(shared.searchParams.get("bp"), prefetchPayload);
   assert.equal(shared.hash, "");
   assert.equal(
-    decodeURIComponent(shared.pathname.slice("/shared/".length)),
-    loadUrl,
+    decodeURIComponent(shared.pathname.slice("/book/shared/".length)),
+    entryUrl,
   );
 });
 

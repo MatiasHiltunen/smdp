@@ -58,7 +58,110 @@ export function parseRoute(): RouteDetails {
   const sharedBookEntry = safeParseUrl(query.get("be"));
   const sharedBookPrefetch = query.get("bp");
 
-  // Shared (embed) mode: no FABs, no editor/theme UI, HTML render
+  // Shared (embed) mode: no FABs, no editor/theme UI.
+  if (rawPath.startsWith("/book/shared/")) {
+    const entryPart = rawPath.slice("/book/shared/".length);
+    const entryUrl = safeParseUrl(entryPart || null);
+    const partUrl = safeParseUrl(query.get("part"));
+    return {
+      mode: "html",
+      externalUrl: partUrl ?? entryUrl,
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: entryUrl,
+      bookPartUrl: partUrl,
+      bookPrefetchPayload: query.get("bp"),
+    };
+  }
+
+  if (rawPath === "/book/shared") {
+    return {
+      mode: "html",
+      externalUrl: null,
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+      bookPrefetchPayload: query.get("bp"),
+    };
+  }
+
+  if (rawPath.startsWith("/canvas/shared/")) {
+    const externalPart = rawPath.slice("/canvas/shared/".length);
+    return {
+      mode: "canvas",
+      externalUrl: safeParseUrl(externalPart || null),
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+      bookPrefetchPayload: null,
+    };
+  }
+
+  if (rawPath === "/canvas/shared") {
+    return {
+      mode: "canvas",
+      externalUrl: null,
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+      bookPrefetchPayload: null,
+    };
+  }
+
+  if (rawPath.startsWith("/html/shared/")) {
+    const externalPart = rawPath.slice("/html/shared/".length);
+    return {
+      mode: "html",
+      externalUrl: safeParseUrl(externalPart || null),
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+      bookPrefetchPayload: null,
+    };
+  }
+
+  if (rawPath === "/html/shared") {
+    return {
+      mode: "html",
+      externalUrl: null,
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+      bookPrefetchPayload: null,
+    };
+  }
+
+  if (rawPath.startsWith("/test_e2e/shared/")) {
+    const externalPart = rawPath.slice("/test_e2e/shared/".length);
+    return {
+      mode: "test_e2e",
+      externalUrl: safeParseUrl(externalPart || null) ?? testE2eQueryUrl,
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+      bookPrefetchPayload: null,
+    };
+  }
+
+  if (rawPath === "/test_e2e/shared") {
+    return {
+      mode: "test_e2e",
+      externalUrl: testE2eQueryUrl,
+      shared: true,
+      dataPayload: null,
+      bookEntryUrl: null,
+      bookPartUrl: null,
+      bookPrefetchPayload: null,
+    };
+  }
+
+  // Legacy shared (HTML) route.
   if (rawPath.startsWith("/shared/")) {
     const externalPart = rawPath.slice("/shared/".length);
     const externalUrl = safeParseUrl(externalPart || null);

@@ -5,7 +5,7 @@ import {
   type ThemeBuilder,
 } from "../theme";
 import type { ThemeEditorHandle } from "../theme/theme-editor";
-import { loadThemeFromUrl } from "../theme/theme-editor";
+import { loadThemeFromUrl } from "../theme/theme-url";
 import { emitThemeChange, type ThemeChangeSource } from "./theme-events";
 
 let themeBuilder: ThemeBuilder | null = null;

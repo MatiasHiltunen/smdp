@@ -120,6 +120,94 @@ test("shared routes can carry embedded book navigation context", () => {
   }
 });
 
+test("book shared routes parse entry and selected part", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/book/shared/https://raw.githubusercontent.com/acme/docs/main/README.md",
+      hash: "#chapter-2",
+      search:
+        "?part=https%3A%2F%2Fraw.githubusercontent.com%2Facme%2Fdocs%2Fmain%2Fchapter-2.md&bp=prefetch-data",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "html");
+    assert.equal(route.shared, true);
+    assert.equal(
+      route.bookEntryUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/README.md",
+    );
+    assert.equal(
+      route.bookPartUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/chapter-2.md",
+    );
+    assert.equal(
+      route.externalUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/chapter-2.md",
+    );
+    assert.equal(route.bookPrefetchPayload, "prefetch-data");
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});
+
+test("canvas shared routes disable editing mode and keep canvas renderer", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/canvas/shared/https://raw.githubusercontent.com/acme/docs/main/README.md",
+      hash: "",
+      search: "",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "canvas");
+    assert.equal(route.shared, true);
+    assert.equal(
+      route.externalUrl?.toString(),
+      "https://raw.githubusercontent.com/acme/docs/main/README.md",
+    );
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});
+
+test("html shared routes keep html renderer and disable editing mode", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/html/shared/https://example.com/notes.md",
+      hash: "",
+      search: "",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "html");
+    assert.equal(route.shared, true);
+    assert.equal(route.externalUrl?.toString(), "https://example.com/notes.md");
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});
+
 test("route parsing tolerates malformed percent-encoding in pathname", () => {
   const originalWindow = (globalThis as any).window;
   (globalThis as any).window = {

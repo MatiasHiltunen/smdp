@@ -1,9 +1,6 @@
 import { decodeBase64Markdown } from "./data-link";
 import { MDParser, u8 } from "./parser/index";
-import {
-  initializeThemeEditor,
-  type ThemeEditorHandle,
-} from "./theme/theme-editor";
+import type { ThemeEditorHandle } from "./theme/theme-editor";
 import "./style.css";
 import {
   applyTheme,
@@ -22,11 +19,7 @@ import {
 import { fetchMarkdown, type MarkdownFetchResult } from "./client/fetch";
 import { canonicalizeBookLink } from "./client/github-url";
 import { sanitizeSharedDataBaseUrl } from "./client/shared-data";
-import {
-  buildExportHtmlDocumentFromViewerHtml,
-  createFabMenu,
-  displayError,
-} from "./client/ui";
+import { displayError } from "./client/error-banner";
 import { TD } from "./parser/constants";
 import { onThemeChange } from "./client/theme-events";
 import { mountE2ETestRunner } from "./client/e2e";
@@ -52,16 +45,37 @@ import {
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
+let themeEditorModulePromise:
+  | Promise<typeof import("./theme/theme-editor")>
+  | null = null;
+let uiModulePromise: Promise<typeof import("./client/ui")> | null = null;
 
 const parser = new MDParser({
   // Security: disable raw HTML blocks by default
   allowRawHtml: false,
 });
 
-function ensureThemeEditor(): ThemeEditorHandle {
+function loadThemeEditorModule(): Promise<typeof import("./theme/theme-editor")> {
+  if (!themeEditorModulePromise) {
+    themeEditorModulePromise = import("./theme/theme-editor");
+  }
+  return themeEditorModulePromise;
+}
+
+function loadUiModule(): Promise<typeof import("./client/ui")> {
+  if (!uiModulePromise) {
+    uiModulePromise = import("./client/ui");
+  }
+  return uiModulePromise;
+}
+
+async function ensureThemeEditor(): Promise<ThemeEditorHandle> {
   if (!themeEditorHandle) {
+    const { initializeThemeEditor } = await loadThemeEditorModule();
     const themeBuilder = getThemeBuilder();
-    themeEditorHandle = initializeThemeEditor(themeBuilder, { loadFromUrl: false });
+    themeEditorHandle = initializeThemeEditor(themeBuilder, {
+      loadFromUrl: false,
+    });
   }
   return themeEditorHandle;
 }
@@ -178,18 +192,19 @@ function buildBookUrl(
 ): URL {
   const next = new URL(window.location.href);
   if (options.sharedMode) {
-    next.pathname = `/shared/${partUrl}`;
+    next.pathname = `/book/shared/${entryUrl}`;
   } else {
     next.pathname = `/book/${entryUrl}`;
   }
   preserveThemeQueryParams(next);
   if (options.sharedMode) {
-    next.searchParams.set("be", entryUrl);
+    next.searchParams.set("part", partUrl);
     if (options.sharedBookPrefetchPayload) {
       next.searchParams.set("bp", options.sharedBookPrefetchPayload);
     } else {
       next.searchParams.delete("bp");
     }
+    next.searchParams.delete("be");
   } else {
     next.searchParams.set("part", partUrl);
     next.searchParams.delete("be");
@@ -458,6 +473,7 @@ async function buildInlineBookEmbedHtmlSource(
 </nav>
 ${chapterSections.join("\n")}`;
 
+  const { buildExportHtmlDocumentFromViewerHtml } = await loadUiModule();
   return buildExportHtmlDocumentFromViewerHtml(viewerHtml, {
     extraStyles: EMBEDDED_BOOK_EXPORT_STYLES,
   });
@@ -575,7 +591,8 @@ async function init(): Promise<void> {
     // Remove editor pane entirely for shared/embed mode
     try { view.editorPane.remove(); } catch {}
   } else {
-    themeEditorLocal = ensureThemeEditor();
+    const { createFabMenu } = await loadUiModule();
+    themeEditorLocal = await ensureThemeEditor();
     document.body.appendChild(themeEditorLocal.root);
 
     // Create FAB menu with editor toggle callback

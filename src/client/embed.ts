@@ -77,14 +77,15 @@ export function buildSharedBookEmbedSrc(
 ): string {
   const current = new URL(currentHref);
   const target = new URL(currentHref);
-  target.pathname = `/shared/${loadUrl}`;
+  target.pathname = `/book/shared/${entryUrl}`;
   preserveThemeQueryParams(target, current);
-  target.searchParams.set("be", entryUrl);
+  target.searchParams.set("part", loadUrl);
   if (prefetchPayload) {
     target.searchParams.set("bp", prefetchPayload);
   } else {
     target.searchParams.delete("bp");
   }
+  target.searchParams.delete("be");
   target.hash = "";
   return target.toString();
 }

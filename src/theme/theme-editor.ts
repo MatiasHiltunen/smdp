@@ -4,7 +4,8 @@ import {
   type ThemeMeta,
   defaultTheme,
 } from './theme-builder';
-import { serializeTheme, deserializeTheme } from './theme-serializer';
+import { serializeTheme } from './theme-serializer';
+import { loadThemeFromUrl } from './theme-url';
 import { emitThemeChange } from '../client/theme-events';
 import {
   applyBackgroundMode,
@@ -177,41 +178,6 @@ function saveThemeToUrl(builder: ThemeBuilder): void {
     ? `${window.location.pathname}?${params.toString()}`
     : window.location.pathname;
   window.history.replaceState({}, '', newUrl);
-}
-
-/**
- * Load theme configuration from URL search parameters for the current mode
- * using compact serialization format
- */
-export function loadThemeFromUrl(builder: ThemeBuilder): boolean {
-  const params = new URLSearchParams(window.location.search);
-  
-  // Determine current theme mode
-  const currentMode = (document.documentElement.getAttribute('data-theme') || 'dark') as 'light' | 'dark';
-  const modeKey = currentMode === 'light' ? 'l' : 'd';
-  
-  // Get compact serialized theme for current mode
-  const serialized = params.get(modeKey);
-  
-  if (!serialized) {
-    return false;
-  }
-  
-  // Deserialize theme configuration
-  const config = deserializeTheme(serialized, currentMode);
-  
-  // Apply to builder
-  if (config.meta) {
-    builder.withMeta(config.meta);
-  }
-  if (config.tokens) {
-    builder.withTokens(config.tokens);
-  }
-  if (config.customProperties) {
-    builder.withCustomProperties(config.customProperties);
-  }
-  
-  return true;
 }
 
 /**
