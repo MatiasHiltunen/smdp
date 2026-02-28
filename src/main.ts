@@ -251,15 +251,51 @@ function prioritizeCurrentBookPart(
   return ordered;
 }
 
-function buildBookContentLinks(
+function buildBookContentTree(
   loader: BookLoader,
   currentPartUrl: string | null,
 ): BookContentLink[] {
-  return loader.getKnownParts().map((url) => ({
-    url,
-    title: loader.getPartTitle(url),
-    isCurrent: currentPartUrl === url,
-  }));
+  const consumed = new Set<string>();
+
+  const buildNode = (
+    url: string,
+    parentPath: ReadonlySet<string>,
+  ): BookContentLink | null => {
+    if (parentPath.has(url)) return null;
+    consumed.add(url);
+    const part = loader.getPart(url);
+    const children: BookContentLink[] = [];
+    const nextPath = new Set(parentPath);
+    nextPath.add(url);
+
+    if (part) {
+      for (const childUrl of part.discoveredParts) {
+        const childNode = buildNode(childUrl, nextPath);
+        if (!childNode) continue;
+        children.push(childNode);
+      }
+    }
+
+    return {
+      url,
+      title: loader.getPartTitle(url),
+      isCurrent: currentPartUrl === url,
+      ...(children.length > 0 ? { children } : {}),
+    };
+  };
+
+  const roots: BookContentLink[] = [];
+  const entryNode = buildNode(loader.getEntryUrl(), new Set<string>());
+  if (entryNode) {
+    roots.push(entryNode);
+  }
+  for (const knownUrl of loader.getKnownParts()) {
+    if (consumed.has(knownUrl)) continue;
+    const node = buildNode(knownUrl, new Set<string>());
+    if (!node) continue;
+    roots.push(node);
+  }
+  return roots;
 }
 
 function shouldHandleBookLinkClick(
@@ -740,7 +776,7 @@ async function init(): Promise<void> {
         sharedMode: route.shared,
       });
       bookTopicsMenu?.update(htmlView.viewer, {
-        contents: buildBookContentLinks(bookLoader, currentBookPartUrl),
+        contents: buildBookContentTree(bookLoader, currentBookPartUrl),
       });
       scrollToHeadingAnchor(htmlView, window.location.hash.replace(/^#/, ""));
       bookLoader.prefetchInBackground();
@@ -795,7 +831,7 @@ async function init(): Promise<void> {
 
     const refreshBookTopicsMenu = (): void => {
       bookTopicsMenu?.update(htmlView.viewer, {
-        contents: buildBookContentLinks(bookLoader, currentBookPartUrl),
+        contents: buildBookContentTree(bookLoader, currentBookPartUrl),
         onSelectContent: (targetPartUrl) => {
           void navigateToBookPart(targetPartUrl, "", true).catch((error) => {
             console.error("Unable to navigate to selected chapter", error);

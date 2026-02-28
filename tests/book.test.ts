@@ -42,3 +42,17 @@ test("book loader keeps SPA navigation scoped to same source", () => {
   );
   assert.equal(otherSource, null);
 });
+
+test("book loader prefers highest-tier heading for chapter title", () => {
+  const entryUrl = "https://raw.githubusercontent.com/org/repo/main/docs/README.md";
+  const loader = new BookLoader(entryUrl);
+  loader.seedPrefetchedParts([
+    {
+      url: entryUrl,
+      baseUrl: entryUrl,
+      markdown: "## Deep Dive\n\n# Book Overview\n\nContent.",
+    },
+  ]);
+
+  assert.equal(loader.getPartTitle(entryUrl), "Book Overview");
+});

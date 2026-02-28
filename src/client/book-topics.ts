@@ -1,17 +1,10 @@
 import { createElement } from "./dom";
 
-type TopicLevel = 1 | 2 | 3;
-
-type BookTopic = {
-  id: string;
-  text: string;
-  level: TopicLevel;
-};
-
 export type BookContentLink = {
   url: string;
   title: string;
   isCurrent?: boolean;
+  children?: readonly BookContentLink[];
 };
 
 type BookTopicsMenuUpdateOptions = {
@@ -25,56 +18,6 @@ export type BookTopicsMenuHandle = {
   destroy(): void;
 };
 
-function slugifyHeading(text: string): string {
-  const normalized = text
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return normalized || "section";
-}
-
-function collectBookTopics(viewer: HTMLElement): BookTopic[] {
-  const topics: BookTopic[] = [];
-  const usedIds = new Set<string>();
-
-  const preserved = viewer.querySelectorAll<HTMLElement>(
-    "[id]:not(h1):not(h2):not(h3)",
-  );
-  for (const element of preserved) {
-    const id = element.id.trim();
-    if (id) usedIds.add(id);
-  }
-
-  const headings = viewer.querySelectorAll<HTMLElement>("h1, h2, h3");
-  for (const heading of headings) {
-    const levelRaw = Number.parseInt(heading.tagName.slice(1), 10);
-    if (levelRaw < 1 || levelRaw > 3) continue;
-    const level = levelRaw as TopicLevel;
-
-    const text = (heading.textContent ?? "").replace(/\s+/g, " ").trim();
-    if (!text) continue;
-
-    const desiredBase = heading.id.trim() || slugifyHeading(text);
-    let nextId = desiredBase;
-    let suffix = 2;
-    while (usedIds.has(nextId)) {
-      nextId = `${desiredBase}-${suffix}`;
-      suffix += 1;
-    }
-    heading.id = nextId;
-    usedIds.add(nextId);
-
-    topics.push({ id: nextId, text, level });
-  }
-
-  return topics;
-}
-
 export function createBookTopicsMenu(): BookTopicsMenuHandle {
   const root = createElement("div");
   root.className = "book-topics-menu";
@@ -82,7 +25,7 @@ export function createBookTopicsMenu(): BookTopicsMenuHandle {
   const toggleButton = createElement("button");
   toggleButton.className = "book-topics-toggle";
   toggleButton.type = "button";
-  toggleButton.title = "Toggle chapter topics";
+  toggleButton.title = "Toggle book contents";
   toggleButton.setAttribute("aria-expanded", "false");
   toggleButton.setAttribute("aria-controls", "book-topics-panel");
   toggleButton.innerHTML = `
@@ -100,24 +43,17 @@ export function createBookTopicsMenu(): BookTopicsMenuHandle {
   title.className = "book-topics-title";
   title.textContent = "Contents";
 
-  const contentSectionTitle = createElement("h4");
-  contentSectionTitle.className = "book-topics-subtitle";
-  contentSectionTitle.textContent = "Book";
+  const contentTree = createElement("ul");
+  contentTree.className = "book-topics-tree";
 
-  const contentList = createElement("ol");
-  contentList.className = "book-topics-content-list";
-
-  const topicSectionTitle = createElement("h4");
-  topicSectionTitle.className = "book-topics-subtitle";
-  topicSectionTitle.textContent = "Chapter";
-
-  const list = createElement("ul");
-  list.className = "book-topics-list";
-
-  panel.append(title, contentSectionTitle, contentList, topicSectionTitle, list);
+  panel.append(title, contentTree);
   root.append(toggleButton, panel);
 
   let isOpen = false;
+  let latestContents: readonly BookContentLink[] = [];
+  let latestSelectHandler: ((url: string) => void) | null = null;
+  const expandedByUrl = new Set<string>();
+
   const syncOpenState = (): void => {
     root.classList.toggle("is-open", isOpen);
     toggleButton.setAttribute("aria-expanded", String(isOpen));
@@ -153,63 +89,120 @@ export function createBookTopicsMenu(): BookTopicsMenuHandle {
   };
   document.addEventListener("keydown", onEscape);
 
+  const collectTreeUrls = (nodes: readonly BookContentLink[]): Set<string> => {
+    const urls = new Set<string>();
+    const walk = (items: readonly BookContentLink[]): void => {
+      for (const item of items) {
+        urls.add(item.url);
+        const children = item.children ?? [];
+        if (children.length > 0) {
+          walk(children);
+        }
+      }
+    };
+    walk(nodes);
+    return urls;
+  };
+
+  const renderTree = (
+    list: HTMLElement,
+    items: readonly BookContentLink[],
+  ): void => {
+    list.replaceChildren();
+    for (const item of items) {
+      const rowItem = createElement("li");
+      rowItem.className = "book-topics-tree-item";
+      const row = createElement("div");
+      row.className = "book-topics-tree-row";
+      rowItem.appendChild(row);
+
+      const children = item.children ?? [];
+      const hasChildren = children.length > 0;
+
+      if (hasChildren) {
+        const isExpanded = expandedByUrl.has(item.url);
+        if (isExpanded) {
+          rowItem.classList.add("is-expanded");
+        }
+        const toggle = createElement("button");
+        toggle.type = "button";
+        toggle.className = "book-topics-tree-toggle";
+        toggle.setAttribute("aria-expanded", String(isExpanded));
+        toggle.title = isExpanded
+          ? "Collapse subchapters"
+          : "Expand subchapters";
+        toggle.innerHTML = `
+          <svg aria-hidden="true" viewBox="0 0 20 20" class="icon">
+            <path d="M7 4a1 1 0 0 1 .707.293l5 5a1 1 0 0 1 0 1.414l-5 5A1 1 0 0 1 6 15V5a1 1 0 0 1 1-1Z" fill="currentColor"/>
+          </svg>
+        `;
+        toggle.addEventListener("click", (event) => {
+          event.stopPropagation();
+          if (expandedByUrl.has(item.url)) {
+            expandedByUrl.delete(item.url);
+          } else {
+            expandedByUrl.add(item.url);
+          }
+          renderTree(contentTree, latestContents);
+        });
+        row.appendChild(toggle);
+      } else {
+        const spacer = createElement("span");
+        spacer.className = "book-topics-tree-spacer";
+        spacer.setAttribute("aria-hidden", "true");
+        row.appendChild(spacer);
+      }
+
+      const link = createElement("a");
+      link.href = "#";
+      link.className = "book-topics-tree-link";
+      link.textContent = item.title.trim() || "Untitled chapter";
+      if (item.isCurrent) {
+        link.classList.add("is-current");
+        link.setAttribute("aria-current", "page");
+      }
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        close();
+        latestSelectHandler?.(item.url);
+      });
+      row.appendChild(link);
+
+      if (hasChildren) {
+        const childList = createElement("ul");
+        childList.className = "book-topics-tree book-topics-tree-children";
+        renderTree(childList, children);
+        rowItem.appendChild(childList);
+      }
+
+      list.appendChild(rowItem);
+    }
+  };
+
   const update = (
     viewer: HTMLElement,
     options: BookTopicsMenuUpdateOptions = {},
   ): void => {
-    const topics = collectBookTopics(viewer);
-    const contentLinks = options.contents ?? [];
-    contentList.replaceChildren();
-    list.replaceChildren();
-
-    if (contentLinks.length === 0) {
-      const emptyContents = createElement("li");
-      emptyContents.className = "book-topics-empty";
-      emptyContents.textContent = "No chapters discovered yet";
-      contentList.appendChild(emptyContents);
-    } else {
-      for (const content of contentLinks) {
-        const item = createElement("li");
-        item.className = "book-topics-content-item";
-        if (content.isCurrent) {
-          item.classList.add("is-current");
-        }
-        const link = createElement("a");
-        link.href = "#";
-        link.textContent = content.title.trim() || "Untitled chapter";
-        if (content.isCurrent) {
-          link.setAttribute("aria-current", "page");
-        }
-        link.addEventListener("click", (event) => {
-          event.preventDefault();
-          close();
-          options.onSelectContent?.(content.url);
-        });
-        item.appendChild(link);
-        contentList.appendChild(item);
+    void viewer;
+    latestContents = options.contents ?? [];
+    latestSelectHandler = options.onSelectContent ?? null;
+    const validUrls = collectTreeUrls(latestContents);
+    for (const expandedUrl of Array.from(expandedByUrl)) {
+      if (!validUrls.has(expandedUrl)) {
+        expandedByUrl.delete(expandedUrl);
       }
     }
 
-    if (topics.length === 0) {
-      const empty = createElement("li");
-      empty.className = "book-topics-empty";
-      empty.textContent = "No headings in this chapter";
-      list.appendChild(empty);
+    if (latestContents.length === 0) {
+      contentTree.replaceChildren();
+      const emptyContents = createElement("li");
+      emptyContents.className = "book-topics-empty";
+      emptyContents.textContent = "No chapters discovered yet";
+      contentTree.appendChild(emptyContents);
       return;
     }
 
-    for (const topic of topics) {
-      const item = createElement("li");
-      item.className = `book-topics-item level-${topic.level}`;
-      const link = createElement("a");
-      link.href = `#${encodeURIComponent(topic.id)}`;
-      link.textContent = topic.text;
-      link.addEventListener("click", () => {
-        close();
-      });
-      item.appendChild(link);
-      list.appendChild(item);
-    }
+    renderTree(contentTree, latestContents);
   };
 
   const destroy = (): void => {

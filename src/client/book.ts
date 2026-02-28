@@ -31,7 +31,9 @@ function titleFromUrl(url: string): string {
     const parsed = new URL(url);
     const segments = parsed.pathname.split("/").filter(Boolean);
     const last = segments[segments.length - 1] ?? parsed.hostname;
-    return decodeURIComponent(last);
+    const decoded = decodeURIComponent(last);
+    const withoutExtension = decoded.replace(/\.(md|markdown)$/i, "");
+    return withoutExtension || decoded || "Untitled";
   } catch {
     return "Untitled";
   }
@@ -39,13 +41,26 @@ function titleFromUrl(url: string): string {
 
 function extractTitle(markdown: string, fallbackUrl: string): string {
   const lines = markdown.split(/\r?\n/);
-  const scanLimit = Math.min(lines.length, 24);
-  for (let i = 0; i < scanLimit; i++) {
+  let bestLevel = Number.POSITIVE_INFINITY;
+  let bestTitle = "";
+
+  for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    if (!trimmed.startsWith("#")) continue;
-    const title = trimmed.replace(/^#+\s*/, "").trim();
-    if (title) return title;
+    const match = /^(#{1,6})\s+(.+?)\s*$/.exec(trimmed);
+    if (!match) continue;
+    const level = match[1].length;
+    const title = match[2].replace(/\s+#+\s*$/, "").trim();
+    if (!title) continue;
+    if (level < bestLevel) {
+      bestLevel = level;
+      bestTitle = title;
+      if (level === 1) {
+        break;
+      }
+    }
   }
+
+  if (bestTitle) return bestTitle;
   return titleFromUrl(fallbackUrl);
 }
 

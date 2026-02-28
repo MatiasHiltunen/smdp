@@ -958,80 +958,104 @@ body.is-editing .editor-pane {
   color: var(--text-primary);
 }
 
-.book-topics-subtitle {
-  margin: 0.75rem 0 0.35rem;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-}
-
-.book-topics-content-list {
-  list-style: decimal-leading-zero;
+.book-topics-tree {
+  list-style: none;
   margin: 0;
-  padding-left: 1.45rem;
+  padding: 0;
   display: grid;
-  gap: 0.12rem;
+  gap: 0.14rem;
 }
 
-.book-topics-content-item a {
-  display: block;
-  color: var(--text-secondary);
-  text-decoration: none;
+.book-topics-tree-item {
+  margin: 0;
+  padding: 0;
+}
+
+.book-topics-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.book-topics-tree-toggle,
+.book-topics-tree-spacer {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: 0 0 1.15rem;
+}
+
+.book-topics-tree-toggle {
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 0.28rem 0.45rem 0.28rem 0.25rem;
-  line-height: 1.35;
-  transition: background 0.2s ease, color 0.2s ease;
+  background: transparent;
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
 }
 
-.book-topics-content-item a:hover,
-.book-topics-content-item a:focus-visible {
+.book-topics-tree-toggle .icon {
+  width: 0.72rem;
+  height: 0.72rem;
+  transform: rotate(0deg);
+  transition: transform 0.2s ease;
+}
+
+.book-topics-tree-item.is-expanded > .book-topics-tree-row .book-topics-tree-toggle .icon {
+  transform: rotate(90deg);
+}
+
+.book-topics-tree-toggle:hover,
+.book-topics-tree-toggle:focus-visible {
+  border-color: var(--accent);
   background: var(--bg-panel);
   color: var(--text-primary);
   outline: none;
 }
 
-.book-topics-content-item.is-current a {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
-.book-topics-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.12rem;
-}
-
-.book-topics-item a {
+.book-topics-tree-link {
+  min-width: 0;
+  flex: 1 1 auto;
   display: block;
   color: var(--text-secondary);
   text-decoration: none;
   border-radius: var(--radius-sm);
   padding: 0.28rem 0.45rem;
   line-height: 1.35;
+  word-break: break-word;
   transition: background 0.2s ease, color 0.2s ease;
 }
 
-.book-topics-item a:hover,
-.book-topics-item a:focus-visible {
+.book-topics-tree-link:hover,
+.book-topics-tree-link:focus-visible {
   background: var(--bg-panel);
   color: var(--text-primary);
   outline: none;
 }
 
-.book-topics-item.level-2 a {
-  padding-left: 1.05rem;
+.book-topics-tree-link.is-current {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-.book-topics-item.level-3 a {
-  padding-left: 1.55rem;
+.book-topics-tree-children {
+  list-style: none;
+  margin: 0 0 0.2rem 0.55rem;
+  padding: 0 0 0 0.72rem;
+  border-left: 1px solid color-mix(in srgb, var(--border-glass) 88%, transparent);
+  display: none;
+  gap: 0.12rem;
+}
+
+.book-topics-tree-item.is-expanded > .book-topics-tree-children {
+  display: grid;
 }
 
 .book-topics-empty {
   color: var(--text-secondary);
   padding: 0.3rem 0.45rem;
+  list-style: none;
 }
 
 body.is-editing .book-topics-menu {
