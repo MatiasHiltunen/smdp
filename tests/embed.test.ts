@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { gunzipSync } from "node:zlib";
 
 import {
   buildIframeEmbedCode,
+  buildInlineGzipHtmlDataSrc,
   buildInlineHtmlDataSrc,
   buildSharedBookEmbedSrc,
   buildSharedEmbedSrc,
@@ -15,6 +17,22 @@ test("buildInlineHtmlDataSrc encodes HTML as base64 data URI", () => {
   const payload = dataSrc.slice("data:text/html;charset=utf-8;base64,".length);
   const decoded = Buffer.from(payload, "base64").toString("utf8");
   assert.equal(decoded, html);
+});
+
+test("buildInlineGzipHtmlDataSrc encodes gzipped HTML with bootstrap decompression", async () => {
+  const html = "<!doctype html><meta charset=\"utf-8\"><h1>Hi from gzip</h1>";
+  const dataSrc = await buildInlineGzipHtmlDataSrc(html);
+  assert.ok(dataSrc.startsWith("data:text/html;charset=utf-8;base64,"));
+
+  const payload = dataSrc.slice("data:text/html;charset=utf-8;base64,".length);
+  const bootstrapHtml = Buffer.from(payload, "base64").toString("utf8");
+  assert.match(bootstrapHtml, /new DecompressionStream\("gzip"\)/);
+
+  const base64Match = bootstrapHtml.match(/const compressedBase64 = "([^"]+)";/);
+  assert.ok(base64Match);
+  const compressed = Buffer.from(base64Match[1], "base64");
+  const inflated = gunzipSync(compressed).toString("utf8");
+  assert.equal(inflated, html);
 });
 
 test("buildSharedEmbedSrc keeps only theme query params and strips hash", () => {

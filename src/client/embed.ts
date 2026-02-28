@@ -4,6 +4,7 @@ import {
   setBackgroundModeSearchParam,
   setFrameModeSearchParam,
 } from "./frame-mode";
+import { compressBytes } from "../data-link";
 
 type Base64Options = {
   alphabet?: "base64" | "base64url";
@@ -42,6 +43,65 @@ function bytesToBase64(bytes: Uint8Array): string {
   }
 
   throw new Error("Unable to encode base64 in this environment");
+}
+
+function buildInlineGzipBootstrapHtml(compressedBase64: string): string {
+  const encoded = JSON.stringify(compressedBase64);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Embedded Markdown</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 1rem;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: #111827;
+      background: #ffffff;
+    }
+  </style>
+</head>
+<body>
+  <p>Loading embedded content...</p>
+  <script>
+    const compressedBase64 = ${encoded};
+
+    function base64ToBytes(base64) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    async function inflateAndRender() {
+      if (typeof DecompressionStream === "undefined") {
+        throw new Error("This browser does not support gzip iframe embeds.");
+      }
+
+      const compressed = base64ToBytes(compressedBase64);
+      const stream = new DecompressionStream("gzip");
+      const writer = stream.writable.getWriter();
+      const readPromise = new Response(stream.readable).text();
+      await writer.write(compressed);
+      await writer.close();
+      const html = await readPromise;
+
+      document.open();
+      document.write(html);
+      document.close();
+    }
+
+    inflateAndRender().catch((error) => {
+      console.error("Failed to inflate embedded HTML", error);
+      document.body.innerHTML = "<p>Unable to load compressed embedded content.</p>";
+    });
+  </script>
+</body>
+</html>`;
 }
 
 function preserveThemeQueryParams(target: URL, source: URL): void {
@@ -94,6 +154,16 @@ export function buildInlineHtmlDataSrc(htmlSource: string): string {
   const bytes = new TextEncoder().encode(htmlSource);
   const base64 = bytesToBase64(bytes);
   return `data:text/html;charset=utf-8;base64,${base64}`;
+}
+
+export async function buildInlineGzipHtmlDataSrc(
+  htmlSource: string,
+): Promise<string> {
+  const bytes = new TextEncoder().encode(htmlSource);
+  const compressed = await compressBytes(bytes, "gzip");
+  const compressedBase64 = bytesToBase64(compressed);
+  const bootstrapHtml = buildInlineGzipBootstrapHtml(compressedBase64);
+  return buildInlineHtmlDataSrc(bootstrapHtml);
 }
 
 export function buildIframeEmbedCode(src: string): string {

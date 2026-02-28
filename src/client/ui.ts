@@ -12,6 +12,7 @@ import { emitThemeChange } from "./theme-events";
 import { exportCanvasAsImageBlob } from "../parser/canvas-renderer";
 import {
   buildIframeEmbedCode,
+  buildInlineGzipHtmlDataSrc,
   buildInlineHtmlDataSrc,
   buildSharedBookEmbedSrc,
   buildSharedEmbedSrc,
@@ -448,12 +449,14 @@ export function createFabMenu(
   const copyEmbeddedGroup = isHtmlView ? createElement("div") : null;
   const copyEmbeddedButton = isHtmlView ? createElement("button") : null;
   const copyEmbeddedInlineButton = isHtmlView ? createElement("button") : null;
+  const copyEmbeddedInlineGzipButton = isHtmlView ? createElement("button") : null;
   const copyEmbeddedLoadUrlButton = isHtmlView ? createElement("button") : null;
   const copyEmbeddedSubmenu = isHtmlView ? createElement("div") : null;
   if (
     copyEmbeddedGroup &&
     copyEmbeddedButton &&
     copyEmbeddedInlineButton &&
+    copyEmbeddedInlineGzipButton &&
     copyEmbeddedLoadUrlButton &&
     copyEmbeddedSubmenu
   ) {
@@ -477,6 +480,10 @@ export function createFabMenu(
     copyEmbeddedInlineButton.type = "button";
     copyEmbeddedInlineButton.textContent = "Inline HTML Source";
 
+    copyEmbeddedInlineGzipButton.className = "fab-subaction";
+    copyEmbeddedInlineGzipButton.type = "button";
+    copyEmbeddedInlineGzipButton.textContent = "Inline Gzip Source";
+
     copyEmbeddedLoadUrlButton.className = "fab-subaction";
     copyEmbeddedLoadUrlButton.type = "button";
     copyEmbeddedLoadUrlButton.textContent = "Current URL Source";
@@ -484,7 +491,11 @@ export function createFabMenu(
       copyEmbeddedLoadUrlButton.disabled = true;
     }
 
-    copyEmbeddedSubmenu.append(copyEmbeddedInlineButton, copyEmbeddedLoadUrlButton);
+    copyEmbeddedSubmenu.append(
+      copyEmbeddedInlineButton,
+      copyEmbeddedInlineGzipButton,
+      copyEmbeddedLoadUrlButton,
+    );
     copyEmbeddedGroup.append(copyEmbeddedButton, copyEmbeddedSubmenu);
   }
 
@@ -598,7 +609,7 @@ export function createFabMenu(
   });
 
   const buildEmbeddedIframeSrc = async (
-    mode: "inline" | "loadUrl",
+    mode: "inline" | "inlineGzip" | "loadUrl",
   ): Promise<string | null> => {
     const htmlView = view as HtmlView;
     if (mode === "inline") {
@@ -611,6 +622,18 @@ export function createFabMenu(
         return null;
       }
       return buildInlineHtmlDataSrc(html);
+    }
+
+    if (mode === "inlineGzip") {
+      const inlineHtmlSource =
+        (await options.buildInlineEmbedHtmlSource?.(htmlView)) ??
+        buildExportHtmlDocument(htmlView);
+      const html = inlineHtmlSource ?? null;
+      if (!html) {
+        alert("No rendered content to embed.");
+        return null;
+      }
+      return await buildInlineGzipHtmlDataSrc(html);
     }
 
     if (!options.enableLoadUrlEmbed) {
@@ -634,11 +657,12 @@ export function createFabMenu(
     return buildSharedEmbedSrc(window.location.href, loadUrl);
   };
 
-  const copyEmbeddedIframe = (mode: "inline" | "loadUrl"): void => {
+  const copyEmbeddedIframe = (mode: "inline" | "inlineGzip" | "loadUrl"): void => {
     void (async () => {
       copyEmbeddedButton?.setAttribute("aria-busy", "true");
       if (copyEmbeddedButton) copyEmbeddedButton.disabled = true;
       if (copyEmbeddedInlineButton) copyEmbeddedInlineButton.disabled = true;
+      if (copyEmbeddedInlineGzipButton) copyEmbeddedInlineGzipButton.disabled = true;
       if (copyEmbeddedLoadUrlButton) copyEmbeddedLoadUrlButton.disabled = true;
       try {
         const src = await buildEmbeddedIframeSrc(mode);
@@ -663,6 +687,9 @@ export function createFabMenu(
         if (copyEmbeddedInlineButton) {
           copyEmbeddedInlineButton.disabled = false;
         }
+        if (copyEmbeddedInlineGzipButton) {
+          copyEmbeddedInlineGzipButton.disabled = false;
+        }
         if (copyEmbeddedLoadUrlButton) {
           copyEmbeddedLoadUrlButton.disabled = !options.enableLoadUrlEmbed;
         }
@@ -679,6 +706,10 @@ export function createFabMenu(
   copyEmbeddedInlineButton?.addEventListener("click", (e) => {
     e.stopPropagation();
     copyEmbeddedIframe("inline");
+  });
+  copyEmbeddedInlineGzipButton?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    copyEmbeddedIframe("inlineGzip");
   });
   copyEmbeddedLoadUrlButton?.addEventListener("click", (e) => {
     e.stopPropagation();
