@@ -826,6 +826,63 @@ body.is-editing .editor-pane {
   transform: translateX(0);
 }
 
+.fab-action-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  position: relative;
+}
+
+.fab-submenu {
+  min-width: 11rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-glass);
+  background: var(--bg-glass-strong);
+  box-shadow: var(--shadow-soft);
+  padding: 0.4rem;
+  display: grid;
+  gap: 0.3rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fab-action-group.is-open .fab-submenu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.fab-subaction {
+  border: 1px solid var(--border-glass);
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.fab-subaction:hover,
+.fab-subaction:focus-visible {
+  border-color: var(--accent);
+  background: var(--bg-panel);
+  outline: none;
+}
+
+.fab-subaction:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .book-topics-menu {
   position: fixed;
   top: clamp(1rem, 3vw, 1.5rem);
@@ -899,6 +956,44 @@ body.is-editing .editor-pane {
   font-size: 0.9rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.book-topics-subtitle {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.book-topics-content-list {
+  list-style: decimal-leading-zero;
+  margin: 0;
+  padding-left: 1.45rem;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.book-topics-content-item a {
+  display: block;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  padding: 0.28rem 0.45rem 0.28rem 0.25rem;
+  line-height: 1.35;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.book-topics-content-item a:hover,
+.book-topics-content-item a:focus-visible {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.book-topics-content-item.is-current a {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .book-topics-list {
@@ -1347,6 +1442,16 @@ img {
   .fab-action .icon {
     width: 1rem;
     height: 1rem;
+  }
+
+  .fab-submenu {
+    min-width: 9.75rem;
+    padding: 0.35rem;
+  }
+
+  .fab-subaction {
+    font-size: 0.72rem;
+    padding: 0.36rem 0.48rem;
   }
 
   .book-topics-toggle {

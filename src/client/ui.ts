@@ -273,8 +273,11 @@ export function buildExportHtmlDocument(view: HtmlView): string | null {
 /**
  * Export the rendered HTML as a self-contained HTML5 file
  */
-export function exportAsHtml(view: HtmlView): void {
-  const html = buildExportHtmlDocument(view);
+export function exportAsHtml(
+  view: HtmlView,
+  htmlOverride: string | null = null,
+): void {
+  const html = htmlOverride ?? buildExportHtmlDocument(view);
   if (!html) {
     alert("No rendered content to export");
     return;
@@ -315,6 +318,9 @@ async function exportAsCanvasImage(view: CanvasView): Promise<void> {
 
 export type FabMenuOptions = {
   onToggleEditor?: () => void;
+  buildHtmlExportSource?: (
+    view: HtmlView,
+  ) => string | Promise<string | null> | null;
   enableLoadUrlEmbed?: boolean;
   getCurrentLoadUrl?: () => string | null;
   buildInlineEmbedHtmlSource?: (
@@ -439,41 +445,92 @@ export function createFabMenu(
     </svg>
   `;
 
+  const copyEmbeddedGroup = isHtmlView ? createElement("div") : null;
   const copyEmbeddedButton = isHtmlView ? createElement("button") : null;
-  if (copyEmbeddedButton) {
+  const copyEmbeddedInlineButton = isHtmlView ? createElement("button") : null;
+  const copyEmbeddedLoadUrlButton = isHtmlView ? createElement("button") : null;
+  const copyEmbeddedSubmenu = isHtmlView ? createElement("div") : null;
+  if (
+    copyEmbeddedGroup &&
+    copyEmbeddedButton &&
+    copyEmbeddedInlineButton &&
+    copyEmbeddedLoadUrlButton &&
+    copyEmbeddedSubmenu
+  ) {
+    copyEmbeddedGroup.className = "fab-action-group";
+
     copyEmbeddedButton.className = "fab-action";
     copyEmbeddedButton.type = "button";
     copyEmbeddedButton.setAttribute("data-tooltip", "Copy Embedded Iframe");
+    copyEmbeddedButton.setAttribute("aria-haspopup", "true");
+    copyEmbeddedButton.setAttribute("aria-expanded", "false");
     copyEmbeddedButton.innerHTML = `
       <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
         <path d="M5 4a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1a1 1 0 1 0-2 0v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1a1 1 0 1 0 0-2H5Zm7 0a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h7a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3h-7Zm0 2h7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" fill="currentColor"/>
       </svg>
     `;
+
+    copyEmbeddedSubmenu.className = "fab-submenu";
+    copyEmbeddedSubmenu.setAttribute("aria-hidden", "true");
+
+    copyEmbeddedInlineButton.className = "fab-subaction";
+    copyEmbeddedInlineButton.type = "button";
+    copyEmbeddedInlineButton.textContent = "Inline HTML Source";
+
+    copyEmbeddedLoadUrlButton.className = "fab-subaction";
+    copyEmbeddedLoadUrlButton.type = "button";
+    copyEmbeddedLoadUrlButton.textContent = "Current URL Source";
+    if (!options.enableLoadUrlEmbed) {
+      copyEmbeddedLoadUrlButton.disabled = true;
+    }
+
+    copyEmbeddedSubmenu.append(copyEmbeddedInlineButton, copyEmbeddedLoadUrlButton);
+    copyEmbeddedGroup.append(copyEmbeddedButton, copyEmbeddedSubmenu);
   }
 
   // Event handlers
   let isMenuOpen = false;
+  let isEmbedSubmenuOpen = false;
+
+  const syncEmbedSubmenuState = (): void => {
+    if (!copyEmbeddedGroup || !copyEmbeddedButton || !copyEmbeddedSubmenu) return;
+    copyEmbeddedGroup.classList.toggle("is-open", isEmbedSubmenuOpen);
+    copyEmbeddedButton.setAttribute("aria-expanded", String(isEmbedSubmenuOpen));
+    copyEmbeddedSubmenu.setAttribute("aria-hidden", String(!isEmbedSubmenuOpen));
+  };
+
+  const closeEmbedSubmenu = (): void => {
+    if (!isEmbedSubmenuOpen) return;
+    isEmbedSubmenuOpen = false;
+    syncEmbedSubmenuState();
+  };
+
+  const closeMenu = (): void => {
+    isMenuOpen = false;
+    menu.classList.remove("is-open");
+    mainButton.setAttribute("aria-expanded", "false");
+    closeEmbedSubmenu();
+  };
 
   mainButton.addEventListener("click", () => {
     isMenuOpen = !isMenuOpen;
     menu.classList.toggle("is-open", isMenuOpen);
     mainButton.setAttribute("aria-expanded", String(isMenuOpen));
+    if (!isMenuOpen) {
+      closeEmbedSubmenu();
+    }
   });
 
   editButton.addEventListener("click", (e) => {
     e.stopPropagation();
     options.onToggleEditor?.();
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    closeMenu();
   });
 
   themeButton.addEventListener("click", (e) => {
     e.stopPropagation();
     themeEditor.toggle();
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    closeMenu();
   });
 
   themeToggleButton.addEventListener("click", (e) => {
@@ -487,9 +544,7 @@ export function createFabMenu(
       emitThemeChange("toggle", next);
     }
     updateThemeIcon(next);
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
+    closeMenu();
   });
 
   exportButton.addEventListener("click", (e) => {
@@ -498,11 +553,12 @@ export function createFabMenu(
       if (isCanvasView) {
         await exportAsCanvasImage(view as CanvasView);
       } else {
-        exportAsHtml(view as HtmlView);
+        const htmlView = view as HtmlView;
+        const htmlOverride =
+          (await options.buildHtmlExportSource?.(htmlView)) ?? null;
+        exportAsHtml(htmlView, htmlOverride);
       }
-      isMenuOpen = false;
-      menu.classList.remove("is-open");
-      mainButton.setAttribute("aria-expanded", "false");
+      closeMenu();
     })();
   });
 
@@ -536,66 +592,57 @@ export function createFabMenu(
       } finally {
         shareButton.disabled = false;
         shareButton.removeAttribute("aria-busy");
-        isMenuOpen = false;
-        menu.classList.remove("is-open");
-        mainButton.setAttribute("aria-expanded", "false");
+        closeMenu();
       }
     })();
   });
 
-  copyEmbeddedButton?.addEventListener("click", (e) => {
-    e.stopPropagation();
+  const buildEmbeddedIframeSrc = async (
+    mode: "inline" | "loadUrl",
+  ): Promise<string | null> => {
     const htmlView = view as HtmlView;
+    if (mode === "inline") {
+      const inlineHtmlSource =
+        (await options.buildInlineEmbedHtmlSource?.(htmlView)) ??
+        buildExportHtmlDocument(htmlView);
+      const html = inlineHtmlSource ?? null;
+      if (!html) {
+        alert("No rendered content to embed.");
+        return null;
+      }
+      return buildInlineHtmlDataSrc(html);
+    }
+
+    if (!options.enableLoadUrlEmbed) {
+      alert("Current load URL embedding is available only in HTML/book modes.");
+      return null;
+    }
+    const loadUrl = options.getCurrentLoadUrl?.();
+    if (!loadUrl) {
+      alert("Unable to resolve current load URL.");
+      return null;
+    }
+    const bookContext = (await options.getBookEmbedContext?.()) ?? null;
+    if (bookContext?.entryUrl) {
+      return buildSharedBookEmbedSrc(
+        window.location.href,
+        loadUrl,
+        bookContext.entryUrl,
+        bookContext.prefetchPayload,
+      );
+    }
+    return buildSharedEmbedSrc(window.location.href, loadUrl);
+  };
+
+  const copyEmbeddedIframe = (mode: "inline" | "loadUrl"): void => {
     void (async () => {
-      copyEmbeddedButton.disabled = true;
-      copyEmbeddedButton.setAttribute("aria-busy", "true");
+      copyEmbeddedButton?.setAttribute("aria-busy", "true");
+      if (copyEmbeddedButton) copyEmbeddedButton.disabled = true;
+      if (copyEmbeddedInlineButton) copyEmbeddedInlineButton.disabled = true;
+      if (copyEmbeddedLoadUrlButton) copyEmbeddedLoadUrlButton.disabled = true;
       try {
-        const selection = window.prompt(
-          "Copy embedded iframe:\n1 = inline base64 HTML source\n2 = current load URL as src",
-          "1",
-        );
-        if (selection === null) {
-          return;
-        }
-
-        const option = selection.trim();
-        let src: string;
-
-        if (option === "1") {
-          const inlineHtmlSource =
-            (await options.buildInlineEmbedHtmlSource?.(htmlView)) ??
-            buildExportHtmlDocument(htmlView);
-          const html = inlineHtmlSource ?? null;
-          if (!html) {
-            alert("No rendered content to embed.");
-            return;
-          }
-          src = buildInlineHtmlDataSrc(html);
-        } else if (option === "2") {
-          if (!options.enableLoadUrlEmbed) {
-            alert("Current load URL embedding is available only in HTML/book modes.");
-            return;
-          }
-          const loadUrl = options.getCurrentLoadUrl?.();
-          if (!loadUrl) {
-            alert("Unable to resolve current load URL.");
-            return;
-          }
-          const bookContext = (await options.getBookEmbedContext?.()) ?? null;
-          if (bookContext?.entryUrl) {
-            src = buildSharedBookEmbedSrc(
-              window.location.href,
-              loadUrl,
-              bookContext.entryUrl,
-              bookContext.prefetchPayload,
-            );
-          } else {
-            src = buildSharedEmbedSrc(window.location.href, loadUrl);
-          }
-        } else {
-          alert("Select option 1 or 2.");
-          return;
-        }
+        const src = await buildEmbeddedIframeSrc(mode);
+        if (!src) return;
 
         const iframeCode = buildIframeEmbedCode(src);
         const copied = await copyTextToClipboard(
@@ -609,21 +656,39 @@ export function createFabMenu(
         console.error("Failed to build embedded iframe code", error);
         displayError("Unable to generate embedded iframe code");
       } finally {
-        copyEmbeddedButton.disabled = false;
-        copyEmbeddedButton.removeAttribute("aria-busy");
-        isMenuOpen = false;
-        menu.classList.remove("is-open");
-        mainButton.setAttribute("aria-expanded", "false");
+        if (copyEmbeddedButton) {
+          copyEmbeddedButton.disabled = false;
+          copyEmbeddedButton.removeAttribute("aria-busy");
+        }
+        if (copyEmbeddedInlineButton) {
+          copyEmbeddedInlineButton.disabled = false;
+        }
+        if (copyEmbeddedLoadUrlButton) {
+          copyEmbeddedLoadUrlButton.disabled = !options.enableLoadUrlEmbed;
+        }
+        closeMenu();
       }
     })();
+  };
+
+  copyEmbeddedButton?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    isEmbedSubmenuOpen = !isEmbedSubmenuOpen;
+    syncEmbedSubmenuState();
+  });
+  copyEmbeddedInlineButton?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    copyEmbeddedIframe("inline");
+  });
+  copyEmbeddedLoadUrlButton?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    copyEmbeddedIframe("loadUrl");
   });
 
   // Close menu when clicking outside
   const onDocumentClick = (e: Event) => {
     if (isMenuOpen && !menu.contains(e.target as Node)) {
-      isMenuOpen = false;
-      menu.classList.remove("is-open");
-      mainButton.setAttribute("aria-expanded", "false");
+      closeMenu();
     }
   };
   document.addEventListener("click", onDocumentClick);
@@ -633,14 +698,14 @@ export function createFabMenu(
     { once: true },
   );
 
-  if (copyEmbeddedButton) {
+  if (copyEmbeddedGroup) {
     actions.append(
       editButton,
       themeButton,
       themeToggleButton,
       exportButton,
       shareButton,
-      copyEmbeddedButton,
+      copyEmbeddedGroup,
     );
   } else {
     actions.append(editButton, themeButton, themeToggleButton, exportButton, shareButton);

@@ -8,9 +8,20 @@ type BookTopic = {
   level: TopicLevel;
 };
 
+export type BookContentLink = {
+  url: string;
+  title: string;
+  isCurrent?: boolean;
+};
+
+type BookTopicsMenuUpdateOptions = {
+  contents?: readonly BookContentLink[];
+  onSelectContent?: (url: string) => void;
+};
+
 export type BookTopicsMenuHandle = {
   root: HTMLElement;
-  update(viewer: HTMLElement): void;
+  update(viewer: HTMLElement, options?: BookTopicsMenuUpdateOptions): void;
   destroy(): void;
 };
 
@@ -87,12 +98,23 @@ export function createBookTopicsMenu(): BookTopicsMenuHandle {
 
   const title = createElement("h3");
   title.className = "book-topics-title";
-  title.textContent = "Topics";
+  title.textContent = "Contents";
+
+  const contentSectionTitle = createElement("h4");
+  contentSectionTitle.className = "book-topics-subtitle";
+  contentSectionTitle.textContent = "Book";
+
+  const contentList = createElement("ol");
+  contentList.className = "book-topics-content-list";
+
+  const topicSectionTitle = createElement("h4");
+  topicSectionTitle.className = "book-topics-subtitle";
+  topicSectionTitle.textContent = "Chapter";
 
   const list = createElement("ul");
   list.className = "book-topics-list";
 
-  panel.append(title, list);
+  panel.append(title, contentSectionTitle, contentList, topicSectionTitle, list);
   root.append(toggleButton, panel);
 
   let isOpen = false;
@@ -131,9 +153,42 @@ export function createBookTopicsMenu(): BookTopicsMenuHandle {
   };
   document.addEventListener("keydown", onEscape);
 
-  const update = (viewer: HTMLElement): void => {
+  const update = (
+    viewer: HTMLElement,
+    options: BookTopicsMenuUpdateOptions = {},
+  ): void => {
     const topics = collectBookTopics(viewer);
+    const contentLinks = options.contents ?? [];
+    contentList.replaceChildren();
     list.replaceChildren();
+
+    if (contentLinks.length === 0) {
+      const emptyContents = createElement("li");
+      emptyContents.className = "book-topics-empty";
+      emptyContents.textContent = "No chapters discovered yet";
+      contentList.appendChild(emptyContents);
+    } else {
+      for (const content of contentLinks) {
+        const item = createElement("li");
+        item.className = "book-topics-content-item";
+        if (content.isCurrent) {
+          item.classList.add("is-current");
+        }
+        const link = createElement("a");
+        link.href = "#";
+        link.textContent = content.title.trim() || "Untitled chapter";
+        if (content.isCurrent) {
+          link.setAttribute("aria-current", "page");
+        }
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          close();
+          options.onSelectContent?.(content.url);
+        });
+        item.appendChild(link);
+        contentList.appendChild(item);
+      }
+    }
 
     if (topics.length === 0) {
       const empty = createElement("li");

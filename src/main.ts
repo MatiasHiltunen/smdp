@@ -25,6 +25,7 @@ import { onThemeChange } from "./client/theme-events";
 import { mountE2ETestRunner } from "./client/e2e";
 import {
   createBookTopicsMenu,
+  type BookContentLink,
   type BookTopicsMenuHandle,
 } from "./client/book-topics";
 import { shouldAllowRawHtmlForRoute } from "./client/render-options";
@@ -248,6 +249,17 @@ function prioritizeCurrentBookPart(
   const [current] = ordered.splice(index, 1);
   ordered.unshift(current);
   return ordered;
+}
+
+function buildBookContentLinks(
+  loader: BookLoader,
+  currentPartUrl: string | null,
+): BookContentLink[] {
+  return loader.getKnownParts().map((url) => ({
+    url,
+    title: loader.getPartTitle(url),
+    isCurrent: currentPartUrl === url,
+  }));
 }
 
 function shouldHandleBookLinkClick(
@@ -609,6 +621,14 @@ async function init(): Promise<void> {
       },
       enableLoadUrlEmbed: route.mode === "html",
       getCurrentLoadUrl: () => currentBaseUrl ?? null,
+      buildHtmlExportSource: async () => {
+        if (!bookLoader) return null;
+        return buildInlineBookEmbedHtmlSource(
+          bookLoader,
+          currentBookPartUrl,
+          allowRawHtml,
+        );
+      },
       buildInlineEmbedHtmlSource: async () => {
         if (!bookLoader) return null;
         return buildInlineBookEmbedHtmlSource(
@@ -719,7 +739,9 @@ async function init(): Promise<void> {
       rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl, {
         sharedMode: route.shared,
       });
-      bookTopicsMenu?.update(htmlView.viewer);
+      bookTopicsMenu?.update(htmlView.viewer, {
+        contents: buildBookContentLinks(bookLoader, currentBookPartUrl),
+      });
       scrollToHeadingAnchor(htmlView, window.location.hash.replace(/^#/, ""));
       bookLoader.prefetchInBackground();
     }
@@ -749,7 +771,7 @@ async function init(): Promise<void> {
       rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl, {
         sharedMode: route.shared,
       });
-      bookTopicsMenu?.update(htmlView.viewer);
+      refreshBookTopicsMenu();
       if (anchor) {
         scrollToHeadingAnchor(htmlView, anchor);
       } else {
@@ -770,6 +792,19 @@ async function init(): Promise<void> {
 
       bookLoader.prefetchInBackground();
     };
+
+    const refreshBookTopicsMenu = (): void => {
+      bookTopicsMenu?.update(htmlView.viewer, {
+        contents: buildBookContentLinks(bookLoader, currentBookPartUrl),
+        onSelectContent: (targetPartUrl) => {
+          void navigateToBookPart(targetPartUrl, "", true).catch((error) => {
+            console.error("Unable to navigate to selected chapter", error);
+            displayError("Unable to open selected chapter");
+          });
+        },
+      });
+    };
+    refreshBookTopicsMenu();
 
     const onBookLinkClick = (event: Event): void => {
       if (!(event instanceof MouseEvent)) return;
