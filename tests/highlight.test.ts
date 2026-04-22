@@ -109,6 +109,27 @@ test('highlights SQL queries with uppercase keywords', async () => {
   assert.ok(html.includes('<span class="tok-str">&#39;A%&#39;;</span>'));
 });
 
+test('highlights Eon config files with comments, keywords and multiline strings', async () => {
+  const source = [
+    '// Comment',
+    'special_numbers: [+inf, -nan]',
+    'path: \'C:\\System32\\foo.dll\'',
+    'value: true',
+    'text: """',
+    'Hello Eon',
+    '"""',
+  ].join('\n');
+  const html = await highlightToHtml(source, 'eon');
+
+  assert.ok(html.includes('<code class="language-eon">'));
+  assert.ok(html.includes('<span class="tok-com">// Comment</span>'));
+  assert.ok(html.includes('<span class="tok-kw">inf</span>'));
+  assert.ok(html.includes('<span class="tok-kw">nan</span>'));
+  assert.ok(html.includes('<span class="tok-kw">true</span>'));
+  assert.ok(html.includes('<span class="tok-str">&#39;C:\\System32\\foo.dll&#39;</span>'));
+  assert.ok(html.includes('<span class="tok-str">&quot;&quot;&quot;'));
+});
+
 test('allows registering additional languages dynamically', async () => {
   const mod = await loadHighlightModule();
   mod.registerHighlightLanguage({
@@ -138,6 +159,7 @@ test('exposes a sorted list of registered highlight aliases', async () => {
   const aliases = mod.getRegisteredHighlightLanguages();
 
   assert.ok(Array.isArray(aliases));
+  assert.ok(aliases.includes('eon'));
   assert.ok(aliases.includes('js'));
   assert.ok(aliases.includes('swift'));
   assert.ok(aliases.includes('sql'));

@@ -1,4 +1,4 @@
-import { createElement } from "./dom";
+import { createElement, replaceWithIcon } from "./dom";
 
 export type BookContentLink = {
   url: string;
@@ -28,11 +28,10 @@ export function createBookTopicsMenu(): BookTopicsMenuHandle {
   toggleButton.title = "Toggle book contents";
   toggleButton.setAttribute("aria-expanded", "false");
   toggleButton.setAttribute("aria-controls", "book-topics-panel");
-  toggleButton.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path d="M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm1 5a1 1 0 1 0 0 2h14a1 1 0 1 0 0-2H5Z" fill="currentColor"/>
-    </svg>
-  `;
+  replaceWithIcon(
+    toggleButton,
+    "M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm1 5a1 1 0 1 0 0 2h14a1 1 0 1 0 0-2H5Z",
+  );
 
   const panel = createElement("aside");
   panel.className = "book-topics-panel";
@@ -131,11 +130,11 @@ export function createBookTopicsMenu(): BookTopicsMenuHandle {
         toggle.title = isExpanded
           ? "Collapse subchapters"
           : "Expand subchapters";
-        toggle.innerHTML = `
-          <svg aria-hidden="true" viewBox="0 0 20 20" class="icon">
-            <path d="M7 4a1 1 0 0 1 .707.293l5 5a1 1 0 0 1 0 1.414l-5 5A1 1 0 0 1 6 15V5a1 1 0 0 1 1-1Z" fill="currentColor"/>
-          </svg>
-        `;
+        replaceWithIcon(
+          toggle,
+          "M7 4a1 1 0 0 1 .707.293l5 5a1 1 0 0 1 0 1.414l-5 5A1 1 0 0 1 6 15V5a1 1 0 0 1 1-1Z",
+          { viewBox: "0 0 20 20" },
+        );
         toggle.addEventListener("click", (event) => {
           event.stopPropagation();
           if (expandedByUrl.has(item.url)) {

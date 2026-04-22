@@ -1,4 +1,4 @@
-import { createElement } from "./dom";
+import { createElement, replaceElementHtml } from "./dom";
 import { fetchMarkdown } from "./fetch";
 import { MDParser } from "../parser/index";
 import { TD } from "../parser/constants";
@@ -162,7 +162,7 @@ export function mountE2ETestRunner(initialTarget: URL | null): void {
     runButton.setAttribute("aria-busy", "true");
     results.replaceChildren();
     summary.textContent = "Running…";
-    htmlPreview.innerHTML = "";
+    htmlPreview.replaceChildren();
     canvas.width = 1;
     canvas.height = 1;
     canvas.style.width = "1px";
@@ -221,7 +221,9 @@ export function mountE2ETestRunner(initialTarget: URL | null): void {
             allowRawHtml: true,
             baseUrl: ctx.baseUrl,
           });
-          ctx.htmlContainer.innerHTML = html;
+          replaceElementHtml(ctx.htmlContainer, html, {
+            baseUrl: ctx.baseUrl,
+          });
           const textLength = (ctx.htmlContainer.textContent ?? "").trim().length;
           assertCondition(textLength > 0, "rendered html has no text content");
           assertCondition(

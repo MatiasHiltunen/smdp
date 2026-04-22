@@ -7,6 +7,7 @@ import {
 import { serializeTheme } from './theme-serializer';
 import { loadThemeFromUrl } from './theme-url';
 import { emitThemeChange } from '../client/theme-events';
+import { replaceWithIcon } from '../client/dom';
 import {
   applyBackgroundMode,
   applyFrameMode,
@@ -76,6 +77,8 @@ const LINE_HEIGHTS = ['1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '2.0'] as const;
 
 const FRAME_MODES = ['full', 'minimal', 'none'] as const;
 const BACKGROUND_MODES = ['full', 'soft', 'none'] as const;
+const CLOSE_ICON_PATH =
+  "M17.53 6.47a.75.75 0 0 0-1.06 0L12 10.94 7.53 6.47a.75.75 0 0 0-1.06 1.06L10.94 12l-4.47 4.47a.75.75 0 0 0 1.06 1.06L12 13.06l4.47 4.47a.75.75 0 0 0 1.06-1.06L13.06 12l4.47-4.47a.75.75 0 0 0 0-1.06Z";
 
 const TOKEN_GROUPS: ReadonlyArray<{ title: string; fields: readonly TokenField[] }> = [
   {
@@ -336,11 +339,7 @@ export function initializeThemeEditor(
   closeButton.type = 'button';
   closeButton.title = 'Close theme editor';
   closeButton.setAttribute('aria-label', 'Close theme editor');
-  closeButton.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24">
-      <path d="M17.53 6.47a.75.75 0 0 0-1.06 0L12 10.94 7.53 6.47a.75.75 0 0 0-1.06 1.06L10.94 12l-4.47 4.47a.75.75 0 0 0 1.06 1.06L12 13.06l4.47 4.47a.75.75 0 0 0 1.06-1.06L13.06 12l4.47-4.47a.75.75 0 0 0 0-1.06Z" fill="currentColor"/>
-    </svg>
-  `;
+  replaceWithIcon(closeButton, CLOSE_ICON_PATH, { className: '' });
 
   const header = document.createElement('header');
   header.className = 'theme-editor-header';

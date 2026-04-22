@@ -43,6 +43,7 @@ import {
   decodeBookPrefetchPayload,
   encodeBookPrefetchPayload,
 } from "./client/book-prefetch-share";
+import { replaceElementHtml } from "./client/dom";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -92,7 +93,7 @@ async function applyMarkdownToHtml(
     ...(allowRawHtml ? { allowRawHtml: true } : {}),
   };
   const html = await parser.parse(bytes, overrides);
-  view.viewer.innerHTML = html;
+  replaceElementHtml(view.viewer, html, baseUrl !== undefined ? { baseUrl } : {});
 }
 
 function applyMarkdownToCanvas(
@@ -401,7 +402,7 @@ function rewriteEmbeddedBookPartLinks(
   }
 
   const wrapper = document.createElement("div");
-  wrapper.innerHTML = chapterHtml;
+  replaceElementHtml(wrapper, chapterHtml, { baseUrl: currentBaseUrl });
   const links = wrapper.querySelectorAll<HTMLAnchorElement>("a[href]");
   for (const link of links) {
     const href = link.getAttribute("href");

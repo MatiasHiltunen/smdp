@@ -93,6 +93,7 @@ So far built-in basic syntax highlighters cover the following languages:
 - JSON
 - YAML
 - TOML
+- Eon
 - INI / config files
 - Dockerfile
 - Make / Makefile
