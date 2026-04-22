@@ -281,3 +281,28 @@ test("test_e2e route parses target url from query", () => {
     }
   }
 });
+
+test("editor route reads popup session id", () => {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    location: {
+      pathname: "/editor",
+      hash: "",
+      search: "?session=editor-session-123",
+    },
+  };
+
+  try {
+    const route = parseRoute();
+    assert.equal(route.mode, "editor");
+    assert.equal(route.shared, false);
+    assert.equal(route.externalUrl, null);
+    assert.equal(route.editorSessionId, "editor-session-123");
+  } finally {
+    if (originalWindow) {
+      (globalThis as any).window = originalWindow;
+    } else {
+      delete (globalThis as any).window;
+    }
+  }
+});
