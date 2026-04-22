@@ -97,7 +97,9 @@ function buildInlineGzipBootstrapHtml(compressedBase64: string): string {
 
     inflateAndRender().catch((error) => {
       console.error("Failed to inflate embedded HTML", error);
-      document.body.innerHTML = "<p>Unable to load compressed embedded content.</p>";
+      const message = document.createElement("p");
+      message.textContent = "Unable to load compressed embedded content.";
+      document.body.replaceChildren(message);
     });
   </script>
 </body>

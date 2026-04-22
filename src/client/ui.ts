@@ -5,7 +5,7 @@ import {
   getCurrentTheme,
 } from "./theme";
 import type { CanvasView, HtmlView } from "./views";
-import { createElement } from "./dom";
+import { createElement, replaceWithIcon, sanitizeHtmlString } from "./dom";
 import { encodeMarkdownToBase64 } from "../data-link";
 import { deserializeTheme } from "../theme/theme-serializer";
 import { emitThemeChange } from "./theme-events";
@@ -26,6 +26,22 @@ import {
 
 const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
 const SAFE_CSS_PROPERTY_RE = /^[a-z-]{1,64}$/i;
+const MENU_ICON_PATH =
+  "M12 4a1 1 0 0 1 1 1v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5a1 1 0 0 1 1-1Z";
+const EDIT_ICON_PATH =
+  "M4.5 20a.5.5 0 0 1-.5-.5v-3.086a1 1 0 0 1 .293-.707L14.586 5.414a2 2 0 0 1 2.828 0l1.172 1.172a2 2 0 0 1 0 2.828L8.293 20.293a1 1 0 0 1-.707.293H4.5Zm12.379-13.207a.5.5 0 0 0-.707 0L6 16.964V19h2.036l10.172-10.172a.5.5 0 0 0 0-.707l-1.329-1.328Z";
+const THEME_EDITOR_ICON_PATH =
+  "M12 3a9 9 0 0 1 9 9 9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9Zm0 2a7 7 0 0 0-7 7 7 7 0 0 0 7 7V5Z";
+const THEME_DARK_TO_LIGHT_ICON_PATH =
+  "M12 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 17a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm9-8a1 1 0 0 1 0 2h-1a1 1 0 1 1 0-2h1ZM4 11a1 1 0 1 0 0 2H3a1 1 0 1 0 0-2h1Zm14.071-5.071a1 1 0 0 1 0 1.414l-.707.707a1 1 0 1 1-1.414-1.414l.707-.707a1 1 0 0 1 1.414 0ZM8.05 15.95a1 1 0 0 1 0 1.414l-.707.707a1 1 0 1 1-1.414-1.414l.707-.707a1 1 0 0 1 1.414 0Zm9.9 0a1 1 0 0 1 1.414 0l.707.707a1 1 0 0 1-1.414 1.414l-.707-.707a1 1 0 0 1 0-1.414ZM8.05 5.93a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414ZM12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm-7 5a7 7 0 1 1 14 0 7 7 0 0 1-14 0Z";
+const THEME_LIGHT_TO_DARK_ICON_PATH =
+  "M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1Z";
+const EXPORT_ICON_PATH =
+  "M13 3a1 1 0 1 0-2 0v12.586l-3.293-3.293a1 1 0 0 0-1.414 1.414l5 5a1 1 0 0 0 1.414 0l5-5a1 1 0 0 0-1.414-1.414L13 15.586V3ZM4 17a1 1 0 1 0 0 2h16a1 1 0 1 0 0-2H4Z";
+const SHARE_ICON_PATH =
+  "M18 3a3 3 0 1 1-2.668 4.301l-6.01 3.004a3 3 0 0 1 0 2.39l6.01 3.004a3 3 0 1 1-.898 1.79l-6.01-3.004a3 3 0 1 1 0-4.98l6.01-3.004A3 3 0 0 1 18 3Z";
+const EMBED_ICON_PATH =
+  "M5 4a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1a1 1 0 1 0-2 0v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1a1 1 0 1 0 0-2H5Zm7 0a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h7a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3h-7Zm0 2h7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z";
 
 function sanitizeCssDeclarationValue(value: string): string | null {
   const trimmed = value.trim();
@@ -240,6 +256,7 @@ export function buildExportHtmlDocumentFromViewerHtml(
   options: { extraStyles?: string } = {},
 ): string {
   const snapshot = captureExportDocumentSnapshot(options.extraStyles ?? "");
+  const safeViewerHtml = sanitizeHtmlString(viewerHtml);
   return `<!DOCTYPE html>
 <html lang="en" data-theme="${snapshot.currentTheme}">
 <head>
@@ -255,7 +272,7 @@ ${snapshot.styleContent}
   <div class="app-shell mode-html">
     <div class="viewer-pane">
       <article class="markdown-viewer">
-${viewerHtml}
+${safeViewerHtml}
       </article>
     </div>
   </div>
@@ -359,11 +376,7 @@ export function createFabMenu(
   mainButton.title = "Menu";
   mainButton.ariaLabel = "Toggle menu";
   mainButton.setAttribute("aria-expanded", "false");
-  mainButton.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path d="M12 4a1 1 0 0 1 1 1v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5a1 1 0 0 1 1-1Z" fill="currentColor"/>
-    </svg>
-  `;
+  replaceWithIcon(mainButton, MENU_ICON_PATH);
 
   // Actions container
   const actions = createElement("div");
@@ -374,22 +387,14 @@ export function createFabMenu(
   editButton.className = "fab-action";
   editButton.type = "button";
   editButton.setAttribute("data-tooltip", "Edit Markdown");
-  editButton.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path d="M4.5 20a.5.5 0 0 1-.5-.5v-3.086a1 1 0 0 1 .293-.707L14.586 5.414a2 2 0 0 1 2.828 0l1.172 1.172a2 2 0 0 1 0 2.828L8.293 20.293a1 1 0 0 1-.707.293H4.5Zm12.379-13.207a.5.5 0 0 0-.707 0L6 16.964V19h2.036l10.172-10.172a.5.5 0 0 0 0-.707l-1.329-1.328Z" fill="currentColor"/>
-    </svg>
-  `;
+  replaceWithIcon(editButton, EDIT_ICON_PATH);
 
   // Theme editor button
   const themeButton = createElement("button");
   themeButton.className = "fab-action";
   themeButton.type = "button";
   themeButton.setAttribute("data-tooltip", "Theme Editor");
-  themeButton.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path d="M12 3a9 9 0 0 1 9 9 9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9Zm0 2a7 7 0 0 0-7 7 7 7 0 0 0 7 7V5Z" fill="currentColor"/>
-    </svg>
-  `;
+  replaceWithIcon(themeButton, THEME_EDITOR_ICON_PATH);
 
   // Light/Dark theme toggle button
   const themeToggleButton = createElement("button");
@@ -402,19 +407,11 @@ export function createFabMenu(
     if (theme === "dark") {
       // Show sun icon (click to go light)
       themeToggleButton.setAttribute("data-tooltip", "Switch to Light Mode");
-      themeToggleButton.innerHTML = `
-        <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-          <path d="M12 2a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V3a1 1 0 0 1 1-1Zm0 17a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Zm9-8a1 1 0 0 1 0 2h-1a1 1 0 1 1 0-2h1ZM4 11a1 1 0 1 0 0 2H3a1 1 0 1 0 0-2h1Zm14.071-5.071a1 1 0 0 1 0 1.414l-.707.707a1 1 0 1 1-1.414-1.414l.707-.707a1 1 0 0 1 1.414 0ZM8.05 15.95a1 1 0 0 1 0 1.414l-.707.707a1 1 0 1 1-1.414-1.414l.707-.707a1 1 0 0 1 1.414 0Zm9.9 0a1 1 0 0 1 1.414 0l.707.707a1 1 0 0 1-1.414 1.414l-.707-.707a1 1 0 0 1 0-1.414ZM8.05 5.93a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414ZM12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm-7 5a7 7 0 1 1 14 0 7 7 0 0 1-14 0Z" fill="currentColor"/>
-        </svg>
-      `;
+      replaceWithIcon(themeToggleButton, THEME_DARK_TO_LIGHT_ICON_PATH);
     } else {
       // Show moon icon (click to go dark)
       themeToggleButton.setAttribute("data-tooltip", "Switch to Dark Mode");
-      themeToggleButton.innerHTML = `
-        <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-          <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1Z" fill="currentColor"/>
-        </svg>
-      `;
+      replaceWithIcon(themeToggleButton, THEME_LIGHT_TO_DARK_ICON_PATH);
     }
   };
 
@@ -429,22 +426,14 @@ export function createFabMenu(
     "data-tooltip",
     isCanvasView ? "Export as Image" : "Export as HTML",
   );
-  exportButton.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path d="M13 3a1 1 0 1 0-2 0v12.586l-3.293-3.293a1 1 0 0 0-1.414 1.414l5 5a1 1 0 0 0 1.414 0l5-5a1 1 0 0 0-1.414-1.414L13 15.586V3ZM4 17a1 1 0 1 0 0 2h16a1 1 0 1 0 0-2H4Z" fill="currentColor"/>
-    </svg>
-  `;
+  replaceWithIcon(exportButton, EXPORT_ICON_PATH);
 
   // Share button
   const shareButton = createElement("button");
   shareButton.className = "fab-action";
   shareButton.type = "button";
   shareButton.setAttribute("data-tooltip", "Share as Data Link");
-  shareButton.innerHTML = `
-    <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-      <path d="M18 3a3 3 0 1 1-2.668 4.301l-6.01 3.004a3 3 0 0 1 0 2.39l6.01 3.004a3 3 0 1 1-.898 1.79l-6.01-3.004a3 3 0 1 1 0-4.98l6.01-3.004A3 3 0 0 1 18 3Z" fill="currentColor"/>
-    </svg>
-  `;
+  replaceWithIcon(shareButton, SHARE_ICON_PATH);
 
   const copyEmbeddedGroup = isHtmlView ? createElement("div") : null;
   const copyEmbeddedButton = isHtmlView ? createElement("button") : null;
@@ -467,11 +456,7 @@ export function createFabMenu(
     copyEmbeddedButton.setAttribute("data-tooltip", "Copy Embedded Iframe");
     copyEmbeddedButton.setAttribute("aria-haspopup", "true");
     copyEmbeddedButton.setAttribute("aria-expanded", "false");
-    copyEmbeddedButton.innerHTML = `
-      <svg aria-hidden="true" viewBox="0 0 24 24" class="icon">
-        <path d="M5 4a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1a1 1 0 1 0-2 0v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1a1 1 0 1 0 0-2H5Zm7 0a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h7a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3h-7Zm0 2h7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" fill="currentColor"/>
-      </svg>
-    `;
+    replaceWithIcon(copyEmbeddedButton, EMBED_ICON_PATH);
 
     copyEmbeddedSubmenu.className = "fab-submenu";
     copyEmbeddedSubmenu.setAttribute("aria-hidden", "true");

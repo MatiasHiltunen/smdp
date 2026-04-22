@@ -1,5 +1,6 @@
 import { decodeBase64Markdown } from "./data-link";
 import { MDParser, u8 } from "./parser/index";
+import { TD } from "./parser/constants";
 import type { ThemeEditorHandle } from "./theme/theme-editor";
 import "./style.css";
 import {
@@ -9,7 +10,7 @@ import {
   getThemeBuilder,
 } from "./client/theme";
 import { parseRoute } from "./client/routing";
-import { BookLoader, type BookPart } from "./client/book";
+import { BookLoader } from "./client/book";
 import {
   createCanvasView,
   createHtmlView,
@@ -20,12 +21,10 @@ import { fetchMarkdown, type MarkdownFetchResult } from "./client/fetch";
 import { canonicalizeBookLink } from "./client/github-url";
 import { sanitizeSharedDataBaseUrl } from "./client/shared-data";
 import { displayError } from "./client/error-banner";
-import { TD } from "./parser/constants";
 import { onThemeChange } from "./client/theme-events";
 import { mountE2ETestRunner } from "./client/e2e";
 import {
   createBookTopicsMenu,
-  type BookContentLink,
   type BookTopicsMenuHandle,
 } from "./client/book-topics";
 import { shouldAllowRawHtmlForRoute } from "./client/render-options";
@@ -43,6 +42,23 @@ import {
   decodeBookPrefetchPayload,
   encodeBookPrefetchPayload,
 } from "./client/book-prefetch-share";
+import { createElement, replaceElementHtml } from "./client/dom";
+import {
+  buildEditorBookContentLinks,
+  createBookEditorDocumentSnapshot,
+  createSingleEditorDocumentSnapshot,
+  EditorStateController,
+  getCurrentEditorPage,
+  snapshotToBookPrefetchParts,
+  type EditorDocumentSnapshot,
+} from "./client/editor-model";
+import { createEditorWindow } from "./client/editor-window";
+import {
+  connectEditorSessionBridge,
+  createEditorSessionId,
+  readPersistedEditorSession,
+} from "./client/editor-sync";
+import { initializePwaController } from "./client/pwa";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -52,7 +68,6 @@ let themeEditorModulePromise:
 let uiModulePromise: Promise<typeof import("./client/ui")> | null = null;
 
 const parser = new MDParser({
-  // Security: disable raw HTML blocks by default
   allowRawHtml: false,
 });
 
@@ -85,87 +100,27 @@ async function applyMarkdownToHtml(
   view: HtmlView,
   bytes: Uint8Array,
   baseUrl?: string,
-  allowRawHtml: boolean = false,
+  allowRawHtml = false,
 ): Promise<void> {
   const overrides = {
     ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(allowRawHtml ? { allowRawHtml: true } : {}),
   };
   const html = await parser.parse(bytes, overrides);
-  view.viewer.innerHTML = html;
+  replaceElementHtml(view.viewer, html, baseUrl !== undefined ? { baseUrl } : {});
 }
 
 function applyMarkdownToCanvas(
   view: CanvasView,
   bytes: Uint8Array,
   baseUrl?: string,
-  allowRawHtml: boolean = false,
+  allowRawHtml = false,
 ): void {
   const overrides = {
     ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(allowRawHtml ? { allowRawHtml: true } : {}),
   };
   parser.renderToCanvas(bytes, view.canvas, overrides);
-}
-
-function enableRealtimeUpdates(
-  view: HtmlView | CanvasView,
-  apply: (bytes: Uint8Array, baseUrl?: string, allowRawHtml?: boolean) => Promise<void>,
-  resolveBaseUrl: () => string | undefined,
-  resolveAllowRawHtml: () => boolean,
-): () => void {
-  const DEBOUNCE_MS = 80;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let renderInFlight = false;
-  let rerenderRequested = false;
-
-  const runRender = async (): Promise<void> => {
-    if (renderInFlight) {
-      rerenderRequested = true;
-      return;
-    }
-
-    renderInFlight = true;
-    try {
-      do {
-        rerenderRequested = false;
-        const value = view.textarea.value;
-        const bytes = u8(value);
-        const baseUrl = resolveBaseUrl();
-        const allowRawHtml = resolveAllowRawHtml();
-        await apply(bytes, baseUrl, allowRawHtml);
-      } while (rerenderRequested);
-    } catch (error) {
-      console.error("Failed to update preview", error);
-    } finally {
-      renderInFlight = false;
-    }
-  };
-
-  const scheduleRender = (): void => {
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-    }
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      void runRender();
-    }, DEBOUNCE_MS);
-  };
-
-  const onInput = () => {
-    rerenderRequested = true;
-    scheduleRender();
-  };
-
-  view.textarea.addEventListener("input", onInput);
-
-  return () => {
-    view.textarea.removeEventListener("input", onInput);
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
-    }
-  };
 }
 
 function preserveThemeQueryParams(target: URL): void {
@@ -198,20 +153,23 @@ function buildBookUrl(
     next.pathname = `/book/${entryUrl}`;
   }
   preserveThemeQueryParams(next);
-  if (options.sharedMode) {
-    next.searchParams.set("part", partUrl);
-    if (options.sharedBookPrefetchPayload) {
-      next.searchParams.set("bp", options.sharedBookPrefetchPayload);
-    } else {
-      next.searchParams.delete("bp");
-    }
-    next.searchParams.delete("be");
+  next.searchParams.set("part", partUrl);
+  if (options.sharedMode && options.sharedBookPrefetchPayload) {
+    next.searchParams.set("bp", options.sharedBookPrefetchPayload);
   } else {
-    next.searchParams.set("part", partUrl);
-    next.searchParams.delete("be");
     next.searchParams.delete("bp");
   }
+  next.searchParams.delete("be");
   next.hash = anchor ? `#${anchor}` : "";
+  return next;
+}
+
+function buildExternalEditorUrl(sessionId: string): URL {
+  const next = new URL(window.location.href);
+  next.pathname = "/editor";
+  preserveThemeQueryParams(next);
+  next.searchParams.set("session", sessionId);
+  next.hash = "";
   return next;
 }
 
@@ -238,10 +196,10 @@ function scrollToTop(): void {
   });
 }
 
-function prioritizeCurrentBookPart(
-  parts: readonly { url: string; baseUrl: string; markdown: string }[],
+function prioritizeCurrentBookPart<T extends { url: string }>(
+  parts: readonly T[],
   currentPartUrl: string | null,
-): { url: string; baseUrl: string; markdown: string }[] {
+): T[] {
   const ordered = [...parts];
   if (!currentPartUrl) return ordered;
   const index = ordered.findIndex((part) => part.url === currentPartUrl);
@@ -249,53 +207,6 @@ function prioritizeCurrentBookPart(
   const [current] = ordered.splice(index, 1);
   ordered.unshift(current);
   return ordered;
-}
-
-function buildBookContentTree(
-  loader: BookLoader,
-  currentPartUrl: string | null,
-): BookContentLink[] {
-  const consumed = new Set<string>();
-
-  const buildNode = (
-    url: string,
-    parentPath: ReadonlySet<string>,
-  ): BookContentLink | null => {
-    if (parentPath.has(url)) return null;
-    consumed.add(url);
-    const part = loader.getPart(url);
-    const children: BookContentLink[] = [];
-    const nextPath = new Set(parentPath);
-    nextPath.add(url);
-
-    if (part) {
-      for (const childUrl of part.discoveredParts) {
-        const childNode = buildNode(childUrl, nextPath);
-        if (!childNode) continue;
-        children.push(childNode);
-      }
-    }
-
-    return {
-      url,
-      title: loader.getPartTitle(url),
-      isCurrent: currentPartUrl === url,
-      ...(children.length > 0 ? { children } : {}),
-    };
-  };
-
-  const roots: BookContentLink[] = [];
-  const entryNode = buildNode(loader.getEntryUrl(), new Set<string>());
-  if (entryNode) {
-    roots.push(entryNode);
-  }
-  for (const knownUrl of loader.getKnownParts()) {
-    if (consumed.has(knownUrl)) continue;
-    const node = buildNode(knownUrl, new Set<string>());
-    if (!node) continue;
-    roots.push(node);
-  }
-  return roots;
 }
 
 function shouldHandleBookLinkClick(
@@ -401,7 +312,7 @@ function rewriteEmbeddedBookPartLinks(
   }
 
   const wrapper = document.createElement("div");
-  wrapper.innerHTML = chapterHtml;
+  replaceElementHtml(wrapper, chapterHtml, { baseUrl: currentBaseUrl });
   const links = wrapper.querySelectorAll<HTMLAnchorElement>("a[href]");
   for (const link of links) {
     const href = link.getAttribute("href");
@@ -422,94 +333,51 @@ function rewriteEmbeddedBookPartLinks(
   return wrapper.innerHTML;
 }
 
-async function collectBookPartsForInlineExport(
-  loader: BookLoader,
-  currentPartUrl: string | null,
-): Promise<BookPart[]> {
-  const queue: string[] = [];
-  const enqueued = new Set<string>();
-  const visited = new Set<string>();
-  const collected: BookPart[] = [];
-
-  const currentPart = currentPartUrl
-    ? loader.registerNavigablePart(currentPartUrl)
-    : null;
-  if (currentPart) {
-    queue.push(currentPart);
-    enqueued.add(currentPart);
-  }
-
-  const entryUrl = loader.getEntryUrl();
-  if (!enqueued.has(entryUrl)) {
-    queue.push(entryUrl);
-    enqueued.add(entryUrl);
-  }
-
-  while (queue.length > 0 && collected.length < MAX_INLINE_BOOK_EXPORT_PARTS) {
-    const target = queue.shift()!;
-    if (visited.has(target)) continue;
-    visited.add(target);
-
-    let part: BookPart;
-    try {
-      part = await loader.loadPart(target);
-    } catch (error) {
-      console.warn("Book export skipped an unreadable chapter", target, error);
-      continue;
-    }
-
-    collected.push(part);
-    for (const discoveredUrl of part.discoveredParts) {
-      if (visited.has(discoveredUrl) || enqueued.has(discoveredUrl)) continue;
-      enqueued.add(discoveredUrl);
-      queue.push(discoveredUrl);
-      if (enqueued.size >= MAX_INLINE_BOOK_EXPORT_PARTS * 4) {
-        break;
-      }
-    }
-  }
-
-  return collected;
-}
-
 async function buildInlineBookEmbedHtmlSource(
-  loader: BookLoader,
+  snapshot: EditorDocumentSnapshot,
   currentPartUrl: string | null,
   allowRawHtml: boolean,
 ): Promise<string | null> {
-  const parts = await collectBookPartsForInlineExport(loader, currentPartUrl);
-  if (parts.length === 0) {
+  if (snapshot.mode !== "book") {
+    return null;
+  }
+
+  const pages = prioritizeCurrentBookPart(
+    snapshot.pages,
+    currentPartUrl,
+  ).slice(0, MAX_INLINE_BOOK_EXPORT_PARTS);
+  if (pages.length === 0) {
     return null;
   }
 
   const partIdByUrl = new Map<string, string>();
-  parts.forEach((part, index) => {
-    partIdByUrl.set(part.url, buildEmbeddedBookPartId(index));
+  pages.forEach((page, index) => {
+    partIdByUrl.set(page.url, buildEmbeddedBookPartId(index));
   });
 
   const chapterSections: string[] = [];
   const tocItems: string[] = [];
 
-  for (const part of parts) {
+  for (const page of pages) {
     const renderOptions: { baseUrl: string; allowRawHtml?: true } = {
-      baseUrl: part.baseUrl,
+      baseUrl: page.baseUrl,
     };
     if (allowRawHtml) {
       renderOptions.allowRawHtml = true;
     }
-    const rendered = await parser.parse(part.bytes, renderOptions);
+    const rendered = await parser.parse(u8(page.markdown), renderOptions);
     const rewritten = rewriteEmbeddedBookPartLinks(
       rendered,
-      part.baseUrl,
-      part.url,
+      page.baseUrl,
+      page.url,
       partIdByUrl,
     );
-    const chapterId = partIdByUrl.get(part.url)!;
+    const chapterId = partIdByUrl.get(page.url)!;
     tocItems.push(
-      `<li><a href="#${chapterId}">${escapeHtmlText(part.title)}</a></li>`,
+      `<li><a href="#${chapterId}">${escapeHtmlText(page.title)}</a></li>`,
     );
     chapterSections.push(
-      `<section class="embedded-book-part" id="${chapterId}" data-book-source="${escapeHtmlAttr(part.url)}">\n${rewritten}\n</section>`,
+      `<section class="embedded-book-part" id="${chapterId}" data-book-source="${escapeHtmlAttr(page.url)}">\n${rewritten}\n</section>`,
     );
   }
 
@@ -525,6 +393,67 @@ ${chapterSections.join("\n")}`;
   return buildExportHtmlDocumentFromViewerHtml(viewerHtml, {
     extraStyles: EMBEDDED_BOOK_EXPORT_STYLES,
   });
+}
+
+async function bootExternalEditor(
+  sessionId: string | null,
+  pwaController: ReturnType<typeof initializePwaController>,
+  registerCleanup: (fn: () => void) => void,
+): Promise<void> {
+  document.body.classList.add("mode-editor");
+  document.body.classList.remove("mode-canvas");
+  document.body.classList.remove("is-editing");
+
+  const host = createElement("div");
+  document.body.replaceChildren(host);
+
+  const textarea = createElement("textarea");
+  textarea.id = "markdown-editor-input";
+  textarea.setAttribute("aria-label", "Markdown source");
+  textarea.autocomplete = "off";
+
+  const activeSessionId = sessionId ?? createEditorSessionId();
+  const persistedSnapshot = readPersistedEditorSession(activeSessionId);
+  const fallbackSnapshot = createSingleEditorDocumentSnapshot({
+    markdown: "# Untitled\n\nStart writing here.",
+    baseUrl: window.location.href,
+    sourceUrl: null,
+    fallbackOrigin: window.location.href,
+  });
+  const controller = new EditorStateController(
+    persistedSnapshot ?? fallbackSnapshot,
+  );
+  const bridge = connectEditorSessionBridge({
+    sessionId: activeSessionId,
+    mode: "guest",
+    controller,
+  });
+  registerCleanup(() => bridge.destroy());
+
+  const flushSnapshot = (): void => {
+    bridge.flushSnapshot();
+  };
+  window.addEventListener("beforeunload", flushSnapshot);
+  registerCleanup(() => window.removeEventListener("beforeunload", flushSnapshot));
+
+  const editorWindow = createEditorWindow({
+    host,
+    textarea,
+    controller,
+    externalWindow: true,
+    onRequestClose: () => {
+      bridge.flushSnapshot();
+      window.close();
+    },
+    onRequestInstall: async () => {
+      await pwaController.promptInstall();
+    },
+    subscribeInstallAvailability: (listener) =>
+      pwaController.subscribe(listener),
+  });
+  registerCleanup(() => editorWindow.destroy());
+
+  document.title = "SMDP Editor";
 }
 
 async function init(): Promise<void> {
@@ -548,8 +477,6 @@ async function init(): Promise<void> {
   const initialTheme = getCurrentTheme();
   applyTheme(initialTheme, themeEditorHandle, false, false, "init");
 
-  // Apply theme overrides from URL for both shared and normal modes.
-  // Ensures shared/embed pages pick up style params supplied in the query string.
   const themeBuilder = getThemeBuilder();
   const hasUrlTheme = applyThemeUrlOverrides(themeEditorHandle);
   if (!hasUrlTheme) {
@@ -557,21 +484,37 @@ async function init(): Promise<void> {
   }
 
   const route = parseRoute();
+  const pwaController = initializePwaController();
+
   if (route.mode === "html") {
     applyBackgroundModeFromUrl();
     applyFrameModeFromUrl();
+  } else if (route.mode === "editor") {
+    applyBackgroundModeFromUrl();
+    applyFrameMode("none");
   } else {
     applyBackgroundMode("full");
     applyFrameMode("full");
   }
+
   document.body.classList.toggle("mode-canvas", route.mode === "canvas");
+  document.body.classList.toggle("mode-editor", route.mode === "editor");
+
   if (route.mode === "test_e2e") {
     document.body.classList.remove("hydrating");
     mountE2ETestRunner(route.externalUrl);
     return;
   }
-  // HTML and canvas modes keep raw HTML enabled so sanitized tags (tables,
-  // links, emphasis, inline images, etc.) render consistently by default.
+
+  if (route.mode === "editor") {
+    try {
+      await bootExternalEditor(route.editorSessionId, pwaController, registerCleanup);
+    } finally {
+      document.body.classList.remove("hydrating");
+    }
+    return;
+  }
+
   const allowRawHtml = shouldAllowRawHtmlForRoute(route);
 
   let view: HtmlView | CanvasView;
@@ -620,14 +563,8 @@ async function init(): Promise<void> {
     await applyRender(bytes, baseUrl, latestAllowRawHtml);
   };
 
-  let resolved: MarkdownFetchResult | null = null;
-  let currentBaseUrl: string | undefined;
-  let bookLoader: BookLoader | null = null;
-  let currentBookPartUrl: string | null = null;
-  let bookTopicsMenu: BookTopicsMenuHandle | null = null;
-
   const rerenderCurrent = async (): Promise<void> => {
-    if (!latestBytes || latestBytes.byteLength === 0) {
+    if (latestBytes.byteLength === 0) {
       return;
     }
     await apply(latestBytes, latestBaseUrl, latestAllowRawHtml);
@@ -635,76 +572,30 @@ async function init(): Promise<void> {
 
   document.body.classList.remove("is-editing");
   document.body.replaceChildren(view.shell);
-  if (route.shared) {
-    // Remove editor pane entirely for shared/embed mode
-    try { view.editorPane.remove(); } catch {}
-  } else {
-    const { createFabMenu } = await loadUiModule();
-    themeEditorLocal = await ensureThemeEditor();
-    document.body.appendChild(themeEditorLocal.root);
 
-    // Create FAB menu with editor toggle callback
-    const fabMenu = createFabMenu(view, themeEditorLocal, {
-      onToggleEditor: () => {
-        const isEditing = document.body.classList.toggle("is-editing");
-        view.shell.classList.toggle("show-editor", isEditing);
-        view.editorPane.setAttribute("aria-hidden", String(!isEditing));
-        view.editorPane.toggleAttribute("inert", !isEditing);
-        if (isEditing) {
-          view.textarea.focus();
-          themeEditorLocal?.close();
-        }
-      },
-      enableLoadUrlEmbed: route.mode === "html",
-      getCurrentLoadUrl: () => currentBaseUrl ?? null,
-      buildHtmlExportSource: async () => {
-        if (!bookLoader) return null;
-        return buildInlineBookEmbedHtmlSource(
-          bookLoader,
-          currentBookPartUrl,
-          allowRawHtml,
-        );
-      },
-      buildInlineEmbedHtmlSource: async () => {
-        if (!bookLoader) return null;
-        return buildInlineBookEmbedHtmlSource(
-          bookLoader,
-          currentBookPartUrl,
-          allowRawHtml,
-        );
-      },
-      getBookEmbedContext: async () => {
-        if (!bookLoader) return null;
-        const snapshots = prioritizeCurrentBookPart(
-          bookLoader.getCachedPartsSnapshot(),
-          currentBookPartUrl,
-        );
-        const payload = await encodeBookPrefetchPayload(
-          bookLoader.getEntryUrl(),
-          snapshots,
-        );
-        return {
-          entryUrl: bookLoader.getEntryUrl(),
-          prefetchPayload: payload,
-        };
-      },
-    });
-    document.body.appendChild(fabMenu);
+  if (route.shared) {
+    try {
+      view.editorPane.remove();
+    } catch {
+      // Ignore missing editor host in readonly routes.
+    }
   }
 
-  // Theme editor already loaded from URL, no need to reapply
+  if (!route.shared) {
+    themeEditorLocal = await ensureThemeEditor();
+    document.body.appendChild(themeEditorLocal.root);
+  }
 
   if (!route.shared && !themeEditorViewListenerAttached && themeEditorLocal) {
     themeEditorLocal.root.addEventListener("theme-editor-toggle", (event) => {
       const open = (event as CustomEvent<{ open: boolean }>).detail.open;
-      if (open) {
-        document.body.classList.remove("is-editing");
-        view.shell.classList.remove("show-editor");
-      }
+      if (!open) return;
+      document.body.classList.remove("is-editing");
     });
     themeEditorViewListenerAttached = true;
   }
 
+  let bookTopicsMenu: BookTopicsMenuHandle | null = null;
   if (route.mode === "html" && route.bookEntryUrl) {
     bookTopicsMenu = createBookTopicsMenu();
     document.body.appendChild(bookTopicsMenu.root);
@@ -715,11 +606,18 @@ async function init(): Promise<void> {
     });
   }
 
+  let resolved: MarkdownFetchResult | null = null;
+  let bookLoader: BookLoader | null = null;
+  let currentBookPartUrl: string | null = null;
+  let currentSourceUrl: string | null = null;
+
   try {
     if (route.bookEntryUrl) {
       bookLoader = new BookLoader(route.bookEntryUrl.toString());
       if (route.bookPrefetchPayload) {
-        const prefetched = await decodeBookPrefetchPayload(route.bookPrefetchPayload);
+        const prefetched = await decodeBookPrefetchPayload(
+          route.bookPrefetchPayload,
+        );
         if (prefetched && prefetched.entryUrl === bookLoader.getEntryUrl()) {
           bookLoader.seedPrefetchedParts(prefetched.parts);
         }
@@ -728,6 +626,7 @@ async function init(): Promise<void> {
         route.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
       const initialPart = await bookLoader.loadPart(initialTarget);
       currentBookPartUrl = initialPart.url;
+      currentSourceUrl = initialPart.url;
       resolved = {
         bytes: initialPart.bytes,
         baseUrl: initialPart.baseUrl,
@@ -735,14 +634,14 @@ async function init(): Promise<void> {
       bookLoader.prefetchInBackground();
     } else if (route.dataPayload) {
       const decoded = await decodeBase64Markdown(route.dataPayload);
-      const baseUrl = sanitizeSharedDataBaseUrl(window.location.href);
       resolved = {
         bytes: decoded,
-        baseUrl,
+        baseUrl: sanitizeSharedDataBaseUrl(window.location.href),
       };
-
+      currentSourceUrl = null;
     } else {
       resolved = await fetchMarkdown(route.externalUrl);
+      currentSourceUrl = route.externalUrl?.toString() ?? null;
     }
   } catch (error) {
     console.error(error);
@@ -756,7 +655,7 @@ async function init(): Promise<void> {
     if (!route.dataPayload && route.externalUrl) {
       try {
         resolved = await fetchMarkdown(null);
-        //resolvedText = new TextDecoder().decode(resolved.bytes);
+        currentSourceUrl = null;
       } catch (fallbackError) {
         console.error("Unable to load fallback markdown", fallbackError);
       }
@@ -765,82 +664,331 @@ async function init(): Promise<void> {
     document.body.classList.remove("hydrating");
   }
 
-
-  if (resolved) {
-    currentBaseUrl = resolved.baseUrl;
-    await apply(resolved.bytes, currentBaseUrl, allowRawHtml);
-
-    if (bookLoader && route.mode === "html") {
-      const htmlView = view as HtmlView;
-      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl, {
-        sharedMode: route.shared,
-      });
-      bookTopicsMenu?.update(htmlView.viewer, {
-        contents: buildBookContentTree(bookLoader, currentBookPartUrl),
-      });
-      scrollToHeadingAnchor(htmlView, window.location.hash.replace(/^#/, ""));
-      bookLoader.prefetchInBackground();
-    }
-
-    view.textarea.value = TD.decode(resolved.bytes);
+  if (!resolved) {
+    return;
   }
 
-  if (bookLoader && route.mode === "html") {
-    const htmlView = view as HtmlView;
-
-    const navigateToBookPart = async (
-      targetPartUrl: string,
-      anchor: string,
-      pushHistory: boolean,
-    ): Promise<void> => {
-      if (!bookLoader) return;
-      const nextPart = await bookLoader.loadPart(targetPartUrl);
-      const isSamePart = currentBookPartUrl === nextPart.url;
-      currentBookPartUrl = nextPart.url;
-      currentBaseUrl = nextPart.baseUrl;
-
-      if (!isSamePart) {
-        await apply(nextPart.bytes, currentBaseUrl, allowRawHtml);
-        view.textarea.value = nextPart.markdown;
-      }
-
-      rewriteBookLinksInViewer(htmlView, bookLoader, currentBaseUrl, {
-        sharedMode: route.shared,
+  const initialMarkdown = TD.decode(resolved.bytes);
+  const initialSnapshot = bookLoader
+    ? createBookEditorDocumentSnapshot({
+        entryUrl: bookLoader.getEntryUrl(),
+        currentPartUrl: currentBookPartUrl,
+        parts: prioritizeCurrentBookPart(
+          bookLoader.getCachedPartsSnapshot(),
+          currentBookPartUrl,
+        ),
+      })
+    : createSingleEditorDocumentSnapshot({
+        markdown: initialMarkdown,
+        baseUrl: resolved.baseUrl,
+        sourceUrl: currentSourceUrl,
       });
-      refreshBookTopicsMenu();
-      if (anchor) {
-        scrollToHeadingAnchor(htmlView, anchor);
-      } else {
-        scrollToTop();
-      }
 
+  const controller = new EditorStateController(initialSnapshot);
+
+  let renderTimer: ReturnType<typeof setTimeout> | null = null;
+  let renderInFlight = false;
+  let rerenderRequested = false;
+  let latestSnapshot = controller.getSnapshot();
+  let previousSnapshot = latestSnapshot;
+  let pendingAnchor = window.location.hash.replace(/^#/, "");
+  let shouldScrollAfterPageChange = false;
+
+  async function renderCurrentSnapshot(): Promise<void> {
+    if (renderInFlight) {
+      rerenderRequested = true;
+      return;
+    }
+
+    renderInFlight = true;
+    try {
+      do {
+        rerenderRequested = false;
+        const snapshot = latestSnapshot;
+        const currentPage = getCurrentEditorPage(snapshot);
+        if (!currentPage) {
+          return;
+        }
+
+        latestAllowRawHtml = allowRawHtml;
+        latestBaseUrl = currentPage.baseUrl;
+        currentBookPartUrl = snapshot.mode === "book" ? currentPage.url : null;
+        currentSourceUrl = currentPage.sourceUrl;
+
+        await apply(u8(currentPage.markdown), currentPage.baseUrl, allowRawHtml);
+
+        if (route.mode === "html") {
+          const htmlView = view as HtmlView;
+          if (snapshot.mode === "book" && bookLoader) {
+            rewriteBookLinksInViewer(htmlView, bookLoader, currentPage.baseUrl, {
+              sharedMode: route.shared,
+            });
+          }
+
+          const anchor = pendingAnchor;
+          const shouldScrollTop = shouldScrollAfterPageChange && !anchor;
+          pendingAnchor = "";
+          shouldScrollAfterPageChange = false;
+
+          if (anchor) {
+            scrollToHeadingAnchor(htmlView, anchor);
+          } else if (snapshot.mode === "book" && shouldScrollTop) {
+            scrollToTop();
+          }
+        }
+      } while (rerenderRequested);
+    } catch (error) {
+      console.error("Failed to render markdown snapshot", error);
+    } finally {
+      renderInFlight = false;
+    }
+  }
+
+  const requestDebouncedRender = (): void => {
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+    }
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      void renderCurrentSnapshot();
+    }, 80);
+  };
+
+  const requestImmediateRender = (): void => {
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+    }
+    void renderCurrentSnapshot();
+  };
+
+  async function navigateToBookPart(
+    targetPartUrl: string,
+    anchor: string,
+    pushHistory: boolean,
+  ): Promise<void> {
+    if (!bookLoader) {
+      return;
+    }
+
+    pendingAnchor = anchor;
+    shouldScrollAfterPageChange = !anchor;
+
+    const existingPage = controller.findPageByUrl(targetPartUrl);
+    if (existingPage) {
+      controller.setCurrentPage(existingPage.id);
       if (pushHistory) {
-        const next = buildBookUrl(bookLoader.getEntryUrl(), nextPart.url, anchor, {
-          sharedMode: route.shared,
-          sharedBookPrefetchPayload: null,
-        });
+        const next = buildBookUrl(
+          bookLoader.getEntryUrl(),
+          existingPage.url,
+          anchor,
+          {
+            sharedMode: route.shared,
+            sharedBookPrefetchPayload: null,
+          },
+        );
         window.history.pushState(
-          { bookPartUrl: nextPart.url, bookAnchor: anchor },
+          { bookPartUrl: existingPage.url, bookAnchor: anchor },
           "",
           next,
         );
       }
+      return;
+    }
 
-      bookLoader.prefetchInBackground();
-    };
+    if (controller.isRemovedUrl(targetPartUrl)) {
+      displayError("That chapter was removed from the local draft");
+      return;
+    }
 
-    const refreshBookTopicsMenu = (): void => {
-      bookTopicsMenu?.update(htmlView.viewer, {
-        contents: buildBookContentTree(bookLoader, currentBookPartUrl),
-        onSelectContent: (targetPartUrl) => {
-          void navigateToBookPart(targetPartUrl, "", true).catch((error) => {
-            console.error("Unable to navigate to selected chapter", error);
-            displayError("Unable to open selected chapter");
-          });
+    const nextPart = await bookLoader.loadPart(targetPartUrl);
+    const nextPage = controller.upsertBookPart(nextPart, true);
+    if (!nextPage) {
+      throw new Error("Unable to merge chapter into local editor state");
+    }
+
+    if (pushHistory) {
+      const next = buildBookUrl(bookLoader.getEntryUrl(), nextPage.url, anchor, {
+        sharedMode: route.shared,
+        sharedBookPrefetchPayload: null,
+      });
+      window.history.pushState(
+        { bookPartUrl: nextPage.url, bookAnchor: anchor },
+        "",
+        next,
+      );
+    }
+
+    bookLoader.prefetchInBackground();
+  }
+
+  const refreshBookTopicsMenu = (snapshot: EditorDocumentSnapshot): void => {
+    if (route.mode !== "html" || snapshot.mode !== "book" || !bookTopicsMenu) {
+      return;
+    }
+
+    const htmlView = view as HtmlView;
+    bookTopicsMenu.update(htmlView.viewer, {
+      contents: buildEditorBookContentLinks(snapshot),
+      onSelectContent: (targetPartUrl) => {
+        void navigateToBookPart(targetPartUrl, "", true).catch((error) => {
+          console.error("Unable to open selected chapter", error);
+          displayError("Unable to open selected chapter");
+        });
+      },
+    });
+  };
+
+  refreshBookTopicsMenu(latestSnapshot);
+  await renderCurrentSnapshot();
+
+  const stopSnapshotSubscription = controller.subscribe((snapshot) => {
+    latestSnapshot = snapshot;
+    refreshBookTopicsMenu(snapshot);
+
+    const currentPage = getCurrentEditorPage(snapshot);
+    const previousPage = getCurrentEditorPage(previousSnapshot);
+    const pageChanged = currentPage?.id !== previousPage?.id;
+    const contentChanged =
+      previousPage?.markdown !== currentPage?.markdown ||
+      previousPage?.baseUrl !== currentPage?.baseUrl ||
+      previousPage?.url !== currentPage?.url;
+
+    previousSnapshot = snapshot;
+
+    if (pageChanged) {
+      shouldScrollAfterPageChange ||= !pendingAnchor;
+      requestImmediateRender();
+      return;
+    }
+
+    if (contentChanged) {
+      requestDebouncedRender();
+    }
+  });
+  registerCleanup(() => {
+    stopSnapshotSubscription();
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+    }
+  });
+
+  let editorSessionId: string | null = null;
+  let editorWindowHandle: ReturnType<typeof createEditorWindow> | null = null;
+  let externalEditorWindow: Window | null = null;
+
+  const setEditorOpen = (open: boolean): void => {
+    if (!editorWindowHandle || route.shared) {
+      return;
+    }
+    document.body.classList.toggle("is-editing", open);
+    editorWindowHandle.setOpen(open);
+    if (open) {
+      editorWindowHandle.focusEditor();
+      themeEditorLocal?.close();
+    }
+  };
+
+  if (!route.shared) {
+    editorSessionId = createEditorSessionId();
+    const bridge = connectEditorSessionBridge({
+      sessionId: editorSessionId,
+      mode: "host",
+      controller,
+    });
+    registerCleanup(() => bridge.destroy());
+    registerCleanup(() => bridge.flushSnapshot());
+
+    editorWindowHandle = createEditorWindow({
+      host: view.editorPane,
+      textarea: view.textarea,
+      controller,
+      onRequestClose: () => {
+        setEditorOpen(false);
+      },
+      onRequestOpenExternal: () => {
+        bridge.flushSnapshot();
+        const popupUrl = buildExternalEditorUrl(editorSessionId!);
+        externalEditorWindow = window.open(
+          popupUrl.toString(),
+          "smdp-editor",
+          "popup=yes,width=1240,height=900,resizable=yes,scrollbars=no",
+        );
+        if (!externalEditorWindow) {
+          displayError("Popup blocked; allow popups to use the external editor");
+          return;
+        }
+        externalEditorWindow.focus();
+      },
+      onRequestInstall: async () => {
+        await pwaController.promptInstall();
+      },
+      subscribeInstallAvailability: (listener) =>
+        pwaController.subscribe(listener),
+    });
+    registerCleanup(() => editorWindowHandle?.destroy());
+
+    if (themeEditorLocal) {
+      const { createFabMenu } = await loadUiModule();
+      const fabMenu = createFabMenu(view, themeEditorLocal, {
+        onToggleEditor: () => {
+          setEditorOpen(!document.body.classList.contains("is-editing"));
+        },
+        enableLoadUrlEmbed:
+          route.mode === "html" &&
+          !route.dataPayload &&
+          (route.externalUrl !== null || route.bookEntryUrl !== null),
+        getCurrentLoadUrl: () => {
+          const snapshot = controller.getSnapshot();
+          const currentPage = getCurrentEditorPage(snapshot);
+          return currentPage?.sourceUrl ?? null;
+        },
+        buildHtmlExportSource: async () => {
+          const snapshot = controller.getSnapshot();
+          const currentPage = getCurrentEditorPage(snapshot);
+          if (snapshot.mode !== "book") return null;
+          return buildInlineBookEmbedHtmlSource(
+            snapshot,
+            currentPage?.url ?? null,
+            allowRawHtml,
+          );
+        },
+        buildInlineEmbedHtmlSource: async () => {
+          const snapshot = controller.getSnapshot();
+          const currentPage = getCurrentEditorPage(snapshot);
+          if (snapshot.mode !== "book") return null;
+          return buildInlineBookEmbedHtmlSource(
+            snapshot,
+            currentPage?.url ?? null,
+            allowRawHtml,
+          );
+        },
+        getBookEmbedContext: async () => {
+          const snapshot = controller.getSnapshot();
+          if (snapshot.mode !== "book" || !snapshot.entryUrl) {
+            return null;
+          }
+          const currentPage = getCurrentEditorPage(snapshot);
+          const payload = await encodeBookPrefetchPayload(
+            snapshot.entryUrl,
+            prioritizeCurrentBookPart(
+              snapshotToBookPrefetchParts(snapshot),
+              currentPage?.url ?? null,
+            ),
+          );
+          return {
+            entryUrl: snapshot.entryUrl,
+            prefetchPayload: payload,
+          };
         },
       });
-    };
-    refreshBookTopicsMenu();
+      document.body.appendChild(fabMenu);
+    }
+  }
+
+  if (bookLoader && route.mode === "html") {
+    const htmlView = view as HtmlView;
 
     const onBookLinkClick = (event: Event): void => {
       if (!(event instanceof MouseEvent)) return;
@@ -859,9 +1007,11 @@ async function init(): Promise<void> {
       });
     };
     htmlView.viewer.addEventListener("click", onBookLinkClick);
-    registerCleanup(() => htmlView.viewer.removeEventListener("click", onBookLinkClick));
+    registerCleanup(() =>
+      htmlView.viewer.removeEventListener("click", onBookLinkClick),
+    );
 
-    const onBookPopState = () => {
+    const onBookPopState = (): void => {
       const nextRoute = parseRoute();
       if (!nextRoute.bookEntryUrl || !bookLoader) return;
       const partUrl = nextRoute.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
@@ -872,16 +1022,6 @@ async function init(): Promise<void> {
     };
     window.addEventListener("popstate", onBookPopState);
     registerCleanup(() => window.removeEventListener("popstate", onBookPopState));
-  }
-
-  if (!route.shared) {
-    const stopRealtimeUpdates = enableRealtimeUpdates(
-      view,
-      apply,
-      () => currentBaseUrl,
-      () => allowRawHtml,
-    );
-    registerCleanup(stopRealtimeUpdates);
   }
 
   if (route.mode === "canvas") {

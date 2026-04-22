@@ -31,6 +31,13 @@ const TOML_STRINGS = [
   { quote: "'", allowMultiline: true },
 ];
 
+const EON_STRINGS = [
+  { quote: '"""', escape: '\\', allowMultiline: true },
+  { quote: '"', escape: '\\', allowMultiline: false },
+  { quote: "'''", allowMultiline: true },
+  { quote: "'", allowMultiline: false },
+];
+
 const DEFAULT_NUMBERS = {
   allowHex: true,
   allowBin: true,
@@ -985,6 +992,21 @@ export const builtinLanguageSpecs: readonly AuthorLanguageSpec[] = [
     lineComments: ['#'],
     strings: TOML_STRINGS,
     numbers: TOML_NUMBERS,
+  },
+  {
+    name: 'eon',
+    aliases: ['eon'],
+    keywords: kw(['true', 'false', 'null', 'inf', 'nan']),
+    lineComments: ['//'],
+    strings: EON_STRINGS,
+    numbers: {
+      allowHex: true,
+      allowBin: true,
+      allowOct: true,
+      allowUnderscore: true,
+      allowExp: true,
+      allowLeadingDot: false,
+    },
   },
   {
     name: 'ini',

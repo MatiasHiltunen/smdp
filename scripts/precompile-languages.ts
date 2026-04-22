@@ -226,21 +226,28 @@ export const SPAN_BINARY = "${spanBase64}";
  * Uses atob() as fallback
  */
 export function fromBase64(base64: string): Uint8Array {
-
-  // @ts-ignore
-  if(typeof window !== 'undefined' && window?.Uint8Array?.fromBase64) {
-    console.log('Using browser Uint8Array.fromBase64');
-    // @ts-ignore   
-    return window.Uint8Array.fromBase64(base64);
-  } else {
-    
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
+  const fromBase64Native = (Uint8Array as typeof Uint8Array & {
+    fromBase64?: (value: string) => Uint8Array;
+  }).fromBase64;
+  if (typeof fromBase64Native === 'function') {
+    return fromBase64Native(base64);
   }
+
+  const bufferCtor = (globalThis as {
+    Buffer?: {
+      from(value: string, encoding: 'base64'): Uint8Array;
+    };
+  }).Buffer;
+  if (bufferCtor?.from) {
+    return new Uint8Array(bufferCtor.from(base64, 'base64'));
+  }
+
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }
 `;
 
