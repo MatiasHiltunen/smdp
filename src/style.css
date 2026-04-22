@@ -692,6 +692,20 @@ body.mode-editor .editor-pane-host {
   pointer-events: none;
 }
 
+.editor-window__snap-preview {
+  position: fixed;
+  border: 1px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+
+.editor-window__snap-preview.is-visible {
+  opacity: 1;
+}
+
 .editor-window {
   position: fixed;
   display: flex;
@@ -728,6 +742,30 @@ body.mode-editor .editor-pane-host {
   max-height: none;
   border-radius: 0;
   border: none;
+}
+
+.editor-window.is-docked {
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border-width: 0;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.34);
+}
+
+.editor-window.is-docked[data-dock-placement="left"] {
+  border-right: 1px solid var(--border-strong);
+}
+
+.editor-window.is-docked[data-dock-placement="right"] {
+  border-left: 1px solid var(--border-strong);
+}
+
+.editor-window.is-docked[data-dock-placement="top"] {
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.editor-window.is-docked[data-dock-placement="bottom"] {
+  border-top: 1px solid var(--border-strong);
 }
 
 .editor-window__header {
@@ -825,16 +863,31 @@ body.mode-editor .editor-pane-host {
 .editor-window__body {
   min-height: 0;
   flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(220px, 250px) minmax(0, 1fr);
+  position: relative;
 }
 
 .editor-window__sidebar {
-  min-height: 0;
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(340px, calc(100% - 1rem));
+  max-width: 100%;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   border-right: 1px solid var(--border-glass);
   background: color-mix(in srgb, var(--bg-glass) 80%, transparent);
+  box-shadow: var(--shadow-soft);
+  transform: translateX(-102%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.22s ease, opacity 0.22s ease;
+  z-index: 2;
+}
+
+.editor-window.show-pages .editor-window__sidebar {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .editor-window__sidebar-header {
@@ -905,6 +958,7 @@ body.mode-editor .editor-pane-host {
 .editor-window__main {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -1026,6 +1080,61 @@ body.mode-editor .editor-pane-host {
 .editor-window__resize:focus-visible {
   opacity: 1;
   outline: none;
+}
+
+.editor-window__dock-resize {
+  position: absolute;
+  z-index: 3;
+  border: none;
+  background: transparent;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease, background 0.16s ease;
+}
+
+.editor-window.is-docked:hover .editor-window__dock-resize,
+.editor-window.is-docked .editor-window__dock-resize:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+.editor-window__dock-resize::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 44%, transparent);
+}
+
+.editor-window__dock-resize[data-edge="left"],
+.editor-window__dock-resize[data-edge="right"] {
+  top: 0;
+  bottom: 0;
+  width: 0.55rem;
+  cursor: ew-resize;
+}
+
+.editor-window__dock-resize[data-edge="left"] {
+  left: 0;
+}
+
+.editor-window__dock-resize[data-edge="right"] {
+  right: 0;
+}
+
+.editor-window__dock-resize[data-edge="top"],
+.editor-window__dock-resize[data-edge="bottom"] {
+  left: 0;
+  right: 0;
+  height: 0.55rem;
+  cursor: ns-resize;
+}
+
+.editor-window__dock-resize[data-edge="top"] {
+  top: 0;
+}
+
+.editor-window__dock-resize[data-edge="bottom"] {
+  bottom: 0;
 }
 
 /* FAB Menu System */
@@ -1736,24 +1845,13 @@ img {
   }
 
   .editor-window__body {
-    grid-template-columns: minmax(0, 1fr);
+    position: relative;
   }
 
   .editor-window__sidebar {
-    position: absolute;
-    inset: 4.55rem auto 0 0;
+    inset: 0 auto 0 0;
     width: min(84vw, 340px);
     max-width: 100%;
-    border-right: 1px solid var(--border-glass);
-    border-bottom: none;
-    box-shadow: var(--shadow-soft);
-    transform: translateX(-102%);
-    transition: transform 0.22s ease;
-    z-index: 2;
-  }
-
-  .editor-window.show-pages .editor-window__sidebar {
-    transform: translateX(0);
   }
 
   .editor-window__meta {

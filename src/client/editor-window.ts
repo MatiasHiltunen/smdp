@@ -36,13 +36,47 @@ type WindowRect = {
   height: number;
 };
 
-const WINDOW_STORAGE_KEY = "smdp-editor-window-rect";
+type ViewportSize = {
+  width: number;
+  height: number;
+};
+
+type Point = {
+  x: number;
+  y: number;
+};
+
+export type EditorDockPlacement =
+  | "floating"
+  | "left"
+  | "right"
+  | "top"
+  | "bottom";
+
+type EditorWindowState = {
+  dockPlacement: EditorDockPlacement;
+  floatingRect: WindowRect;
+  dockWidth: number;
+  dockHeight: number;
+};
+
+type PersistedEditorWindowState = {
+  dockPlacement: EditorDockPlacement;
+  floatingRect: WindowRect;
+  dockWidth: number;
+  dockHeight: number;
+};
+
+const WINDOW_STORAGE_KEY = "smdp-editor-window-state";
+const LEGACY_RECT_STORAGE_KEY = "smdp-editor-window-rect";
 const MOBILE_QUERY = "(max-width: 959px)";
 const MIN_WIDTH = 340;
 const MIN_HEIGHT = 260;
 const DEFAULT_WIDTH = 560;
 const DEFAULT_HEIGHT = 520;
+const DEFAULT_DOCK_HEIGHT = 360;
 const WINDOW_MARGIN = 16;
+const SNAP_THRESHOLD = 96;
 
 const DRAG_ICON_PATH =
   "M7 5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm10-11a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm0 5.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z";
@@ -59,9 +93,87 @@ const DELETE_ICON_PATH =
 const PAGES_ICON_PATH =
   "M5 5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5Zm9 0a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2V5Z";
 
-function readPersistedRect(): WindowRect | null {
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getViewportSize(): ViewportSize {
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  };
+}
+
+function clampDockWidth(width: number, viewport: ViewportSize): number {
+  const maxWidth = Math.max(MIN_WIDTH, viewport.width - MIN_WIDTH);
+  return clamp(width, MIN_WIDTH, maxWidth);
+}
+
+function clampDockHeight(height: number, viewport: ViewportSize): number {
+  const maxHeight = Math.max(MIN_HEIGHT, viewport.height - MIN_HEIGHT);
+  return clamp(height, MIN_HEIGHT, maxHeight);
+}
+
+function constrainFloatingRect(
+  rect: WindowRect,
+  viewport: ViewportSize,
+): WindowRect {
+  const maxWidth = Math.max(MIN_WIDTH, viewport.width - WINDOW_MARGIN * 2);
+  const maxHeight = Math.max(MIN_HEIGHT, viewport.height - WINDOW_MARGIN * 2);
+  const width = clamp(rect.width, MIN_WIDTH, maxWidth);
+  const height = clamp(rect.height, MIN_HEIGHT, maxHeight);
+  const left = clamp(
+    rect.left,
+    WINDOW_MARGIN,
+    viewport.width - width - WINDOW_MARGIN,
+  );
+  const top = clamp(
+    rect.top,
+    WINDOW_MARGIN,
+    viewport.height - height - WINDOW_MARGIN,
+  );
+  return { left, top, width, height };
+}
+
+function buildDefaultFloatingRect(viewport: ViewportSize): WindowRect {
+  return constrainFloatingRect(
+    {
+      left: viewport.width - DEFAULT_WIDTH - 72,
+      top: 72,
+      width: DEFAULT_WIDTH,
+      height: DEFAULT_HEIGHT,
+    },
+    viewport,
+  );
+}
+
+function normalizeWindowState(
+  state: EditorWindowState,
+  viewport: ViewportSize,
+): EditorWindowState {
+  return {
+    dockPlacement: state.dockPlacement,
+    floatingRect: constrainFloatingRect(state.floatingRect, viewport),
+    dockWidth: clampDockWidth(state.dockWidth, viewport),
+    dockHeight: clampDockHeight(state.dockHeight, viewport),
+  };
+}
+
+function buildDefaultWindowState(viewport: ViewportSize): EditorWindowState {
+  return normalizeWindowState(
+    {
+      dockPlacement: "right",
+      floatingRect: buildDefaultFloatingRect(viewport),
+      dockWidth: DEFAULT_WIDTH,
+      dockHeight: DEFAULT_DOCK_HEIGHT,
+    },
+    viewport,
+  );
+}
+
+function readPersistedLegacyRect(): WindowRect | null {
   try {
-    const raw = window.localStorage.getItem(WINDOW_STORAGE_KEY);
+    const raw = window.localStorage.getItem(LEGACY_RECT_STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -80,35 +192,141 @@ function readPersistedRect(): WindowRect | null {
   }
 }
 
-function persistRect(rect: WindowRect): void {
+function readPersistedState(): EditorWindowState | null {
+  const viewport = getViewportSize();
+
   try {
-    window.localStorage.setItem(WINDOW_STORAGE_KEY, JSON.stringify(rect));
+    const raw = window.localStorage.getItem(WINDOW_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as PersistedEditorWindowState;
+      if (
+        parsed &&
+        typeof parsed.dockPlacement === "string" &&
+        parsed.floatingRect &&
+        typeof parsed.floatingRect.left === "number" &&
+        typeof parsed.floatingRect.top === "number" &&
+        typeof parsed.floatingRect.width === "number" &&
+        typeof parsed.floatingRect.height === "number" &&
+        typeof parsed.dockWidth === "number" &&
+        typeof parsed.dockHeight === "number"
+      ) {
+        return normalizeWindowState(parsed, viewport);
+      }
+    }
+  } catch {
+    // Ignore malformed persisted state.
+  }
+
+  const legacyRect = readPersistedLegacyRect();
+  if (!legacyRect) {
+    return null;
+  }
+
+  const normalizedRect = constrainFloatingRect(legacyRect, viewport);
+  return normalizeWindowState(
+    {
+      dockPlacement: "floating",
+      floatingRect: normalizedRect,
+      dockWidth: normalizedRect.width,
+      dockHeight: normalizedRect.height,
+    },
+    viewport,
+  );
+}
+
+function persistState(state: EditorWindowState): void {
+  try {
+    const normalized = normalizeWindowState(state, getViewportSize());
+    window.localStorage.setItem(
+      WINDOW_STORAGE_KEY,
+      JSON.stringify(normalized),
+    );
   } catch {
     // Ignore persistence failures.
   }
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
+function applyRectStyles(target: HTMLElement, rect: WindowRect): void {
+  target.style.left = `${rect.left}px`;
+  target.style.top = `${rect.top}px`;
+  target.style.width = `${rect.width}px`;
+  target.style.height = `${rect.height}px`;
 }
 
-function constrainRect(rect: WindowRect): WindowRect {
-  const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - WINDOW_MARGIN * 2);
-  const maxHeight = Math.max(MIN_HEIGHT, window.innerHeight - WINDOW_MARGIN * 2);
-  const width = clamp(rect.width, MIN_WIDTH, maxWidth);
-  const height = clamp(rect.height, MIN_HEIGHT, maxHeight);
-  const left = clamp(rect.left, WINDOW_MARGIN, window.innerWidth - width - WINDOW_MARGIN);
-  const top = clamp(rect.top, WINDOW_MARGIN, window.innerHeight - height - WINDOW_MARGIN);
-  return { left, top, width, height };
+export function buildDockedEditorRect(
+  placement: Exclude<EditorDockPlacement, "floating">,
+  viewport: ViewportSize,
+  size: { width: number; height: number },
+): WindowRect {
+  switch (placement) {
+    case "left": {
+      const width = clampDockWidth(size.width, viewport);
+      return {
+        left: 0,
+        top: 0,
+        width,
+        height: viewport.height,
+      };
+    }
+    case "right": {
+      const width = clampDockWidth(size.width, viewport);
+      return {
+        left: viewport.width - width,
+        top: 0,
+        width,
+        height: viewport.height,
+      };
+    }
+    case "top": {
+      const height = clampDockHeight(size.height, viewport);
+      return {
+        left: 0,
+        top: 0,
+        width: viewport.width,
+        height,
+      };
+    }
+    case "bottom": {
+      const height = clampDockHeight(size.height, viewport);
+      return {
+        left: 0,
+        top: viewport.height - height,
+        width: viewport.width,
+        height,
+      };
+    }
+  }
 }
 
-function buildDefaultRect(): WindowRect {
-  return constrainRect({
-    left: window.innerWidth - DEFAULT_WIDTH - 28,
-    top: 88,
-    width: DEFAULT_WIDTH,
-    height: DEFAULT_HEIGHT,
+function getActiveRect(state: EditorWindowState): WindowRect {
+  const viewport = getViewportSize();
+  if (state.dockPlacement === "floating") {
+    return constrainFloatingRect(state.floatingRect, viewport);
+  }
+  return buildDockedEditorRect(state.dockPlacement, viewport, {
+    width: state.dockWidth,
+    height: state.dockHeight,
   });
+}
+
+export function detectEditorDockPlacement(
+  point: Point,
+  viewport: ViewportSize,
+  threshold: number = SNAP_THRESHOLD,
+): EditorDockPlacement {
+  const edgeDistances: Array<{
+    placement: Exclude<EditorDockPlacement, "floating">;
+    distance: number;
+  }> = [
+    { placement: "left", distance: point.x },
+    { placement: "right", distance: viewport.width - point.x },
+    { placement: "top", distance: point.y },
+    { placement: "bottom", distance: viewport.height - point.y },
+  ];
+
+  edgeDistances.sort((left, right) => left.distance - right.distance);
+  const nearest = edgeDistances[0];
+  return nearest.distance <= threshold ? nearest.placement : "floating";
 }
 
 function updateTextareaPreservingSelection(
@@ -145,18 +363,54 @@ function createHeaderAction(
   return button;
 }
 
+function getDockResizeEdge(
+  placement: Exclude<EditorDockPlacement, "floating">,
+): "left" | "right" | "top" | "bottom" {
+  switch (placement) {
+    case "left":
+      return "right";
+    case "right":
+      return "left";
+    case "top":
+      return "bottom";
+    case "bottom":
+      return "top";
+  }
+}
+
+function getDockResizeLabel(
+  placement: Exclude<EditorDockPlacement, "floating">,
+): string {
+  switch (placement) {
+    case "left":
+      return "Resize docked editor from the right edge";
+    case "right":
+      return "Resize docked editor from the left edge";
+    case "top":
+      return "Resize docked editor from the bottom edge";
+    case "bottom":
+      return "Resize docked editor from the top edge";
+  }
+}
+
 export function createEditorWindow(
   options: EditorWindowOptions,
 ): EditorWindowHandle {
   const compactQuery = window.matchMedia(MOBILE_QUERY);
   let isCompact = compactQuery.matches;
   let isOpen = !!options.externalWindow;
-  let pagesOpen = !isCompact;
+  let pagesOpen = false;
   let suppressInput = false;
-  let rect = readPersistedRect() ?? buildDefaultRect();
+  let state = readPersistedState() ?? buildDefaultWindowState(getViewportSize());
+  let previewPlacement: Exclude<EditorDockPlacement, "floating"> | null = null;
+  let previewRect: WindowRect | null = null;
 
   options.host.replaceChildren();
   options.host.classList.add("editor-pane-host");
+
+  const snapPreview = createElement("div");
+  snapPreview.className = "editor-window__snap-preview";
+  snapPreview.setAttribute("aria-hidden", "true");
 
   const root = createElement("div");
   root.className = "editor-window";
@@ -190,8 +444,12 @@ export function createEditorWindow(
 
   const pagesButton = createHeaderAction("Toggle pages", PAGES_ICON_PATH, {
     tooltip: "Toggle page list",
-    compact: true,
   });
+
+  const quickAddPageButton = createHeaderAction("Add page", ADD_ICON_PATH, {
+    tooltip: "Add page",
+  });
+  quickAddPageButton.hidden = true;
 
   const installButton = createHeaderAction("Install app", INSTALL_ICON_PATH, {
     tooltip: "Install app",
@@ -211,7 +469,13 @@ export function createEditorWindow(
     tooltip: options.externalWindow ? "Close window" : "Close editor",
   });
 
-  actionGroup.append(pagesButton, installButton, externalButton, closeButton);
+  actionGroup.append(
+    pagesButton,
+    quickAddPageButton,
+    installButton,
+    externalButton,
+    closeButton,
+  );
   header.append(dragHandle, actionGroup);
 
   const body = createElement("div");
@@ -294,30 +558,82 @@ export function createEditorWindow(
 
   body.append(sidebar, main);
 
+  const dockResizeHandle = createElement("button");
+  dockResizeHandle.className = "editor-window__dock-resize";
+  dockResizeHandle.type = "button";
+
   const resizeHandle = createElement("button");
   resizeHandle.className = "editor-window__resize";
   resizeHandle.type = "button";
-  resizeHandle.setAttribute("aria-label", "Resize editor window");
+  resizeHandle.setAttribute("aria-label", "Resize floating editor window");
 
-  root.append(header, body, resizeHandle);
-  options.host.appendChild(root);
+  root.append(header, body, dockResizeHandle, resizeHandle);
+  options.host.append(snapPreview, root);
 
-  const applyRect = (): void => {
+  const clearPreview = (): void => {
+    previewPlacement = null;
+    previewRect = null;
+    snapPreview.classList.remove("is-visible");
+    snapPreview.removeAttribute("data-placement");
+    snapPreview.style.removeProperty("left");
+    snapPreview.style.removeProperty("top");
+    snapPreview.style.removeProperty("width");
+    snapPreview.style.removeProperty("height");
+  };
+
+  const applyPreview = (): void => {
+    if (!previewPlacement || !previewRect || isCompact || options.externalWindow) {
+      clearPreview();
+      return;
+    }
+
+    snapPreview.classList.add("is-visible");
+    snapPreview.dataset.placement = previewPlacement;
+    applyRectStyles(snapPreview, previewRect);
+  };
+
+  const applyLayout = (): void => {
+    const viewport = getViewportSize();
+    state = normalizeWindowState(state, viewport);
+    const isDocked =
+      state.dockPlacement !== "floating" && !isCompact && !options.externalWindow;
+    const activeRect = getActiveRect(state);
+
     root.classList.toggle("is-open", isOpen || !!options.externalWindow);
     root.classList.toggle("is-mobile", isCompact);
     root.classList.toggle("show-pages", pagesOpen);
+    root.classList.toggle("is-docked", isDocked);
+    if (isDocked) {
+      const dockPlacement = state.dockPlacement as Exclude<
+        EditorDockPlacement,
+        "floating"
+      >;
+      root.dataset.dockPlacement = dockPlacement;
+      dockResizeHandle.hidden = false;
+      dockResizeHandle.dataset.edge = getDockResizeEdge(dockPlacement);
+      dockResizeHandle.setAttribute(
+        "aria-label",
+        getDockResizeLabel(dockPlacement),
+      );
+    } else {
+      delete root.dataset.dockPlacement;
+      dockResizeHandle.hidden = true;
+      dockResizeHandle.removeAttribute("data-edge");
+    }
+
+    resizeHandle.hidden = isDocked || isCompact || !!options.externalWindow;
+
     if (isCompact || options.externalWindow) {
       root.style.removeProperty("left");
       root.style.removeProperty("top");
       root.style.removeProperty("width");
       root.style.removeProperty("height");
+      clearPreview();
       return;
     }
-    rect = constrainRect(rect);
-    root.style.left = `${rect.left}px`;
-    root.style.top = `${rect.top}px`;
-    root.style.width = `${rect.width}px`;
-    root.style.height = `${rect.height}px`;
+
+    applyRectStyles(root, activeRect);
+    applyPreview();
   };
 
   const refresh = (snapshot: EditorDocumentSnapshot): void => {
@@ -326,6 +642,7 @@ export function createEditorWindow(
     const canDelete = isBook && snapshot.pages.length > 1;
 
     pagesButton.hidden = !isBook;
+    quickAddPageButton.hidden = !isBook;
     addPageButton.hidden = !isBook;
     deletePageButton.disabled = !canDelete;
     sidebar.hidden = !isBook && !options.externalWindow;
@@ -335,7 +652,9 @@ export function createEditorWindow(
       : "Single document";
     subtitle.textContent = options.externalWindow
       ? "Live edits sync to the rendered window"
-      : "Drag, resize, and edit live";
+      : state.dockPlacement === "floating"
+        ? "Drag, resize, and edit live"
+        : "Docked to edge | drag header to snap elsewhere";
 
     if (currentPage) {
       titleInput.value = currentPage.title;
@@ -385,7 +704,7 @@ export function createEditorWindow(
           options.controller.setCurrentPage(page.id);
           if (isCompact) {
             pagesOpen = false;
-            applyRect();
+            applyLayout();
           }
         });
         pageList.appendChild(item);
@@ -399,10 +718,10 @@ export function createEditorWindow(
 
   const applyCompactState = (): void => {
     isCompact = compactQuery.matches;
-    if (!isCompact) {
-      pagesOpen = true;
+    if (isCompact) {
+      clearPreview();
     }
-    applyRect();
+    applyLayout();
   };
 
   const onCompactChange = (): void => {
@@ -411,7 +730,7 @@ export function createEditorWindow(
   compactQuery.addEventListener("change", onCompactChange);
 
   const onResizeViewport = (): void => {
-    applyRect();
+    applyLayout();
   };
   window.addEventListener("resize", onResizeViewport);
 
@@ -436,13 +755,20 @@ export function createEditorWindow(
     }
   });
 
+  quickAddPageButton.addEventListener("click", () => {
+    const created = options.controller.addBookPage();
+    if (created) {
+      options.textarea.focus();
+    }
+  });
+
   deletePageButton.addEventListener("click", () => {
     options.controller.removeCurrentBookPage();
   });
 
   pagesButton.addEventListener("click", () => {
     pagesOpen = !pagesOpen;
-    applyRect();
+    applyLayout();
   });
 
   externalButton.addEventListener("click", () => {
@@ -467,24 +793,78 @@ export function createEditorWindow(
   if (!options.externalWindow) {
     dragHandle.addEventListener("pointerdown", (event) => {
       if (isCompact) return;
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const startLeft = rect.left;
-      const startTop = rect.top;
+
+      const startViewport = getViewportSize();
+      const activeRect = getActiveRect(state);
+      const templateRect = constrainFloatingRect(state.floatingRect, startViewport);
+      const xRatio = clamp(
+        (event.clientX - activeRect.left) / Math.max(activeRect.width, 1),
+        0.08,
+        0.92,
+      );
+      const yRatio = clamp(
+        (event.clientY - activeRect.top) / Math.max(activeRect.height, 1),
+        0.04,
+        0.28,
+      );
+      const dragWidth = templateRect.width;
+      const dragHeight = templateRect.height;
+      let finalPlacement: EditorDockPlacement = "floating";
+      let finalFloatingRect = templateRect;
 
       const onMove = (moveEvent: PointerEvent): void => {
-        rect = constrainRect({
-          ...rect,
-          left: startLeft + (moveEvent.clientX - startX),
-          top: startTop + (moveEvent.clientY - startY),
-        });
-        applyRect();
+        const viewport = getViewportSize();
+        const nextPlacement = detectEditorDockPlacement(
+          { x: moveEvent.clientX, y: moveEvent.clientY },
+          viewport,
+        );
+        const nextFloatingRect = constrainFloatingRect(
+          {
+            left: moveEvent.clientX - dragWidth * xRatio,
+            top: moveEvent.clientY - dragHeight * yRatio,
+            width: dragWidth,
+            height: dragHeight,
+          },
+          viewport,
+        );
+
+        finalFloatingRect = nextFloatingRect;
+        state.floatingRect = nextFloatingRect;
+
+        if (nextPlacement === "floating") {
+          finalPlacement = "floating";
+          state.dockPlacement = "floating";
+          clearPreview();
+        } else {
+          finalPlacement = nextPlacement;
+          previewPlacement = nextPlacement;
+          previewRect = buildDockedEditorRect(nextPlacement, viewport, {
+            width: nextFloatingRect.width,
+            height: nextFloatingRect.height,
+          });
+        }
+
+        applyLayout();
       };
 
       const stop = (): void => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", stop);
-        persistRect(rect);
+
+        state.floatingRect = finalFloatingRect;
+        if (finalPlacement === "floating") {
+          state.dockPlacement = "floating";
+        } else {
+          state.dockPlacement = finalPlacement;
+          if (finalPlacement === "left" || finalPlacement === "right") {
+            state.dockWidth = finalFloatingRect.width;
+          } else {
+            state.dockHeight = finalFloatingRect.height;
+          }
+        }
+        clearPreview();
+        applyLayout();
+        persistState(state);
       };
 
       window.addEventListener("pointermove", onMove);
@@ -492,26 +872,81 @@ export function createEditorWindow(
     });
 
     resizeHandle.addEventListener("pointerdown", (event) => {
-      if (isCompact) return;
+      if (isCompact || state.dockPlacement !== "floating") return;
       event.preventDefault();
+      const startRect = constrainFloatingRect(state.floatingRect, getViewportSize());
       const startX = event.clientX;
       const startY = event.clientY;
-      const startWidth = rect.width;
-      const startHeight = rect.height;
 
       const onMove = (moveEvent: PointerEvent): void => {
-        rect = constrainRect({
-          ...rect,
-          width: startWidth + (moveEvent.clientX - startX),
-          height: startHeight + (moveEvent.clientY - startY),
-        });
-        applyRect();
+        state.floatingRect = constrainFloatingRect(
+          {
+            ...state.floatingRect,
+            left: startRect.left,
+            top: startRect.top,
+            width: startRect.width + (moveEvent.clientX - startX),
+            height: startRect.height + (moveEvent.clientY - startY),
+          },
+          getViewportSize(),
+        );
+        applyLayout();
       };
 
       const stop = (): void => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", stop);
-        persistRect(rect);
+        persistState(state);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", stop, { once: true });
+    });
+
+    dockResizeHandle.addEventListener("pointerdown", (event) => {
+      if (isCompact || state.dockPlacement === "floating") {
+        return;
+      }
+
+      const placement = state.dockPlacement;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startWidth = state.dockWidth;
+      const startHeight = state.dockHeight;
+
+      const onMove = (moveEvent: PointerEvent): void => {
+        switch (placement) {
+          case "left":
+            state.dockWidth = clampDockWidth(
+              startWidth + (moveEvent.clientX - startX),
+              getViewportSize(),
+            );
+            break;
+          case "right":
+            state.dockWidth = clampDockWidth(
+              startWidth + (startX - moveEvent.clientX),
+              getViewportSize(),
+            );
+            break;
+          case "top":
+            state.dockHeight = clampDockHeight(
+              startHeight + (moveEvent.clientY - startY),
+              getViewportSize(),
+            );
+            break;
+          case "bottom":
+            state.dockHeight = clampDockHeight(
+              startHeight + (startY - moveEvent.clientY),
+              getViewportSize(),
+            );
+            break;
+        }
+        applyLayout();
+      };
+
+      const stop = (): void => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", stop);
+        persistState(state);
       };
 
       window.addEventListener("pointermove", onMove);
@@ -519,6 +954,7 @@ export function createEditorWindow(
     });
   } else {
     resizeHandle.hidden = true;
+    dockResizeHandle.hidden = true;
     root.classList.add("is-open");
   }
 
@@ -528,7 +964,7 @@ export function createEditorWindow(
     root,
     setOpen(open: boolean): void {
       isOpen = open;
-      applyRect();
+      applyLayout();
     },
     focusEditor(): void {
       options.textarea.focus();
@@ -536,6 +972,7 @@ export function createEditorWindow(
     destroy(): void {
       stopSnapshotSubscription();
       stopInstallSubscription?.();
+      clearPreview();
       window.removeEventListener("resize", onResizeViewport);
       compactQuery.removeEventListener("change", onCompactChange);
       options.host.replaceChildren();
