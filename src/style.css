@@ -176,6 +176,26 @@ body.is-editing .floating-toggle {
   box-shadow: var(--shadow-button);
 }
 
+body.has-docked-editor {
+  transition: padding 0.18s ease;
+}
+
+body.has-docked-editor.editor-dock-left {
+  padding-left: calc(var(--editor-dock-left, 0px) + clamp(0.75rem, 2.5vw, 1.5rem));
+}
+
+body.has-docked-editor.editor-dock-right {
+  padding-right: calc(var(--editor-dock-right, 0px) + clamp(0.75rem, 2.5vw, 1.5rem));
+}
+
+body.has-docked-editor.editor-dock-top {
+  padding-top: calc(var(--editor-dock-top, 0px) + clamp(0.75rem, 2.5vw, 1.5rem));
+}
+
+body.has-docked-editor.editor-dock-bottom {
+  padding-bottom: calc(var(--editor-dock-bottom, 0px) + clamp(0.75rem, 2.5vw, 1.5rem));
+}
+
 .app-shell {
   width: min(100%, 1400px);
   display: grid;
@@ -1879,6 +1899,22 @@ img {
     inset: 0;
     border-radius: 0;
   }
+}
+
+body.has-docked-editor.editor-dock-right .fab-menu {
+  right: calc(var(--editor-dock-right, 0px) + clamp(1rem, 3vw, 1.5rem));
+}
+
+body.has-docked-editor.editor-dock-top .fab-menu {
+  top: calc(var(--editor-dock-top, 0px) + clamp(1rem, 3vw, 1.5rem));
+}
+
+body.has-docked-editor.editor-dock-left .book-topics-menu {
+  left: calc(var(--editor-dock-left, 0px) + clamp(1rem, 3vw, 1.5rem));
+}
+
+body.has-docked-editor.editor-dock-top .book-topics-menu {
+  top: calc(var(--editor-dock-top, 0px) + clamp(1rem, 3vw, 1.5rem));
 }
 
 @media (max-width: 560px) {

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildEditorBookContentLinks,
   createBookEditorDocumentSnapshot,
+  createSingleEditorDocumentSnapshot,
   EditorStateController,
   getCurrentEditorPage,
   getEditorPagePathValue,
@@ -83,4 +84,25 @@ test("book editor controller supports nested synthetic page paths", () => {
     currentPage?.url,
     "https://raw.githubusercontent.com/acme/docs/main/drafts/intro-page.md",
   );
+});
+
+test("editor controller promotes a single document to a local book when adding a page", () => {
+  const controller = new EditorStateController(
+    createSingleEditorDocumentSnapshot({
+      markdown: "# Draft",
+      baseUrl: "https://example.com/draft.md",
+      sourceUrl: "https://example.com/draft.md",
+    }),
+  );
+
+  const created = controller.addPage();
+  const snapshot = controller.getSnapshot();
+
+  assert.ok(created);
+  assert.equal(snapshot.mode, "book");
+  assert.equal(snapshot.entryUrl, "https://example.com/draft.md");
+  assert.equal(snapshot.pages.length, 2);
+  assert.equal(snapshot.currentPageId, created?.id);
+  assert.equal(snapshot.pages[0].synthetic, false);
+  assert.equal(created?.synthetic, true);
 });

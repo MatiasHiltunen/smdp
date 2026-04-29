@@ -17,6 +17,8 @@ type EditorWindowOptions = {
   onRequestClose?: () => void;
   onRequestOpenExternal?: () => void;
   onRequestInstall?: () => void | Promise<void>;
+  onActiveLineChange?: (line: number) => void;
+  onLayoutChange?: (layout: EditorWindowLayout) => void;
   subscribeInstallAvailability?: (
     listener: (available: boolean) => void,
   ) => () => void;
@@ -29,7 +31,7 @@ export type EditorWindowHandle = {
   destroy(): void;
 };
 
-type WindowRect = {
+export type WindowRect = {
   left: number;
   top: number;
   width: number;
@@ -52,6 +54,12 @@ export type EditorDockPlacement =
   | "right"
   | "top"
   | "bottom";
+
+export type EditorWindowLayout = {
+  open: boolean;
+  dockPlacement: EditorDockPlacement;
+  rect: WindowRect | null;
+};
 
 type EditorWindowState = {
   dockPlacement: EditorDockPlacement;
@@ -349,6 +357,10 @@ function formatCurrentStats(markdown: string): string {
   return `${lines} lines | ${words} words | ${markdown.length} chars`;
 }
 
+function getTextareaLine(textarea: HTMLTextAreaElement): number {
+  return textarea.value.slice(0, textarea.selectionStart).split(/\r?\n/).length;
+}
+
 function createHeaderAction(
   label: string,
   pathData: string,
@@ -623,6 +635,12 @@ export function createEditorWindow(
 
     resizeHandle.hidden = isDocked || isCompact || !!options.externalWindow;
 
+    options.onLayoutChange?.({
+      open: isOpen || !!options.externalWindow,
+      dockPlacement: isDocked ? state.dockPlacement : "floating",
+      rect: isDocked ? activeRect : null,
+    });
+
     if (isCompact || options.externalWindow) {
       root.style.removeProperty("left");
       root.style.removeProperty("top");
@@ -641,11 +659,11 @@ export function createEditorWindow(
     const isBook = snapshot.mode === "book";
     const canDelete = isBook && snapshot.pages.length > 1;
 
-    pagesButton.hidden = !isBook;
-    quickAddPageButton.hidden = !isBook;
-    addPageButton.hidden = !isBook;
+    pagesButton.hidden = false;
+    quickAddPageButton.hidden = false;
+    addPageButton.hidden = false;
     deletePageButton.disabled = !canDelete;
-    sidebar.hidden = !isBook && !options.externalWindow;
+    sidebar.hidden = false;
     sidebar.classList.toggle("is-book", isBook);
     modeBadge.textContent = isBook
       ? `Book | ${snapshot.pages.length} pages`
@@ -679,7 +697,7 @@ export function createEditorWindow(
     if (!isBook) {
       const helper = createElement("div");
       helper.className = "editor-window__empty";
-      helper.textContent = "Single-document mode keeps one live markdown page.";
+      helper.textContent = "Add a page to turn this document into a local book.";
       pageList.appendChild(helper);
     } else {
       for (const page of snapshot.pages) {
@@ -746,17 +764,27 @@ export function createEditorWindow(
     suppressInput = true;
     options.controller.updateCurrentMarkdown(options.textarea.value);
     suppressInput = false;
+    options.onActiveLineChange?.(getTextareaLine(options.textarea));
   });
 
+  const notifyActiveLine = (): void => {
+    options.onActiveLineChange?.(getTextareaLine(options.textarea));
+  };
+  options.textarea.addEventListener("click", notifyActiveLine);
+  options.textarea.addEventListener("keyup", notifyActiveLine);
+  options.textarea.addEventListener("select", notifyActiveLine);
+
   addPageButton.addEventListener("click", () => {
-    const created = options.controller.addBookPage();
+    const created = options.controller.addPage();
     if (created) {
+      pagesOpen = true;
+      applyLayout();
       options.textarea.focus();
     }
   });
 
   quickAddPageButton.addEventListener("click", () => {
-    const created = options.controller.addBookPage();
+    const created = options.controller.addPage();
     if (created) {
       options.textarea.focus();
     }
@@ -968,11 +996,17 @@ export function createEditorWindow(
     },
     focusEditor(): void {
       options.textarea.focus();
+      options.onActiveLineChange?.(getTextareaLine(options.textarea));
     },
     destroy(): void {
       stopSnapshotSubscription();
       stopInstallSubscription?.();
       clearPreview();
+      options.onLayoutChange?.({
+        open: false,
+        dockPlacement: "floating",
+        rect: null,
+      });
       window.removeEventListener("resize", onResizeViewport);
       compactQuery.removeEventListener("change", onCompactChange);
       options.host.replaceChildren();
