@@ -1899,6 +1899,28 @@ img {
     inset: 0;
     border-radius: 0;
   }
+
+  .editor-window__page-actions {
+    justify-content: flex-end;
+  }
+
+  .editor-window__subtitle {
+    white-space: normal;
+  }
+
+  .editor-window__footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .editor-window__resize {
+    display: none;
+  }
+
+  body.mode-editor .editor-window {
+    inset: 0;
+    border-radius: 0;
+  }
 }
 
 body.has-docked-editor.editor-dock-right .fab-menu {

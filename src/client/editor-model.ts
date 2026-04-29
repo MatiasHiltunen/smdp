@@ -308,28 +308,6 @@ export function createSingleEditorDocumentSnapshot(options: {
   };
 }
 
-export function createBookSnapshotFromSingleDocument(
-  snapshot: EditorDocumentSnapshot,
-): EditorDocumentSnapshot {
-  const currentPage = getCurrentEditorPage(snapshot) ?? snapshot.pages[0] ?? null;
-  if (snapshot.mode === "book" || !currentPage) {
-    return cloneSnapshot(snapshot);
-  }
-
-  return withNormalizedPages({
-    mode: "book",
-    entryUrl: currentPage.url,
-    currentPageId: currentPage.id,
-    pages: snapshot.pages.map((page) => ({
-      ...page,
-      sourceUrl: page.sourceUrl ?? page.url,
-      synthetic: false,
-      pathMode: "manual",
-    })),
-    removedUrls: [],
-  });
-}
-
 function createBookEditorPageFromSnapshotPart(part: BookPrefetchSnapshotPart): EditorPage {
   const url = canonicalizeMarkdownDocumentUrl(part.url) ?? part.url;
   const baseUrl =
@@ -621,19 +599,6 @@ export class EditorStateController {
       true,
     );
     return page;
-  }
-
-  addPage(afterPageId?: string | null): EditorPage | null {
-    if (this.snapshot.mode === "single") {
-      this.applyPatch(
-        {
-          type: "replace-snapshot",
-          snapshot: createBookSnapshotFromSingleDocument(this.snapshot),
-        },
-        true,
-      );
-    }
-    return this.addBookPage(afterPageId);
   }
 
   removeCurrentBookPage(): void {

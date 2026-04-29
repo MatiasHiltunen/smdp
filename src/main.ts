@@ -53,20 +53,11 @@ import {
   type EditorDocumentSnapshot,
 } from "./client/editor-model";
 import { createEditorWindow } from "./client/editor-window";
-import type {
-  EditorDockPlacement,
-  EditorWindowLayout,
-} from "./client/editor-window";
 import {
   connectEditorSessionBridge,
   createEditorSessionId,
   readPersistedEditorSession,
 } from "./client/editor-sync";
-import {
-  buildEditorDraftSourceKey,
-  loadEditorDraftSnapshot,
-  saveEditorDraftSnapshot,
-} from "./client/editor-storage";
 import { initializePwaController } from "./client/pwa";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
@@ -203,108 +194,6 @@ function scrollToTop(): void {
   requestAnimationFrame(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   });
-}
-
-type MarkdownHeadingRef = {
-  line: number;
-  title: string;
-  ordinal: number;
-};
-
-function normalizeHeadingText(value: string): string {
-  return value.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-function getMarkdownHeadingRefs(markdown: string): MarkdownHeadingRef[] {
-  const refs: MarkdownHeadingRef[] = [];
-  const titleCounts = new Map<string, number>();
-  const lines = markdown.split(/\r?\n/);
-
-  lines.forEach((line, index) => {
-    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line.trim());
-    if (!match) {
-      return;
-    }
-    const title = normalizeHeadingText(match[2]);
-    if (!title) {
-      return;
-    }
-    const ordinal = titleCounts.get(title) ?? 0;
-    titleCounts.set(title, ordinal + 1);
-    refs.push({ line: index + 1, title, ordinal });
-  });
-
-  return refs;
-}
-
-function trackMarkdownLineInHtmlView(
-  view: HtmlView,
-  markdown: string,
-  line: number,
-): void {
-  const headings = getMarkdownHeadingRefs(markdown);
-  let targetHeading: MarkdownHeadingRef | null = null;
-  for (let index = headings.length - 1; index >= 0; index -= 1) {
-    if (headings[index].line <= line) {
-      targetHeading = headings[index];
-      break;
-    }
-  }
-
-  if (targetHeading) {
-    let seen = 0;
-    const renderedHeadings = view.viewer.querySelectorAll<HTMLElement>(
-      "h1,h2,h3,h4,h5,h6",
-    );
-    for (const heading of renderedHeadings) {
-      if (normalizeHeadingText(heading.textContent ?? "") !== targetHeading.title) {
-        continue;
-      }
-      if (seen === targetHeading.ordinal) {
-        heading.scrollIntoView({ block: "center", behavior: "smooth" });
-        return;
-      }
-      seen += 1;
-    }
-  }
-
-  const totalLines = Math.max(1, markdown.split(/\r?\n/).length);
-  const scrollMax = Math.max(
-    0,
-    document.documentElement.scrollHeight - window.innerHeight,
-  );
-  window.scrollTo({
-    top: scrollMax * Math.min(1, Math.max(0, (line - 1) / totalLines)),
-    behavior: "smooth",
-  });
-}
-
-function applyEditorDockLayout(layout: EditorWindowLayout): void {
-  const placements: EditorDockPlacement[] = ["left", "right", "top", "bottom"];
-  document.body.classList.remove(
-    "has-docked-editor",
-    ...placements.map((placement) => `editor-dock-${placement}`),
-  );
-  for (const placement of placements) {
-    document.body.style.removeProperty(`--editor-dock-${placement}`);
-  }
-
-  if (!layout.open || layout.dockPlacement === "floating" || !layout.rect) {
-    return;
-  }
-
-  document.body.classList.add(
-    "has-docked-editor",
-    `editor-dock-${layout.dockPlacement}`,
-  );
-  const size =
-    layout.dockPlacement === "left" || layout.dockPlacement === "right"
-      ? layout.rect.width
-      : layout.rect.height;
-  document.body.style.setProperty(
-    `--editor-dock-${layout.dockPlacement}`,
-    `${size}px`,
-  );
 }
 
 function prioritizeCurrentBookPart<T extends { url: string }>(
@@ -780,7 +669,7 @@ async function init(): Promise<void> {
   }
 
   const initialMarkdown = TD.decode(resolved.bytes);
-  const loadedSnapshot = bookLoader
+  const initialSnapshot = bookLoader
     ? createBookEditorDocumentSnapshot({
         entryUrl: bookLoader.getEntryUrl(),
         currentPartUrl: currentBookPartUrl,
@@ -794,20 +683,6 @@ async function init(): Promise<void> {
         baseUrl: resolved.baseUrl,
         sourceUrl: currentSourceUrl,
       });
-  const draftSourceKey = buildEditorDraftSourceKey({
-    mode: route.mode,
-    sourceUrl: currentSourceUrl,
-    bookEntryUrl: bookLoader?.getEntryUrl() ?? null,
-    dataPayload: route.dataPayload,
-    locationHref: window.location.href,
-  });
-  const restoredDraft = route.shared
-    ? null
-    : await loadEditorDraftSnapshot(draftSourceKey).catch((error) => {
-        console.warn("Unable to restore editor draft", error);
-        return null;
-      });
-  const initialSnapshot = restoredDraft ?? loadedSnapshot;
 
   const controller = new EditorStateController(initialSnapshot);
 
@@ -818,16 +693,11 @@ async function init(): Promise<void> {
   let previousSnapshot = latestSnapshot;
   let pendingAnchor = window.location.hash.replace(/^#/, "");
   let shouldScrollAfterPageChange = false;
-  let activeEditorLine = 1;
-  let lineTrackingFrame = 0;
 
-  const requestLineTracking = (line = activeEditorLine): void => {
-    activeEditorLine = Math.max(1, line);
-    if (route.mode !== "html") {
+  async function renderCurrentSnapshot(): Promise<void> {
+    if (renderInFlight) {
+      rerenderRequested = true;
       return;
-    }
-    if (lineTrackingFrame) {
-      cancelAnimationFrame(lineTrackingFrame);
     }
     lineTrackingFrame = requestAnimationFrame(() => {
       lineTrackingFrame = 0;
@@ -842,12 +712,6 @@ async function init(): Promise<void> {
       );
     });
   };
-
-  async function renderCurrentSnapshot(): Promise<void> {
-    if (renderInFlight) {
-      rerenderRequested = true;
-      return;
-    }
 
     renderInFlight = true;
     try {
@@ -883,8 +747,6 @@ async function init(): Promise<void> {
             scrollToHeadingAnchor(htmlView, anchor);
           } else if (snapshot.mode === "book" && shouldScrollTop) {
             scrollToTop();
-          } else if (document.body.classList.contains("is-editing")) {
-            requestLineTracking();
           }
         }
       } while (rerenderRequested);
@@ -1017,46 +879,11 @@ async function init(): Promise<void> {
       requestDebouncedRender();
     }
   });
-  let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
-  const saveDraftNow = (): void => {
-    if (route.shared) {
-      return;
-    }
-    const snapshot = controller.getSnapshot();
-    void saveEditorDraftSnapshot(draftSourceKey, snapshot).catch((error) => {
-      console.warn("Unable to save editor draft", error);
-    });
-  };
-  const scheduleDraftSave = (): void => {
-    if (route.shared) {
-      return;
-    }
-    if (draftSaveTimer) {
-      clearTimeout(draftSaveTimer);
-    }
-    draftSaveTimer = setTimeout(() => {
-      draftSaveTimer = null;
-      saveDraftNow();
-    }, 250);
-  };
-  const stopDraftSubscription = controller.subscribe(() => {
-    scheduleDraftSave();
-  });
   registerCleanup(() => {
     stopSnapshotSubscription();
-    stopDraftSubscription();
     if (renderTimer) {
       clearTimeout(renderTimer);
       renderTimer = null;
-    }
-    if (draftSaveTimer) {
-      clearTimeout(draftSaveTimer);
-      draftSaveTimer = null;
-      saveDraftNow();
-    }
-    if (lineTrackingFrame) {
-      cancelAnimationFrame(lineTrackingFrame);
-      lineTrackingFrame = 0;
     }
   });
 
@@ -1073,13 +900,6 @@ async function init(): Promise<void> {
     if (open) {
       editorWindowHandle.focusEditor();
       themeEditorLocal?.close();
-      requestLineTracking();
-    } else {
-      applyEditorDockLayout({
-        open: false,
-        dockPlacement: "floating",
-        rect: null,
-      });
     }
   };
 
@@ -1117,23 +937,10 @@ async function init(): Promise<void> {
       onRequestInstall: async () => {
         await pwaController.promptInstall();
       },
-      onActiveLineChange: (line) => {
-        if (document.body.classList.contains("is-editing")) {
-          requestLineTracking(line);
-        }
-      },
-      onLayoutChange: applyEditorDockLayout,
       subscribeInstallAvailability: (listener) =>
         pwaController.subscribe(listener),
     });
-    registerCleanup(() => {
-      applyEditorDockLayout({
-        open: false,
-        dockPlacement: "floating",
-        rect: null,
-      });
-      editorWindowHandle?.destroy();
-    });
+    registerCleanup(() => editorWindowHandle?.destroy());
 
     if (themeEditorLocal) {
       const { createFabMenu } = await loadUiModule();
