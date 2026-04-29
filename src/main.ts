@@ -699,6 +699,19 @@ async function init(): Promise<void> {
       rerenderRequested = true;
       return;
     }
+    lineTrackingFrame = requestAnimationFrame(() => {
+      lineTrackingFrame = 0;
+      const currentPage = getCurrentEditorPage(latestSnapshot);
+      if (!currentPage) {
+        return;
+      }
+      trackMarkdownLineInHtmlView(
+        view as HtmlView,
+        currentPage.markdown,
+        activeEditorLine,
+      );
+    });
+  };
 
     renderInFlight = true;
     try {
