@@ -1,5 +1,10 @@
 import type { ThemeEditorHandle } from "../theme/theme-editor";
-import type { PdfResolvedImage } from "../parser";
+import type {
+  PdfCodeColorKey,
+  PdfCodeColorOptions,
+  PdfResolvedImage,
+  PdfRGB,
+} from "../parser";
 import {
   applyTheme,
   applyThemeUrlOverrides,
@@ -27,6 +32,17 @@ import {
 
 const SAFE_CUSTOM_PROPERTY_RE = /^--[a-z0-9-]{1,64}$/i;
 const SAFE_CSS_PROPERTY_RE = /^[a-z-]{1,64}$/i;
+const PDF_CODE_COLOR_VARS: ReadonlyArray<readonly [PdfCodeColorKey, string]> = [
+  ["kw", "--code-kw"],
+  ["id", "--code-id"],
+  ["num", "--code-num"],
+  ["str", "--code-str"],
+  ["tpl", "--code-tpl"],
+  ["com", "--code-com"],
+  ["op", "--code-op"],
+  ["punc", "--code-punc"],
+  ["rx", "--code-rx"],
+];
 const MENU_ICON_PATH =
   "M12 4a1 1 0 0 1 1 1v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5a1 1 0 0 1 1-1Z";
 const EDIT_ICON_PATH =
@@ -63,6 +79,83 @@ function sanitizeCssCustomPropertyName(name: string): string | null {
 function sanitizeStyleTagContent(css: string): string {
   // Prevent untrusted values from terminating the enclosing <style> element.
   return css.replace(/<\/style/gi, "<\\/style");
+}
+
+function clampPdfColorChannel(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function parseCssNumberChannel(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith("%")) {
+    const percent = Number.parseFloat(trimmed.slice(0, -1));
+    return Number.isFinite(percent) ? clampPdfColorChannel(percent / 100) : null;
+  }
+  const channel = Number.parseFloat(trimmed);
+  return Number.isFinite(channel) ? clampPdfColorChannel(channel / 255) : null;
+}
+
+export function parseCssColorToPdfRGB(value: string): PdfRGB | null {
+  const color = value.trim().toLowerCase();
+  if (!color || color === "transparent" || color === "currentcolor") {
+    return null;
+  }
+
+  const shortHex = /^#([0-9a-f]{3})$/i.exec(color);
+  if (shortHex) {
+    const hex = shortHex[1];
+    return [
+      Number.parseInt(hex[0] + hex[0], 16) / 255,
+      Number.parseInt(hex[1] + hex[1], 16) / 255,
+      Number.parseInt(hex[2] + hex[2], 16) / 255,
+    ];
+  }
+
+  const longHex = /^#([0-9a-f]{6})$/i.exec(color);
+  if (longHex) {
+    const hex = longHex[1];
+    return [
+      Number.parseInt(hex.slice(0, 2), 16) / 255,
+      Number.parseInt(hex.slice(2, 4), 16) / 255,
+      Number.parseInt(hex.slice(4, 6), 16) / 255,
+    ];
+  }
+
+  const functional = /^(?:rgb|rgba)\((.*)\)$/i.exec(color);
+  if (functional) {
+    const channels = functional[1].trim().split(/\s*,\s*|\s+/).filter((part) => part !== "/" && part.length > 0);
+    if (channels.length < 3) return null;
+    const red = parseCssNumberChannel(channels[0]);
+    const green = parseCssNumberChannel(channels[1]);
+    const blue = parseCssNumberChannel(channels[2]);
+    if (red === null || green === null || blue === null) return null;
+    return [red, green, blue];
+  }
+
+  return null;
+}
+
+export function resolvePdfCodeColorsFromStyle(style: Pick<CSSStyleDeclaration, "getPropertyValue">): PdfCodeColorOptions {
+  const colors: PdfCodeColorOptions = {};
+  for (const [key, varName] of PDF_CODE_COLOR_VARS) {
+    const parsed = parseCssColorToPdfRGB(style.getPropertyValue(varName));
+    if (parsed) {
+      colors[key] = parsed;
+    }
+  }
+  return colors;
+}
+
+function resolvePdfCodeColors(): PdfCodeColorOptions | undefined {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return undefined;
+  }
+  const colors = resolvePdfCodeColorsFromStyle(
+    window.getComputedStyle(document.documentElement),
+  );
+  return Object.keys(colors).length > 0 ? colors : undefined;
 }
 
 function readInlineRootDeclarations(): string[] {
@@ -374,9 +467,11 @@ export async function buildPdfExportBlob(source: PdfExportSource): Promise<Blob>
   const markdown =
     typeof source.markdown === "string" ? u8(source.markdown) : source.markdown;
   const parser = new MDParser();
+  const codeColors = resolvePdfCodeColors();
   const pdf = await parser.renderToPDF(markdown, {
     ...(source.baseUrl !== undefined ? { baseUrl: source.baseUrl } : {}),
     ...(source.allowRawHtml ? { allowRawHtml: true } : {}),
+    ...(codeColors ? { codeColors } : {}),
     imageResolver: fetchPdfImage,
   });
   const pdfBuffer = new ArrayBuffer(pdf.byteLength);
