@@ -21,6 +21,34 @@ function hexText(value: string): string {
   ).join("");
 }
 
+function textFromHex(hex: string): string {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index++) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return decoder.decode(bytes);
+}
+
+function extractTextRuns(pdf: Uint8Array): Array<{ value: string; x: number; y: number }> {
+  const text = decodePdf(pdf);
+  const runs: Array<{ value: string; x: number; y: number }> = [];
+  const runRe = /1 0 0 1 ([\d.]+) ([\d.]+) Tm\n<([0-9A-F]*)> Tj/g;
+  for (const match of text.matchAll(runRe)) {
+    runs.push({
+      x: Number(match[1]),
+      y: Number(match[2]),
+      value: textFromHex(match[3]),
+    });
+  }
+  return runs;
+}
+
+function runX(runs: ReadonlyArray<{ value: string; x: number }>, value: string): number {
+  const run = runs.find((candidate) => candidate.value === value);
+  assert.ok(run, `expected text run ${value}`);
+  return run.x;
+}
+
 function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
   const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
   const bytes = new Uint8Array(length);
@@ -127,6 +155,23 @@ const value = 1;
   assert.ok(text.includes(`<${hexText("[x]")}>`));
   assert.match(text, /xref\n0 \d+/);
   assert.ok(text.endsWith("%%EOF\n"));
+});
+
+test("uses Base-14 glyph metrics to preserve PDF word spacing", () => {
+  const pdf = renderPDFFromBlocks(
+    u8("We treat Markdown parser & Project Links Well (Today)"),
+    {
+      pageSize: { width: 600, height: 240 },
+      margin: 24,
+      fontSize: 14,
+    },
+  );
+  const runs = extractTextRuns(pdf);
+
+  assert.ok(runX(runs, "treat") - runX(runs, "We") > 23);
+  assert.ok(runX(runs, "parser") - runX(runs, "Markdown") > 67);
+  assert.ok(runX(runs, "Project") - runX(runs, "&") > 12);
+  assert.ok(runX(runs, "(Today)") - runX(runs, "Well") > 29);
 });
 
 test("embeds JPEG images as DCT XObjects", async () => {
