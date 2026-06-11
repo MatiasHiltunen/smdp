@@ -1346,6 +1346,104 @@ class PdfLineComposer {
   }
 }
 
+function pushTextRun(
+  runs: PdfTextRun[],
+  bytes: Uint8Array,
+  s: number,
+  e: number,
+  style: PdfTextStyle,
+): void {
+  if (s >= e) return;
+  runs.push({
+    bytes,
+    s,
+    e,
+    style: cloneStyle(style),
+    width: measureTextSpan(bytes, s, e, style),
+  });
+}
+
+function measureRunSlice(
+  run: PdfTextRun,
+  s: number,
+  maxWidth: number,
+  allowOversizedGlyph: boolean,
+): { e: number; width: number } {
+  let width = 0;
+  let i = s;
+  while (i < run.e) {
+    const next = nextUtf8Index(run.bytes, i, run.e);
+    const glyphWidth = measureTextSpan(run.bytes, i, next, run.style);
+    if (width + glyphWidth > maxWidth) {
+      if (i === s && allowOversizedGlyph) {
+        return { e: next, width: glyphWidth };
+      }
+      break;
+    }
+    width += glyphWidth;
+    i = next;
+  }
+  return { e: i, width };
+}
+
+function cloneRunSlice(run: PdfTextRun, s: number, e: number, width: number): PdfTextRun {
+  return {
+    bytes: run.bytes,
+    s,
+    e,
+    style: cloneStyle(run.style),
+    width,
+  };
+}
+
+function wrapCodeRuns(runs: readonly PdfTextRun[], maxWidth: number): PdfTextRun[][] {
+  const rows: PdfTextRun[][] = [];
+  let row: PdfTextRun[] = [];
+  let rowWidth = 0;
+
+  const flush = (): void => {
+    if (row.length === 0) return;
+    rows.push(row);
+    row = [];
+    rowWidth = 0;
+  };
+
+  for (const run of runs) {
+    let s = run.s;
+    while (s < run.e) {
+      const runWidth = s === run.s
+        ? run.width
+        : measureTextSpan(run.bytes, s, run.e, run.style);
+      const capacity = maxWidth - rowWidth;
+
+      if (rowWidth > 0 && runWidth > capacity) {
+        const slice = measureRunSlice(run, s, capacity, false);
+        if (slice.e > s) {
+          row.push(cloneRunSlice(run, s, slice.e, slice.width));
+          s = slice.e;
+        }
+        flush();
+        continue;
+      }
+
+      if (rowWidth === 0 && runWidth > maxWidth) {
+        const slice = measureRunSlice(run, s, maxWidth, true);
+        row.push(cloneRunSlice(run, s, slice.e, slice.width));
+        s = slice.e;
+        flush();
+        continue;
+      }
+
+      row.push(cloneRunSlice(run, s, run.e, runWidth));
+      rowWidth += runWidth;
+      break;
+    }
+  }
+
+  flush();
+  return rows;
+}
+
 class PdfBlockRenderer {
   readonly pages: PdfPage[] = [];
   private readonly pageWidth: number;
@@ -2031,43 +2129,73 @@ class PdfBlockRenderer {
     line.flush();
   }
 
-  private renderCodeLine(markdown: Uint8Array, s: number, e: number): void {
-    const lineHeight = this.baseFontSize * 1.35;
+  private drawCodeLineBackground(lineHeight: number, width: number): void {
     this.ensureSpace(lineHeight);
     const y = this.cursorY - lineHeight + 2;
     this.fillRect(
       this.margin + this.indent - 4,
       y,
-      Math.max(80, this.contentWidth - this.indent) + 8,
+      width + 8,
       lineHeight,
       COLORS.codeBg,
     );
-    const line = this.createLine(lineHeight);
+  }
+
+  private codeRunsForLine(lineBytes: Uint8Array, codeStyle: PdfTextStyle): PdfTextRun[] {
+    const runs: PdfTextRun[] = [];
+    const tokens = tokenizeCodeBlock(lineBytes, this.codeLang);
+    if (!tokens) {
+      pushTextRun(runs, lineBytes, 0, lineBytes.length, codeStyle);
+      return runs;
+    }
+
+    let cursor = 0;
+    let pendingWhitespaceStart = -1;
+    for (const token of tokens) {
+      if (token.s > cursor) {
+        if (isWhitespaceSpan(lineBytes, cursor, token.s)) {
+          if (pendingWhitespaceStart < 0) pendingWhitespaceStart = cursor;
+        } else {
+          const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : cursor;
+          pushTextRun(runs, lineBytes, runStart, token.s, codeStyle);
+          pendingWhitespaceStart = -1;
+        }
+      }
+
+      if (isWhitespaceSpan(lineBytes, token.s, token.e)) {
+        if (pendingWhitespaceStart < 0) pendingWhitespaceStart = token.s;
+      } else {
+        const tokenStyle = mergeStyle(codeStyle, { color: this.codeColor(token.kind) });
+        const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : token.s;
+        pushTextRun(runs, lineBytes, runStart, token.e, tokenStyle);
+        pendingWhitespaceStart = -1;
+      }
+      cursor = Math.max(cursor, token.e);
+    }
+
+    if (cursor < lineBytes.length) {
+      const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : cursor;
+      pushTextRun(runs, lineBytes, runStart, lineBytes.length, codeStyle);
+    } else if (pendingWhitespaceStart >= 0) {
+      pushTextRun(runs, lineBytes, pendingWhitespaceStart, lineBytes.length, codeStyle);
+    }
+    return runs;
+  }
+
+  private renderCodeLine(markdown: Uint8Array, s: number, e: number): void {
+    const lineHeight = this.baseFontSize * 1.35;
+    const x = this.margin + this.indent;
+    const width = Math.max(80, this.contentWidth - this.indent);
     if (s < e) {
       const codeStyle = this.style({ font: 'mono', size: this.baseFontSize * 0.9 });
       const lineBytes = markdown.subarray(s, e);
-      const tokens = tokenizeCodeBlock(lineBytes, this.codeLang);
-      if (!tokens) {
-        line.addTextSpan(lineBytes, 0, lineBytes.length, codeStyle, true);
-      } else {
-        let pendingWhitespaceStart = -1;
-        for (const token of tokens) {
-          if (isWhitespaceSpan(lineBytes, token.s, token.e)) {
-            if (pendingWhitespaceStart < 0) pendingWhitespaceStart = token.s;
-            continue;
-          }
-
-          const tokenStyle = mergeStyle(codeStyle, { color: this.codeColor(token.kind) });
-          const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : token.s;
-          line.addTextSpan(lineBytes, runStart, token.e, tokenStyle, true);
-          pendingWhitespaceStart = -1;
-        }
-        if (pendingWhitespaceStart >= 0) {
-          line.addTextSpan(lineBytes, pendingWhitespaceStart, lineBytes.length, codeStyle, true);
-        }
+      const rows = wrapCodeRuns(this.codeRunsForLine(lineBytes, codeStyle), width);
+      for (const row of rows) {
+        this.drawCodeLineBackground(lineHeight, width);
+        this.drawTextLine(row, x, lineHeight);
       }
-      line.flush();
     } else {
+      this.drawCodeLineBackground(lineHeight, width);
       this.cursorY -= lineHeight;
     }
   }

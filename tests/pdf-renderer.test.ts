@@ -43,6 +43,23 @@ function extractTextRuns(pdf: Uint8Array): Array<{ value: string; x: number; y: 
   return runs;
 }
 
+function extractColoredTextRuns(
+  pdf: Uint8Array,
+): Array<{ value: string; color: [number, number, number]; x: number; y: number }> {
+  const text = decodePdf(pdf);
+  const runs: Array<{ value: string; color: [number, number, number]; x: number; y: number }> = [];
+  const runRe = /([\d.]+) ([\d.]+) ([\d.]+) rg\n1 0 0 1 ([\d.]+) ([\d.]+) Tm\n<([0-9A-F]*)> Tj/g;
+  for (const match of text.matchAll(runRe)) {
+    runs.push({
+      color: [Number(match[1]), Number(match[2]), Number(match[3])],
+      x: Number(match[4]),
+      y: Number(match[5]),
+      value: textFromHex(match[6]),
+    });
+  }
+  return runs;
+}
+
 function runX(runs: ReadonlyArray<{ value: string; x: number }>, value: string): number {
   const run = runs.find((candidate) => candidate.value.trim() === value);
   assert.ok(run, `expected text run ${value}`);
@@ -244,6 +261,37 @@ const answer = 42;
   assert.match(text, /0 0.5 0 rg\n1 0 0 1 [\d.]+ [\d.]+ Tm\n<2F2F20636F6D6D656E74> Tj/);
   assert.ok(extracted.includes("const answer = 42;"));
   assert.ok(extracted.includes("// comment"));
+  assert.equal(extractTextRuns(pdf).filter((run) => run.value === " ").length, 0);
+});
+
+test("keeps syntax colors on wrapped PDF code continuations", () => {
+  const longLiteral = `"${"green-value-".repeat(12)}tail"`;
+  const sourceLine = `const message = ${longLiteral};`;
+  const pdf = renderPDFFromBlocks(
+    u8(`\`\`\`js
+${sourceLine}
+\`\`\``),
+    {
+      pageSize: { width: 250, height: 600 },
+      margin: 24,
+      fontSize: 14,
+      codeColors: {
+        kw: [1, 0, 0],
+        id: [0.1, 0.1, 0.1],
+        str: [0, 0.5, 0],
+        punc: [0.5, 0, 0.5],
+      },
+    },
+  );
+  const extracted = extractPdfText(pdf).replace(/\n/g, "");
+  const greenRuns = extractColoredTextRuns(pdf).filter(
+    (run) => run.color[0] === 0 && run.color[1] === 0.5 && run.color[2] === 0,
+  );
+
+  assert.ok(extracted.includes(sourceLine));
+  assert.ok(greenRuns.length >= 2);
+  assert.ok(new Set(greenRuns.map((run) => run.y)).size >= 2);
+  assert.ok(greenRuns.map((run) => run.value).join("").includes(longLiteral));
   assert.equal(extractTextRuns(pdf).filter((run) => run.value === " ").length, 0);
 });
 
