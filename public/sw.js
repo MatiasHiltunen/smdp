@@ -1,4 +1,4 @@
-const VERSION = "smdp-v2026-04-22";
+const VERSION = "smdp-v2026-06-11";
 const APP_SHELL_CACHE = `${VERSION}-app-shell`;
 const ASSET_CACHE = `${VERSION}-assets`;
 const DOCUMENT_CACHE = `${VERSION}-documents`;

@@ -9,11 +9,9 @@ export class HtmlArena {
   private buf: ArrayBuffer;
   private len: number;
 
-  // Lower preacllocated size results to faster small writes, but more reallocations
+  // Lower preallocated size results in faster small writes, but more reallocations.
   constructor(initial = 8192) {
-
-    // @ts-ignore
-    this.buf = new ArrayBuffer(initial, { maxByteLength: 2 ** 29 });
+    this.buf = new ArrayBuffer(initial);
     this.len = 0;
   }
 
@@ -25,27 +23,10 @@ export class HtmlArena {
     while (n < cap) {
       n = n < (1 << 20) ? (n << 1) : n + (n >> 1);
     }
-    
-    /* const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
-const view = new Uint8Array(buffer);
-view[1] = 2;
-view[7] = 4;
 
-const buffer2 = buffer.transferToFixedLength();
-console.log(buffer2.byteLength); // 8
-console.log(buffer2.resizable); // false
-const view2 = new Uint8Array(buffer2);
-console.log(view2[1]); // 2
-console.log(view2[7]); // 4 */
-
-    // @ts-ignore
-    this.buf.resize(n);
-
-/*     const nb = new Uint8Array(n);
-
-
-    nb.set(this.buf.slice(0, this.len));
-    this.buf = nb; */
+    const next = new ArrayBuffer(n);
+    new Uint8Array(next).set(new Uint8Array(this.buf, 0, this.len));
+    this.buf = next;
   }
 
   writeByte(b: number): void {
@@ -60,9 +41,8 @@ console.log(view2[7]); // 4 */
   writeBytes(u8: Uint8Array): void {
     const p = this.len;
     this.ensure(p + u8.byteLength);
-      const view = new Uint8Array(this.buf);
-      view.set(u8, p);
-/*     this.buf.set(u8, p); */
+    const view = new Uint8Array(this.buf);
+    view.set(u8, p);
     this.len = p + u8.byteLength;
   }
 
@@ -79,8 +59,7 @@ console.log(view2[7]); // 4 */
     const p = this.len;
     const n = str.length;
     this.ensure(p + n);
-/*     const b = this.buf; */
-  const view = new Uint8Array(this.buf);
+    const view = new Uint8Array(this.buf);
 
     let o = p;
     
@@ -129,16 +108,12 @@ console.log(view2[7]); // 4 */
   }
 
   toString(): string {
-
-      const view = new Uint8Array(this.buf);
-
+    const view = new Uint8Array(this.buf);
     return TD.decode(view.subarray(0, this.len));
   }
 
   toUint8Array(): Uint8Array {
-      const view = new Uint8Array(this.buf);
-      return view.slice(0, this.len);
-    // Return a view instead of a copy for zero-allocation
-/*     return this.buf.subarray(0, this.len); */
+    const view = new Uint8Array(this.buf);
+    return view.slice(0, this.len);
   }
 }
