@@ -32,6 +32,10 @@
       "browser": "./src/parser/canvas-renderer.ts",
       "import": "./src/parser/canvas-renderer.ts"
     },
+    "./parser/pdf": {
+      "types": "./src/parser/pdf-renderer.ts",
+      "import": "./src/parser/pdf-renderer.ts"
+    },
     "./theme": {
       "types": "./src/theme/index.ts",
       "import": "./src/theme/index.ts"

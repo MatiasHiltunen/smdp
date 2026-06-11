@@ -11,6 +11,7 @@
 import { TE } from './constants';
 import { renderHTMLFromBlocks } from './html-renderer';
 import { renderToCanvasFromBlocks } from './canvas-renderer';
+import type { PdfRenderOptions } from './pdf-renderer';
 import { defaultUrlAllowlist } from './utils';
 
 export interface ParserOptions {
@@ -76,6 +77,21 @@ export class MDParser {
   }
 
   /**
+   * Renders Markdown (as Uint8Array) to a dependency-free PDF byte stream.
+   */
+  async renderToPDF(u8arr: Uint8Array, overrides: PdfRenderOptions = {}): Promise<Uint8Array> {
+    const baseUrl = overrides.baseUrl ?? this.options.baseUrl;
+    const effective: PdfRenderOptions = {
+      ...overrides,
+      allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
+      urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+    };
+    const { renderPDFFromBlocksAsync } = await import('./pdf-renderer');
+    return await renderPDFFromBlocksAsync(u8arr, effective);
+  }
+
+  /**
    * Get current parser options
    */
   getOptions(): Readonly<ResolvedParserOptions> {
@@ -99,6 +115,13 @@ export type {
   DrawResult,
 } from './types';
 
+export type {
+  PdfImageResolver,
+  PdfImageResolverContext,
+  PdfPageSize,
+  PdfRenderOptions,
+  PdfResolvedImage,
+} from './pdf-renderer';
 export { HtmlArena } from './arena';
 export { lineSpans } from './line-parser';
 export { inlineTokens } from './inline-parser';
