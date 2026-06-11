@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 import { MDParser, u8 } from "../src/parser/index.ts";
 import {
@@ -61,6 +61,25 @@ function makeRgbPng(): Uint8Array {
     0, // no interlace
   ]);
   const idat = new Uint8Array(deflateSync(new Uint8Array([0, 255, 0, 0])));
+  return concatBytes([
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", idat),
+    pngChunk("IEND", new Uint8Array(0)),
+  ]);
+}
+
+function makeRgbaPng(): Uint8Array {
+  const ihdr = new Uint8Array([
+    0, 0, 0, 1, // width
+    0, 0, 0, 1, // height
+    8, // bit depth
+    6, // truecolor RGBA
+    0, // compression
+    0, // filter
+    0, // no interlace
+  ]);
+  const idat = new Uint8Array(deflateSync(new Uint8Array([0, 255, 0, 0, 128])));
   return concatBytes([
     new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk("IHDR", ihdr),
@@ -149,6 +168,62 @@ test("embeds PNG IDAT data with FlateDecode predictor", async () => {
   assert.match(text, /\/Filter \/FlateDecode/);
   assert.match(text, /\/DecodeParms << \/Predictor 15 \/Colors 3 \/BitsPerComponent 8 \/Columns 1 >>/);
   assert.match(text, /\/Im1 Do/);
+});
+
+test("embeds RGBA PNG images with soft masks", async () => {
+  const pdf = await renderPDFFromBlocksAsync(u8("![Alpha pixel](/alpha.png)"), {
+    imageResolver: async () => ({
+      bytes: makeRgbaPng(),
+      mediaType: "image/png",
+    }),
+    inflate: (input) => new Uint8Array(inflateSync(input)),
+    deflate: (input) => new Uint8Array(deflateSync(input)),
+  });
+  const text = decodePdf(pdf);
+  const imageObjects = text.match(/\/Subtype \/Image/g) ?? [];
+
+  assert.equal(imageObjects.length, 2);
+  assert.match(text, /\/Width 1 \/Height 1/);
+  assert.match(text, /\/ColorSpace \/DeviceRGB/);
+  assert.match(text, /\/SMask \d+ 0 R/);
+  assert.match(text, /\/ColorSpace \/DeviceGray/);
+  assert.match(text, /\/Filter \/FlateDecode/);
+  assert.match(text, /\/Im1 Do/);
+});
+
+test("embeds safe SVG images as Form XObjects", async () => {
+  const svg = encoder.encode(
+    '<svg width="20" height="10" viewBox="0 0 20 10"><rect x="1" y="2" width="8" height="4" fill="#ff0000"/><path d="M 10 1 L 18 1 L 18 8 Z" stroke="#0000ff" fill="none"/></svg>',
+  );
+  const pdf = await renderPDFFromBlocksAsync(u8("![Icon](/icon.svg)"), {
+    imageResolver: async () => ({
+      bytes: svg,
+      mediaType: "image/svg+xml",
+    }),
+  });
+  const text = decodePdf(pdf);
+
+  assert.match(text, /\/Type \/XObject \/Subtype \/Form/);
+  assert.match(text, /\/BBox \[0 0 20 10\]/);
+  assert.match(text, /1 2 8 4 re/);
+  assert.match(text, /10 1 m/);
+  assert.match(text, /18 8 l/);
+  assert.match(text, /\/XObject << \/Im1 \d+ 0 R >>/);
+  assert.match(text, /\/Im1 Do/);
+});
+
+test("falls back to alt text for unsafe SVG images", async () => {
+  const pdf = await renderPDFFromBlocksAsync(u8("![Unsafe](/unsafe.svg)"), {
+    imageResolver: async () => ({
+      bytes: encoder.encode('<svg width="10" height="10"><script>alert(1)</script><rect width="10" height="10"/></svg>'),
+      mediaType: "image/svg+xml",
+    }),
+  });
+  const text = decodePdf(pdf);
+
+  assert.doesNotMatch(text, /\/Subtype \/Form/);
+  assert.ok(text.includes(`<${hexText("[image")}>`));
+  assert.ok(text.includes(`<${hexText("Unsafe")}>`));
 });
 
 test("deduplicates repeated images by resolved URL", async () => {

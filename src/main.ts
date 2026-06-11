@@ -954,6 +954,16 @@ async function init(): Promise<void> {
             allowRawHtml,
           );
         },
+        buildPdfExportSource: () => {
+          const snapshot = controller.getSnapshot();
+          const currentPage = getCurrentEditorPage(snapshot);
+          if (!currentPage) return null;
+          return {
+            markdown: currentPage.markdown,
+            baseUrl: currentPage.baseUrl,
+            allowRawHtml,
+          };
+        },
         buildInlineEmbedHtmlSource: async () => {
           const snapshot = controller.getSnapshot();
           const currentPage = getCurrentEditorPage(snapshot);

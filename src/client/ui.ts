@@ -1,4 +1,5 @@
 import type { ThemeEditorHandle } from "../theme/theme-editor";
+import type { PdfResolvedImage } from "../parser";
 import {
   applyTheme,
   applyThemeUrlOverrides,
@@ -38,6 +39,8 @@ const THEME_LIGHT_TO_DARK_ICON_PATH =
   "M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1Z";
 const EXPORT_ICON_PATH =
   "M13 3a1 1 0 1 0-2 0v12.586l-3.293-3.293a1 1 0 0 0-1.414 1.414l5 5a1 1 0 0 0 1.414 0l5-5a1 1 0 0 0-1.414-1.414L13 15.586V3ZM4 17a1 1 0 1 0 0 2h16a1 1 0 1 0 0-2H4Z";
+const PDF_ICON_PATH =
+  "M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8.828a2 2 0 0 0-.586-1.414l-4.828-4.828A2 2 0 0 0 13.172 2H6Zm7 2.414L17.586 9H14a1 1 0 0 1-1-1V4.414ZM7 13a1 1 0 0 1 1-1h1.5a2.5 2.5 0 0 1 0 5H9v1a1 1 0 1 1-2 0v-5Zm2 2h.5a.5.5 0 0 0 0-1H9v1Zm5-2a1 1 0 0 1 1-1h2a1 1 0 1 1 0 2h-1v1h1a1 1 0 1 1 0 2h-1v1a1 1 0 1 1-2 0v-5Zm-3 0a1 1 0 1 1 2 0v5a1 1 0 1 1-2 0v-5Z";
 const SHARE_ICON_PATH =
   "M18 3a3 3 0 1 1-2.668 4.301l-6.01 3.004a3 3 0 0 1 0 2.39l6.01 3.004a3 3 0 1 1-.898 1.79l-6.01-3.004a3 3 0 1 1 0-4.98l6.01-3.004A3 3 0 0 1 18 3Z";
 const EMBED_ICON_PATH =
@@ -301,12 +304,15 @@ export function exportAsHtml(
     return;
   }
 
-  // Create blob and download
   const blob = new Blob([html], { type: "text/html" });
+  downloadBlob(blob, `markdown-export-${Date.now()}.html`);
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = createElement("a");
   a.href = url;
-  a.download = `markdown-export-${Date.now()}.html`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -320,18 +326,76 @@ async function exportAsCanvasImage(view: CanvasView): Promise<void> {
       alert("No rendered canvas content to export");
       return;
     }
-    const url = URL.createObjectURL(blob);
-    const a = createElement("a");
-    a.href = url;
-    a.download = `markdown-export-${Date.now()}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `markdown-export-${Date.now()}.png`);
   } catch (error) {
     console.error("Failed to export canvas image", error);
     alert("Failed to export canvas image");
   }
+}
+
+export type PdfExportSource = {
+  markdown: string | Uint8Array;
+  baseUrl?: string;
+  allowRawHtml?: boolean;
+};
+
+function isEmptyPdfExportSource(source: PdfExportSource): boolean {
+  return typeof source.markdown === "string"
+    ? source.markdown.trim().length === 0
+    : source.markdown.byteLength === 0;
+}
+
+async function fetchPdfImage(resolvedSrc: string): Promise<PdfResolvedImage | null> {
+  let url: URL;
+  try {
+    url = new URL(resolvedSrc, window.location.href);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return null;
+  }
+
+  const response = await fetch(url, { credentials: "same-origin" });
+  if (!response.ok) {
+    return null;
+  }
+  const buffer = await response.arrayBuffer();
+  const mediaType = response.headers.get("content-type") ?? undefined;
+  return {
+    bytes: new Uint8Array(buffer),
+    cacheKey: url.toString(),
+    ...(mediaType !== undefined ? { mediaType } : {}),
+  };
+}
+
+export async function buildPdfExportBlob(source: PdfExportSource): Promise<Blob> {
+  const { MDParser, u8 } = await import("../parser");
+  const markdown =
+    typeof source.markdown === "string" ? u8(source.markdown) : source.markdown;
+  const parser = new MDParser();
+  const pdf = await parser.renderToPDF(markdown, {
+    ...(source.baseUrl !== undefined ? { baseUrl: source.baseUrl } : {}),
+    ...(source.allowRawHtml ? { allowRawHtml: true } : {}),
+    imageResolver: fetchPdfImage,
+  });
+  const pdfBuffer = new ArrayBuffer(pdf.byteLength);
+  new Uint8Array(pdfBuffer).set(pdf);
+  return new Blob([pdfBuffer], { type: "application/pdf" });
+}
+
+export async function exportAsPdf(source: PdfExportSource): Promise<void> {
+  if (isEmptyPdfExportSource(source)) {
+    alert("No markdown content to export");
+    return;
+  }
+
+  const blob = await buildPdfExportBlob(source);
+  if (!blob || blob.size === 0) {
+    alert("No PDF content to export");
+    return;
+  }
+  downloadBlob(blob, `markdown-export-${Date.now()}.pdf`);
 }
 
 export type FabMenuOptions = {
@@ -339,6 +403,9 @@ export type FabMenuOptions = {
   buildHtmlExportSource?: (
     view: HtmlView,
   ) => string | Promise<string | null> | null;
+  buildPdfExportSource?: (
+    view: HtmlView | CanvasView,
+  ) => PdfExportSource | Promise<PdfExportSource | null> | null;
   enableLoadUrlEmbed?: boolean;
   getCurrentLoadUrl?: () => string | null;
   buildInlineEmbedHtmlSource?: (
@@ -427,6 +494,13 @@ export function createFabMenu(
     isCanvasView ? "Export as Image" : "Export as HTML",
   );
   replaceWithIcon(exportButton, EXPORT_ICON_PATH);
+
+  // PDF export button
+  const pdfExportButton = createElement("button");
+  pdfExportButton.className = "fab-action";
+  pdfExportButton.type = "button";
+  pdfExportButton.setAttribute("data-tooltip", "Export as PDF");
+  replaceWithIcon(pdfExportButton, PDF_ICON_PATH);
 
   // Share button
   const shareButton = createElement("button");
@@ -555,6 +629,32 @@ export function createFabMenu(
         exportAsHtml(htmlView, htmlOverride);
       }
       closeMenu();
+    })();
+  });
+
+  pdfExportButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void (async () => {
+      pdfExportButton.disabled = true;
+      pdfExportButton.setAttribute("aria-busy", "true");
+      try {
+        const source =
+          (await options.buildPdfExportSource?.(view)) ?? {
+            markdown: view.textarea.value,
+          };
+        if (!source) {
+          alert("No markdown content to export");
+          return;
+        }
+        await exportAsPdf(source);
+      } catch (error) {
+        console.error("Failed to export PDF", error);
+        displayError("Unable to export PDF");
+      } finally {
+        pdfExportButton.disabled = false;
+        pdfExportButton.removeAttribute("aria-busy");
+        closeMenu();
+      }
     })();
   });
 
@@ -720,11 +820,19 @@ export function createFabMenu(
       themeButton,
       themeToggleButton,
       exportButton,
+      pdfExportButton,
       shareButton,
       copyEmbeddedGroup,
     );
   } else {
-    actions.append(editButton, themeButton, themeToggleButton, exportButton, shareButton);
+    actions.append(
+      editButton,
+      themeButton,
+      themeToggleButton,
+      exportButton,
+      pdfExportButton,
+      shareButton,
+    );
   }
   menu.append(mainButton, actions);
 

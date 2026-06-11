@@ -19,6 +19,8 @@ export interface PdfRenderOptions extends ParserOptions {
   fontSize?: number;
   lineHeight?: number;
   imageResolver?: PdfImageResolver;
+  inflate?: PdfBinaryTransform;
+  deflate?: PdfBinaryTransform;
   maxImageWidth?: number;
   maxImageHeight?: number;
 }
@@ -40,6 +42,10 @@ export type PdfImageResolver = (
   resolvedSrc: string,
   context: PdfImageResolverContext,
 ) => PdfResolvedImage | null | Promise<PdfResolvedImage | null>;
+
+export type PdfBinaryTransform = (
+  input: Uint8Array,
+) => Uint8Array | Promise<Uint8Array>;
 
 type PdfColor = readonly [number, number, number];
 
@@ -89,16 +95,40 @@ type PdfImageData = {
   length: number;
 };
 
-type PdfEmbeddedImage = {
+type PdfImageMask = {
+  width: number;
+  height: number;
+  bitsPerComponent: number;
+  data: PdfImageData;
+  filter?: 'FlateDecode';
+  decodeParms?: string;
+};
+
+type PdfRasterXObject = {
+  kind: 'image';
   name: string;
   width: number;
   height: number;
   colorSpace: string;
   bitsPerComponent: number;
-  filter: 'DCTDecode' | 'FlateDecode';
+  filter?: 'DCTDecode' | 'FlateDecode';
   data: PdfImageData;
   decodeParms?: string;
+  softMask?: PdfImageMask;
 };
+
+type PdfFormXObject = {
+  kind: 'form';
+  name: string;
+  width: number;
+  height: number;
+  data: PdfImageData;
+};
+
+type PdfEmbeddedImage = PdfRasterXObject | PdfFormXObject;
+type PdfParsedImage =
+  | Omit<PdfRasterXObject, 'name'>
+  | Omit<PdfFormXObject, 'name'>;
 
 type ListFrame = {
   kind: 'ul' | 'ol';
@@ -350,7 +380,110 @@ function imageDataFromChunks(chunks: Uint8Array[]): PdfImageData {
   return { chunks, length };
 }
 
-function parseJpegImage(bytes: Uint8Array): Omit<PdfEmbeddedImage, 'name'> | null {
+function flattenImageData(data: PdfImageData): Uint8Array {
+  if (data.chunks.length === 1 && data.chunks[0].length === data.length) {
+    return data.chunks[0];
+  }
+  const bytes = new Uint8Array(data.length);
+  let offset = 0;
+  for (const chunk of data.chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
+async function transformDeflate(
+  input: Uint8Array,
+  transform: PdfBinaryTransform | undefined,
+): Promise<{ data: PdfImageData; filter?: 'FlateDecode' }> {
+  if (!transform) {
+    return { data: imageDataFromChunks([input]) };
+  }
+  const output = await transform(input);
+  return {
+    data: imageDataFromChunks([output]),
+    filter: 'FlateDecode',
+  };
+}
+
+async function inflateWithBrowserStream(input: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('DecompressionStream is unavailable');
+  }
+  const stream = new DecompressionStream('deflate');
+  const writer = stream.writable.getWriter();
+  const reader = stream.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  const readPromise = (async (): Promise<void> => {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        total += value.length;
+      }
+    }
+  })();
+
+  await writer.write(input as BufferSource);
+  await writer.close();
+  await readPromise;
+
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
+}
+
+async function deflateWithBrowserStream(input: Uint8Array): Promise<Uint8Array> {
+  if (typeof CompressionStream === 'undefined') {
+    throw new Error('CompressionStream is unavailable');
+  }
+  const stream = new CompressionStream('deflate');
+  const writer = stream.writable.getWriter();
+  const reader = stream.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  const readPromise = (async (): Promise<void> => {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        total += value.length;
+      }
+    }
+  })();
+
+  await writer.write(input as BufferSource);
+  await writer.close();
+  await readPromise;
+
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
+}
+
+function defaultInflate(): PdfBinaryTransform | undefined {
+  return typeof DecompressionStream !== 'undefined' ? inflateWithBrowserStream : undefined;
+}
+
+function defaultDeflate(): PdfBinaryTransform | undefined {
+  return typeof CompressionStream !== 'undefined' ? deflateWithBrowserStream : undefined;
+}
+
+function parseJpegImage(bytes: Uint8Array): PdfParsedImage | null {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
     return null;
   }
@@ -390,6 +523,7 @@ function parseJpegImage(bytes: Uint8Array): Omit<PdfEmbeddedImage, 'name'> | nul
         return null;
       }
       return {
+        kind: 'image',
         width,
         height,
         colorSpace,
@@ -405,7 +539,7 @@ function parseJpegImage(bytes: Uint8Array): Omit<PdfEmbeddedImage, 'name'> | nul
   return null;
 }
 
-function parsePngImage(bytes: Uint8Array): Omit<PdfEmbeddedImage, 'name'> | null {
+function parsePngImage(bytes: Uint8Array): PdfParsedImage | null {
   const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
   if (!bytesEqual(bytes, 0, pngSignature)) {
     return null;
@@ -478,6 +612,7 @@ function parsePngImage(bytes: Uint8Array): Omit<PdfEmbeddedImage, 'name'> | null
   }
 
   return {
+    kind: 'image',
     width,
     height,
     colorSpace,
@@ -488,15 +623,512 @@ function parsePngImage(bytes: Uint8Array): Omit<PdfEmbeddedImage, 'name'> | null
   };
 }
 
-function parsePdfImage(bytes: Uint8Array, mediaType: string | undefined): Omit<PdfEmbeddedImage, 'name'> | null {
+function paethPredictor(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+function unfilterPngScanlines(
+  bytes: Uint8Array,
+  width: number,
+  height: number,
+  bytesPerPixel: number,
+): Uint8Array | null {
+  const rowLength = width * bytesPerPixel;
+  const expectedLength = (rowLength + 1) * height;
+  if (bytes.length < expectedLength) return null;
+
+  const output = new Uint8Array(rowLength * height);
+  let inputOffset = 0;
+  let outputOffset = 0;
+
+  for (let row = 0; row < height; row++) {
+    const filter = bytes[inputOffset++];
+    const rowStart = outputOffset;
+    const prevRowStart = row === 0 ? -1 : rowStart - rowLength;
+
+    for (let col = 0; col < rowLength; col++) {
+      const raw = bytes[inputOffset++];
+      const left = col >= bytesPerPixel ? output[rowStart + col - bytesPerPixel] : 0;
+      const up = prevRowStart >= 0 ? output[prevRowStart + col] : 0;
+      const upLeft = prevRowStart >= 0 && col >= bytesPerPixel
+        ? output[prevRowStart + col - bytesPerPixel]
+        : 0;
+
+      let value: number;
+      if (filter === 0) {
+        value = raw;
+      } else if (filter === 1) {
+        value = raw + left;
+      } else if (filter === 2) {
+        value = raw + up;
+      } else if (filter === 3) {
+        value = raw + Math.floor((left + up) / 2);
+      } else if (filter === 4) {
+        value = raw + paethPredictor(left, up, upLeft);
+      } else {
+        return null;
+      }
+      output[outputOffset++] = value & 0xff;
+    }
+  }
+
+  return output;
+}
+
+async function parsePngImageWithAlpha(
+  bytes: Uint8Array,
+  inflate: PdfBinaryTransform | undefined,
+  deflate: PdfBinaryTransform | undefined,
+): Promise<PdfParsedImage | null> {
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+  if (!bytesEqual(bytes, 0, pngSignature)) return null;
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = -1;
+  let interlace = 0;
+  const idatChunks: Uint8Array[] = [];
+
+  while (offset + 12 <= bytes.length) {
+    const length = readUint32(bytes, offset);
+    const typeOffset = offset + 4;
+    const dataOffset = offset + 8;
+    const nextOffset = dataOffset + length + 4;
+    if (nextOffset > bytes.length) return null;
+
+    const type = asciiChunkType(bytes, typeOffset);
+    if (type === 'IHDR') {
+      if (length !== 13) return null;
+      width = readUint32(bytes, dataOffset);
+      height = readUint32(bytes, dataOffset + 4);
+      bitDepth = bytes[dataOffset + 8];
+      colorType = bytes[dataOffset + 9];
+      const compression = bytes[dataOffset + 10];
+      const filter = bytes[dataOffset + 11];
+      interlace = bytes[dataOffset + 12];
+      if (compression !== 0 || filter !== 0) return null;
+    } else if (type === 'IDAT') {
+      idatChunks.push(bytes.subarray(dataOffset, dataOffset + length));
+    } else if (type === 'IEND') {
+      break;
+    }
+    offset = nextOffset;
+  }
+
+  if (width <= 0 || height <= 0 || bitDepth !== 8 || interlace !== 0 || idatChunks.length === 0) {
+    return null;
+  }
+  if (colorType !== 4 && colorType !== 6) {
+    return null;
+  }
+
+  const activeInflate = inflate ?? defaultInflate();
+  if (!activeInflate) return null;
+
+  const compressed = imageDataFromChunks(idatChunks);
+  const decoded = await activeInflate(flattenImageData(compressed));
+  const sourceChannels = colorType === 6 ? 4 : 2;
+  const colorChannels = colorType === 6 ? 3 : 1;
+  const unfiltered = unfilterPngScanlines(decoded, width, height, sourceChannels);
+  if (!unfiltered) return null;
+
+  const pixelCount = width * height;
+  const colorBytes = new Uint8Array(pixelCount * colorChannels);
+  const alphaBytes = new Uint8Array(pixelCount);
+  let sourceOffset = 0;
+  let colorOffset = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    if (colorType === 6) {
+      colorBytes[colorOffset++] = unfiltered[sourceOffset++];
+      colorBytes[colorOffset++] = unfiltered[sourceOffset++];
+      colorBytes[colorOffset++] = unfiltered[sourceOffset++];
+      alphaBytes[pixel] = unfiltered[sourceOffset++];
+    } else {
+      colorBytes[colorOffset++] = unfiltered[sourceOffset++];
+      alphaBytes[pixel] = unfiltered[sourceOffset++];
+    }
+  }
+
+  const colorEncoded = await transformDeflate(colorBytes, deflate ?? defaultDeflate());
+  const alphaEncoded = await transformDeflate(alphaBytes, deflate ?? defaultDeflate());
+  return {
+    kind: 'image',
+    width,
+    height,
+    colorSpace: colorType === 6 ? '/DeviceRGB' : '/DeviceGray',
+    bitsPerComponent: 8,
+    data: colorEncoded.data,
+    ...(colorEncoded.filter ? { filter: colorEncoded.filter } : {}),
+    softMask: {
+      width,
+      height,
+      bitsPerComponent: 8,
+      data: alphaEncoded.data,
+      ...(alphaEncoded.filter ? { filter: alphaEncoded.filter } : {}),
+    },
+  };
+}
+
+function parseSvgAttributes(source: string): Map<string, string> {
+  const attrs = new Map<string, string>();
+  const attrRe = /([A-Za-z_:][A-Za-z0-9_:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  for (const match of source.matchAll(attrRe)) {
+    attrs.set(match[1].toLowerCase(), match[2] ?? match[3] ?? '');
+  }
+  return attrs;
+}
+
+function parseSvgNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const match = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/.exec(value);
+  if (!match) return null;
+  const number = Number(match[1]);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parseSvgNumberList(value: string | undefined): number[] {
+  if (!value) return [];
+  const numbers: number[] = [];
+  const numberRe = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
+  for (const match of value.matchAll(numberRe)) {
+    const number = Number(match[0]);
+    if (Number.isFinite(number)) numbers.push(number);
+  }
+  return numbers;
+}
+
+function parseSvgStyle(attrs: Map<string, string>): Map<string, string> {
+  const style = new Map<string, string>();
+  const raw = attrs.get('style');
+  if (!raw) return style;
+  for (const part of raw.split(';')) {
+    const colon = part.indexOf(':');
+    if (colon <= 0) continue;
+    style.set(part.slice(0, colon).trim().toLowerCase(), part.slice(colon + 1).trim());
+  }
+  return style;
+}
+
+function svgAttr(attrs: Map<string, string>, style: Map<string, string>, name: string): string | undefined {
+  return attrs.get(name) ?? style.get(name);
+}
+
+function parseSvgColor(value: string | undefined): PdfColor | null {
+  if (!value) return null;
+  const color = value.trim().toLowerCase();
+  if (!color || color === 'none' || color === 'transparent' || color.startsWith('url(')) {
+    return null;
+  }
+  if (/^#[0-9a-f]{3}$/i.test(color)) {
+    const r = Number.parseInt(color[1] + color[1], 16) / 255;
+    const g = Number.parseInt(color[2] + color[2], 16) / 255;
+    const b = Number.parseInt(color[3] + color[3], 16) / 255;
+    return [r, g, b] as const;
+  }
+  if (/^#[0-9a-f]{6}$/i.test(color)) {
+    const r = Number.parseInt(color.slice(1, 3), 16) / 255;
+    const g = Number.parseInt(color.slice(3, 5), 16) / 255;
+    const b = Number.parseInt(color.slice(5, 7), 16) / 255;
+    return [r, g, b] as const;
+  }
+  if (color === 'black') return [0, 0, 0] as const;
+  if (color === 'white') return [1, 1, 1] as const;
+  if (color === 'red') return [1, 0, 0] as const;
+  if (color === 'green') return [0, 0.5, 0] as const;
+  if (color === 'blue') return [0, 0, 1] as const;
+  return null;
+}
+
+function writeSvgPaint(
+  out: PdfByteWriter,
+  attrs: Map<string, string>,
+  defaultFill: PdfColor | null,
+): boolean {
+  const style = parseSvgStyle(attrs);
+  const fill = parseSvgColor(svgAttr(attrs, style, 'fill')) ?? defaultFill;
+  const stroke = parseSvgColor(svgAttr(attrs, style, 'stroke'));
+  const strokeWidth = Math.max(0.1, parseSvgNumber(svgAttr(attrs, style, 'stroke-width')) ?? 1);
+
+  if (!fill && !stroke) return false;
+  if (fill) out.writeAscii(`${colorCommand(fill, 'rg')}\n`);
+  if (stroke) {
+    out.writeAscii(`${colorCommand(stroke, 'RG')}\n`);
+    out.writeAscii(`${formatNumber(strokeWidth)} w\n`);
+  }
+  out.writeAscii(fill && stroke ? 'B\n' : fill ? 'f\n' : 'S\n');
+  return true;
+}
+
+function writeSvgRectPath(out: PdfByteWriter, attrs: Map<string, string>): boolean {
+  const x = parseSvgNumber(attrs.get('x')) ?? 0;
+  const y = parseSvgNumber(attrs.get('y')) ?? 0;
+  const width = parseSvgNumber(attrs.get('width')) ?? 0;
+  const height = parseSvgNumber(attrs.get('height')) ?? 0;
+  if (width <= 0 || height <= 0) return false;
+  out.writeAscii(`${formatNumber(x)} ${formatNumber(y)} ${formatNumber(width)} ${formatNumber(height)} re\n`);
+  return true;
+}
+
+function writeSvgLinePath(out: PdfByteWriter, attrs: Map<string, string>): boolean {
+  const x1 = parseSvgNumber(attrs.get('x1')) ?? 0;
+  const y1 = parseSvgNumber(attrs.get('y1')) ?? 0;
+  const x2 = parseSvgNumber(attrs.get('x2')) ?? 0;
+  const y2 = parseSvgNumber(attrs.get('y2')) ?? 0;
+  out.writeAscii(`${formatNumber(x1)} ${formatNumber(y1)} m ${formatNumber(x2)} ${formatNumber(y2)} l\n`);
+  return true;
+}
+
+function writeSvgEllipsePath(out: PdfByteWriter, cx: number, cy: number, rx: number, ry: number): boolean {
+  if (rx <= 0 || ry <= 0) return false;
+  const k = 0.5522847498;
+  out.writeAscii(`${formatNumber(cx + rx)} ${formatNumber(cy)} m\n`);
+  out.writeAscii(`${formatNumber(cx + rx)} ${formatNumber(cy + ry * k)} ${formatNumber(cx + rx * k)} ${formatNumber(cy + ry)} ${formatNumber(cx)} ${formatNumber(cy + ry)} c\n`);
+  out.writeAscii(`${formatNumber(cx - rx * k)} ${formatNumber(cy + ry)} ${formatNumber(cx - rx)} ${formatNumber(cy + ry * k)} ${formatNumber(cx - rx)} ${formatNumber(cy)} c\n`);
+  out.writeAscii(`${formatNumber(cx - rx)} ${formatNumber(cy - ry * k)} ${formatNumber(cx - rx * k)} ${formatNumber(cy - ry)} ${formatNumber(cx)} ${formatNumber(cy - ry)} c\n`);
+  out.writeAscii(`${formatNumber(cx + rx * k)} ${formatNumber(cy - ry)} ${formatNumber(cx + rx)} ${formatNumber(cy - ry * k)} ${formatNumber(cx + rx)} ${formatNumber(cy)} c\nh\n`);
+  return true;
+}
+
+function writeSvgPointsPath(out: PdfByteWriter, points: string | undefined, close: boolean): boolean {
+  const values = parseSvgNumberList(points);
+  if (values.length < 4) return false;
+  out.writeAscii(`${formatNumber(values[0])} ${formatNumber(values[1])} m\n`);
+  for (let index = 2; index + 1 < values.length; index += 2) {
+    out.writeAscii(`${formatNumber(values[index])} ${formatNumber(values[index + 1])} l\n`);
+  }
+  if (close) out.writeAscii('h\n');
+  return true;
+}
+
+function writeSvgPathData(out: PdfByteWriter, d: string | undefined): boolean {
+  if (!d) return false;
+  const tokens = Array.from(d.matchAll(/[A-Za-z]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g), (match) => match[0]);
+  if (tokens.length === 0) return false;
+  let index = 0;
+  let cmd = '';
+  let x = 0;
+  let y = 0;
+  let startX = 0;
+  let startY = 0;
+  let wrote = false;
+
+  const isCommand = (value: string): boolean => /^[A-Za-z]$/.test(value);
+  const readNumber = (): number | null => {
+    if (index >= tokens.length || isCommand(tokens[index])) return null;
+    const number = Number(tokens[index++]);
+    return Number.isFinite(number) ? number : null;
+  };
+
+  while (index < tokens.length) {
+    if (isCommand(tokens[index])) {
+      cmd = tokens[index++];
+    } else if (!cmd) {
+      return false;
+    }
+
+    const relative = cmd === cmd.toLowerCase();
+    const upper = cmd.toUpperCase();
+    if (upper === 'Z') {
+      out.writeAscii('h\n');
+      x = startX;
+      y = startY;
+      wrote = true;
+      continue;
+    }
+
+    if (upper === 'M') {
+      const nx = readNumber();
+      const ny = readNumber();
+      if (nx === null || ny === null) return wrote;
+      x = relative ? x + nx : nx;
+      y = relative ? y + ny : ny;
+      startX = x;
+      startY = y;
+      out.writeAscii(`${formatNumber(x)} ${formatNumber(y)} m\n`);
+      wrote = true;
+      cmd = relative ? 'l' : 'L';
+      continue;
+    }
+
+    if (upper === 'L') {
+      const nx = readNumber();
+      const ny = readNumber();
+      if (nx === null || ny === null) return wrote;
+      x = relative ? x + nx : nx;
+      y = relative ? y + ny : ny;
+      out.writeAscii(`${formatNumber(x)} ${formatNumber(y)} l\n`);
+      wrote = true;
+      continue;
+    }
+
+    if (upper === 'H') {
+      const nx = readNumber();
+      if (nx === null) return wrote;
+      x = relative ? x + nx : nx;
+      out.writeAscii(`${formatNumber(x)} ${formatNumber(y)} l\n`);
+      wrote = true;
+      continue;
+    }
+
+    if (upper === 'V') {
+      const ny = readNumber();
+      if (ny === null) return wrote;
+      y = relative ? y + ny : ny;
+      out.writeAscii(`${formatNumber(x)} ${formatNumber(y)} l\n`);
+      wrote = true;
+      continue;
+    }
+
+    if (upper === 'C') {
+      const x1 = readNumber();
+      const y1 = readNumber();
+      const x2 = readNumber();
+      const y2 = readNumber();
+      const x3 = readNumber();
+      const y3 = readNumber();
+      if (x1 === null || y1 === null || x2 === null || y2 === null || x3 === null || y3 === null) {
+        return wrote;
+      }
+      const cx1 = relative ? x + x1 : x1;
+      const cy1 = relative ? y + y1 : y1;
+      const cx2 = relative ? x + x2 : x2;
+      const cy2 = relative ? y + y2 : y2;
+      x = relative ? x + x3 : x3;
+      y = relative ? y + y3 : y3;
+      out.writeAscii(`${formatNumber(cx1)} ${formatNumber(cy1)} ${formatNumber(cx2)} ${formatNumber(cy2)} ${formatNumber(x)} ${formatNumber(y)} c\n`);
+      wrote = true;
+      continue;
+    }
+
+    return wrote;
+  }
+
+  return wrote;
+}
+
+function parseSvgImage(bytes: Uint8Array, mediaType: string | undefined): PdfParsedImage | null {
   const normalizedType = mediaType?.toLowerCase().split(';', 1)[0]?.trim();
+  const source = TD.decode(bytes).trim();
+  if (normalizedType !== 'image/svg+xml' && !source.startsWith('<svg')) return null;
+  if (/<\s*(script|foreignobject|iframe|object|embed|image|use|style|animate|set|filter|mask|clippath|pattern|lineargradient|radialgradient)\b/i.test(source)) {
+    return null;
+  }
+  if (/\b(?:href|xlink:href)\s*=|url\s*\(/i.test(source)) {
+    return null;
+  }
+
+  const svgMatch = /<\s*svg\b([^>]*)>/i.exec(source);
+  if (!svgMatch) return null;
+  const svgAttrs = parseSvgAttributes(svgMatch[1]);
+  const viewBox = parseSvgNumberList(svgAttrs.get('viewbox'));
+  const minX = viewBox.length >= 4 ? viewBox[0] : 0;
+  const minY = viewBox.length >= 4 ? viewBox[1] : 0;
+  const viewWidth = viewBox.length >= 4 ? viewBox[2] : parseSvgNumber(svgAttrs.get('width')) ?? 0;
+  const viewHeight = viewBox.length >= 4 ? viewBox[3] : parseSvgNumber(svgAttrs.get('height')) ?? 0;
+  const width = parseSvgNumber(svgAttrs.get('width')) ?? viewWidth;
+  const height = parseSvgNumber(svgAttrs.get('height')) ?? viewHeight;
+  if (width <= 0 || height <= 0 || viewWidth <= 0 || viewHeight <= 0) return null;
+
+  const content = new PdfByteWriter();
+  const scaleX = width / viewWidth;
+  const scaleY = height / viewHeight;
+  content.writeAscii(`q ${formatNumber(scaleX)} 0 0 ${formatNumber(-scaleY)} ${formatNumber(-minX * scaleX)} ${formatNumber(height + minY * scaleY)} cm\n`);
+
+  const tagRe = /<\s*([A-Za-z][A-Za-z0-9:-]*)([^<>]*?)(?:\/\s*)?>/g;
+  for (const match of source.matchAll(tagRe)) {
+    const tag = match[1].toLowerCase();
+    if (tag === 'svg' || tag === 'g') continue;
+    const attrs = parseSvgAttributes(match[2]);
+    const shape = new PdfByteWriter();
+    let defaultFill: PdfColor | null = [0, 0, 0] as const;
+    let hasPath = false;
+
+    if (tag === 'rect') {
+      hasPath = writeSvgRectPath(shape, attrs);
+    } else if (tag === 'line') {
+      defaultFill = null;
+      hasPath = writeSvgLinePath(shape, attrs);
+    } else if (tag === 'circle') {
+      const cx = parseSvgNumber(attrs.get('cx')) ?? 0;
+      const cy = parseSvgNumber(attrs.get('cy')) ?? 0;
+      const r = parseSvgNumber(attrs.get('r')) ?? 0;
+      hasPath = writeSvgEllipsePath(shape, cx, cy, r, r);
+    } else if (tag === 'ellipse') {
+      const cx = parseSvgNumber(attrs.get('cx')) ?? 0;
+      const cy = parseSvgNumber(attrs.get('cy')) ?? 0;
+      const rx = parseSvgNumber(attrs.get('rx')) ?? 0;
+      const ry = parseSvgNumber(attrs.get('ry')) ?? 0;
+      hasPath = writeSvgEllipsePath(shape, cx, cy, rx, ry);
+    } else if (tag === 'polygon') {
+      hasPath = writeSvgPointsPath(shape, attrs.get('points'), true);
+    } else if (tag === 'polyline') {
+      defaultFill = null;
+      hasPath = writeSvgPointsPath(shape, attrs.get('points'), false);
+    } else if (tag === 'path') {
+      hasPath = writeSvgPathData(shape, attrs.get('d'));
+    }
+
+    if (!hasPath) continue;
+    content.writeAscii('q\n');
+    content.writeWriter(shape);
+    if (!writeSvgPaint(content, attrs, defaultFill)) {
+      content.writeAscii('n\n');
+    }
+    content.writeAscii('Q\n');
+  }
+
+  content.writeAscii('Q\n');
+  return {
+    kind: 'form',
+    width,
+    height,
+    data: imageDataFromChunks([content.toUint8Array()]),
+  };
+}
+
+function parsePdfImage(bytes: Uint8Array, mediaType: string | undefined): PdfParsedImage | null {
+  const normalizedType = mediaType?.toLowerCase().split(';', 1)[0]?.trim();
+  if (normalizedType === 'image/svg+xml') {
+    return parseSvgImage(bytes, mediaType);
+  }
   if (normalizedType === 'image/jpeg' || normalizedType === 'image/jpg') {
     return parseJpegImage(bytes);
   }
   if (normalizedType === 'image/png') {
     return parsePngImage(bytes);
   }
-  return parseJpegImage(bytes) ?? parsePngImage(bytes);
+  return parseJpegImage(bytes) ?? parsePngImage(bytes) ?? parseSvgImage(bytes, mediaType);
+}
+
+async function parsePdfImageAsync(
+  bytes: Uint8Array,
+  mediaType: string | undefined,
+  options: PdfRenderOptions,
+): Promise<PdfParsedImage | null> {
+  const normalizedType = mediaType?.toLowerCase().split(';', 1)[0]?.trim();
+  if (normalizedType === 'image/svg+xml') {
+    return parseSvgImage(bytes, mediaType);
+  }
+  if (normalizedType === 'image/jpeg' || normalizedType === 'image/jpg') {
+    return parseJpegImage(bytes);
+  }
+  if (normalizedType === 'image/png') {
+    return parsePngImage(bytes) ?? await parsePngImageWithAlpha(bytes, options.inflate, options.deflate);
+  }
+  return (
+    parseJpegImage(bytes) ??
+    parsePngImage(bytes) ??
+    await parsePngImageWithAlpha(bytes, options.inflate, options.deflate) ??
+    parseSvgImage(bytes, mediaType)
+  );
 }
 
 function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
@@ -1088,7 +1720,7 @@ class PdfBlockRenderer {
     const promise = (async (): Promise<PdfEmbeddedImage | null> => {
       try {
         const resolved = await resolver(context.resolvedSrc, context);
-        return this.registerResolvedImage(resolved, context.resolvedSrc);
+        return await this.registerResolvedImageAsync(resolved, context.resolvedSrc);
       } catch {
         return null;
       }
@@ -1123,6 +1755,32 @@ class PdfBlockRenderer {
     }
 
     const parsed = parsePdfImage(resolved.bytes, resolved.mediaType);
+    if (!parsed) return null;
+
+    const image: PdfEmbeddedImage = {
+      name: `Im${this.images.length + 1}`,
+      ...parsed,
+    };
+    this.images.push(image);
+    this.imageByKey.set(cacheKey, image);
+    this.imageByKey.set(fallbackKey, image);
+    return image;
+  }
+
+  private async registerResolvedImageAsync(
+    resolved: PdfResolvedImage | null,
+    fallbackKey: string,
+  ): Promise<PdfEmbeddedImage | null> {
+    if (!resolved) return null;
+
+    const cacheKey = resolved.cacheKey ?? fallbackKey;
+    const cached = this.imageByKey.get(cacheKey);
+    if (cached) {
+      this.imageByKey.set(fallbackKey, cached);
+      return cached;
+    }
+
+    const parsed = await parsePdfImageAsync(resolved.bytes, resolved.mediaType, this.options);
     if (!parsed) return null;
 
     const image: PdfEmbeddedImage = {
@@ -1739,6 +2397,15 @@ function buildPdfFile(
   const firstContentObject = firstPageObject + pageCount;
   const firstFontObject = firstContentObject + pageCount;
   const firstImageObject = firstFontObject + FONT_OBJECTS.length;
+  const imageObjectIds = new Map<PdfEmbeddedImage, number>();
+  const maskObjectIds = new Map<PdfImageMask, number>();
+  let nextObjectId = firstImageObject;
+  for (const image of images) {
+    imageObjectIds.set(image, nextObjectId++);
+    if (image.kind === 'image' && image.softMask) {
+      maskObjectIds.set(image.softMask, nextObjectId++);
+    }
+  }
 
   const writeObject = (objectId: number, writeBody: () => void): void => {
     offsets[objectId] = out.length;
@@ -1775,8 +2442,8 @@ function buildPdfFile(
       out.writeAscii('>>');
       if (images.length > 0) {
         out.writeAscii(' /XObject << ');
-        images.forEach((image, imageIndex) => {
-          out.writeAscii(`/${image.name} ${firstImageObject + imageIndex} 0 R `);
+        images.forEach((image) => {
+          out.writeAscii(`/${image.name} ${imageObjectIds.get(image) ?? 0} 0 R `);
         });
         out.writeAscii('>>');
       }
@@ -1802,17 +2469,30 @@ function buildPdfFile(
     });
   });
 
-  images.forEach((image, index) => {
-    writeObject(firstImageObject + index, () => {
-      out.writeAscii(
-        `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} `,
-      );
-      out.writeAscii(
-        `/ColorSpace ${image.colorSpace} /BitsPerComponent ${image.bitsPerComponent} `,
-      );
-      out.writeAscii(`/Filter /${image.filter} `);
+  images.forEach((image) => {
+    writeObject(imageObjectIds.get(image) ?? 0, () => {
+      if (image.kind === 'form') {
+        out.writeAscii(
+          `<< /Type /XObject /Subtype /Form /BBox [0 0 ${formatNumber(image.width)} ${formatNumber(image.height)}] `,
+        );
+        out.writeAscii(`/Length ${image.data.length} >>\nstream\n`);
+        for (const chunk of image.data.chunks) {
+          out.writeBytes(chunk);
+        }
+        out.writeAscii('\nendstream');
+        return;
+      }
+
+      out.writeAscii(`<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} `);
+      out.writeAscii(`/ColorSpace ${image.colorSpace} /BitsPerComponent ${image.bitsPerComponent} `);
+      if (image.filter) {
+        out.writeAscii(`/Filter /${image.filter} `);
+      }
       if (image.decodeParms) {
         out.writeAscii(`/DecodeParms ${image.decodeParms} `);
+      }
+      if (image.softMask) {
+        out.writeAscii(`/SMask ${maskObjectIds.get(image.softMask) ?? 0} 0 R `);
       }
       out.writeAscii(`/Length ${image.data.length} >>\nstream\n`);
       for (const chunk of image.data.chunks) {
@@ -1820,10 +2500,31 @@ function buildPdfFile(
       }
       out.writeAscii('\nendstream');
     });
+
+    if (image.kind === 'image' && image.softMask) {
+      const mask = image.softMask;
+      writeObject(maskObjectIds.get(mask) ?? 0, () => {
+        out.writeAscii(
+          `<< /Type /XObject /Subtype /Image /Width ${mask.width} /Height ${mask.height} `,
+        );
+        out.writeAscii(`/ColorSpace /DeviceGray /BitsPerComponent ${mask.bitsPerComponent} `);
+        if (mask.filter) {
+          out.writeAscii(`/Filter /${mask.filter} `);
+        }
+        if (mask.decodeParms) {
+          out.writeAscii(`/DecodeParms ${mask.decodeParms} `);
+        }
+        out.writeAscii(`/Length ${mask.data.length} >>\nstream\n`);
+        for (const chunk of mask.data.chunks) {
+          out.writeBytes(chunk);
+        }
+        out.writeAscii('\nendstream');
+      });
+    }
   });
 
   const xrefOffset = out.length;
-  const objectCount = firstImageObject + images.length;
+  const objectCount = nextObjectId;
   out.writeAscii(`xref\n0 ${objectCount}\n`);
   out.writeAscii('0000000000 65535 f \n');
   for (let objectId = 1; objectId < objectCount; objectId++) {

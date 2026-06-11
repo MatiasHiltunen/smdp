@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildPdfExportBlob,
   buildExportHtmlDocument,
   buildExportHtmlDocumentFromViewerHtml,
 } from "../src/client/ui";
@@ -141,4 +142,16 @@ test("buildExportHtmlDocumentFromViewerHtml includes export styles and custom ad
       delete (globalThis as any).window;
     }
   }
+});
+
+test("buildPdfExportBlob returns PDF bytes", async () => {
+  const blob = await buildPdfExportBlob({
+    markdown: "# PDF Export\n\nBody text.",
+  });
+  const text = new TextDecoder().decode(await blob.arrayBuffer());
+
+  assert.equal(blob.type, "application/pdf");
+  assert.ok(blob.size > 0);
+  assert.ok(text.startsWith("%PDF-1.7\n"));
+  assert.match(text, /\/Type \/Catalog/);
 });
