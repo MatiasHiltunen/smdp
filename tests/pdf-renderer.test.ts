@@ -44,9 +44,23 @@ function extractTextRuns(pdf: Uint8Array): Array<{ value: string; x: number; y: 
 }
 
 function runX(runs: ReadonlyArray<{ value: string; x: number }>, value: string): number {
-  const run = runs.find((candidate) => candidate.value === value);
+  const run = runs.find((candidate) => candidate.value.trim() === value);
   assert.ok(run, `expected text run ${value}`);
   return run.x;
+}
+
+function extractPdfText(pdf: Uint8Array): string {
+  const runs = extractTextRuns(pdf);
+  let text = "";
+  let previousY: number | null = null;
+  for (const run of runs) {
+    if (previousY !== null && Math.abs(run.y - previousY) > 0.001) {
+      text += "\n";
+    }
+    text += run.value;
+    previousY = run.y;
+  }
+  return text;
 }
 
 function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
@@ -145,14 +159,15 @@ const value = 1;
 \`\`\``),
   );
   const text = decodePdf(pdf);
+  const extracted = extractPdfText(pdf);
 
   assert.ok(text.startsWith("%PDF-1.7\n"));
   assert.match(text, /\/Type \/Catalog/);
   assert.match(text, /\/BaseFont \/Helvetica/);
   assert.match(text, /\/BaseFont \/Courier/);
-  assert.ok(text.includes(`<${hexText("Heading")}>`));
-  assert.ok(text.includes(`<${hexText("bold")}>`));
-  assert.ok(text.includes(`<${hexText("[x]")}>`));
+  assert.ok(extracted.includes("Heading"));
+  assert.ok(extracted.includes("bold"));
+  assert.ok(extracted.includes("[x]"));
   assert.match(text, /xref\n0 \d+/);
   assert.ok(text.endsWith("%%EOF\n"));
 });
@@ -168,10 +183,39 @@ test("uses Base-14 glyph metrics to preserve PDF word spacing", () => {
   );
   const runs = extractTextRuns(pdf);
 
-  assert.ok(runX(runs, "treat") - runX(runs, "We") > 23);
+  assert.ok(runX(runs, "treat") - runX(runs, "We") > 19);
   assert.ok(runX(runs, "parser") - runX(runs, "Markdown") > 67);
   assert.ok(runX(runs, "Project") - runX(runs, "&") > 12);
-  assert.ok(runX(runs, "(Today)") - runX(runs, "Well") > 29);
+  assert.ok(runX(runs, "(Today)") - runX(runs, "Well") > 27);
+});
+
+test("keeps PDF spaces attached to extractable text runs", () => {
+  const pdf = renderPDFFromBlocks(
+    u8(`## What This Utility Does Well (Today)
+1. Parses Markdown in a single forward pass, no backtracking.
+2. Outputs clean HTML _and_ can render to Canvas for pixel-perfect previews.
+3. Bundles a pragmatic syntax highlighter with precompiled grammars.
+
+## Try It Yourself on md2.at
+- Paste any public Markdown URL after the host:
+- We stream the remote document.`),
+    {
+      pageSize: { width: 1000, height: 500 },
+      margin: 24,
+      fontSize: 14,
+    },
+  );
+  const runs = extractTextRuns(pdf);
+  const text = extractPdfText(pdf);
+
+  assert.equal(runs.filter((run) => run.value === " ").length, 0);
+  assert.ok(text.includes("What This Utility Does Well (Today)"));
+  assert.ok(text.includes("Parses Markdown in a single forward pass"));
+  assert.ok(text.includes("Outputs clean HTML and can render to Canvas for pixel-perfect previews."));
+  assert.ok(text.includes("Try It Yourself on md2.at"));
+  assert.ok(text.includes("Paste any public Markdown URL after the host:"));
+  assert.ok(text.includes("We stream the remote document."));
+  assert.doesNotMatch(text, /WhatThis|DoesWell|Markdownin|cleanHTMLandcan|Canvasfor|onmd2\.at|Westream/);
 });
 
 test("embeds JPEG images as DCT XObjects", async () => {
@@ -265,10 +309,11 @@ test("falls back to alt text for unsafe SVG images", async () => {
     }),
   });
   const text = decodePdf(pdf);
+  const extracted = extractPdfText(pdf);
 
   assert.doesNotMatch(text, /\/Subtype \/Form/);
   assert.ok(text.includes(`<${hexText("[image")}>`));
-  assert.ok(text.includes(`<${hexText("Unsafe")}>`));
+  assert.ok(extracted.includes("Unsafe"));
 });
 
 test("deduplicates repeated images by resolved URL", async () => {
@@ -294,9 +339,10 @@ test("deduplicates repeated images by resolved URL", async () => {
 test("falls back to image alt text when no resolver is available", () => {
   const pdf = renderPDFFromBlocks(u8("![Alt text](missing.png)"));
   const text = decodePdf(pdf);
+  const extracted = extractPdfText(pdf);
 
   assert.ok(text.includes(`<${hexText("[image")}>`));
-  assert.ok(text.includes(`<${hexText("Alt")}>`));
+  assert.ok(extracted.includes("Alt text"));
   assert.doesNotMatch(text, /\/Subtype \/Image/);
 });
 
@@ -326,10 +372,10 @@ test("MDParser renderToPDF lazy entrypoint returns PDF bytes", async () => {
     },
   });
   const text = decodePdf(pdf);
+  const extracted = extractPdfText(pdf);
 
   assert.equal(resolved, "https://example.com/docs/logo.jpg");
   assert.ok(text.startsWith("%PDF-1.7\n"));
-  assert.ok(text.includes(`<${hexText("Hello")}>`));
-  assert.ok(text.includes(`<${hexText("PDF")}>`));
+  assert.ok(extracted.includes("Hello PDF"));
   assert.match(text, /\/Subtype \/Image/);
 });

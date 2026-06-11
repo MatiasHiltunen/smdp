@@ -1190,6 +1190,7 @@ class PdfByteWriter {
 class PdfLineComposer {
   private readonly line: PdfTextRun[] = [];
   private lineWidth = 0;
+  private pendingSpace = false;
   private readonly renderer: PdfBlockRenderer;
   private readonly x: number;
   private readonly maxWidth: number;
@@ -1214,19 +1215,11 @@ class PdfLineComposer {
 
   addSpace(style: PdfTextStyle): void {
     if (this.lineWidth === 0) return;
-    const width = measureTextSpan(SPACE, 0, SPACE.length, style);
-    if (this.lineWidth + width > this.maxWidth) {
+    this.pendingSpace = true;
+    const spaceWidth = measureTextSpan(SPACE, 0, SPACE.length, style);
+    if (this.lineWidth + spaceWidth > this.maxWidth) {
       this.flush();
-      return;
     }
-    this.line.push({
-      bytes: SPACE,
-      s: 0,
-      e: SPACE.length,
-      style: cloneStyle(style),
-      width,
-    });
-    this.lineWidth += width;
   }
 
   addTextSpan(
@@ -1264,24 +1257,42 @@ class PdfLineComposer {
     this.renderer.drawTextLine(this.line, this.x, this.lineHeight);
     this.line.length = 0;
     this.lineWidth = 0;
+    this.pendingSpace = false;
   }
 
   private addSegment(bytes: Uint8Array, s: number, e: number, style: PdfTextStyle): void {
     if (s >= e) return;
-    const width = measureTextSpan(bytes, s, e, style);
+    const segmentWidth = measureTextSpan(bytes, s, e, style);
+    const spaceWidth = this.pendingSpace && this.lineWidth > 0
+      ? measureTextSpan(SPACE, 0, SPACE.length, style)
+      : 0;
+    let width = segmentWidth + spaceWidth;
     if (this.lineWidth > 0 && this.lineWidth + width > this.maxWidth) {
       this.flush();
+      width = segmentWidth;
     }
 
     if (width > this.maxWidth) {
+      this.pendingSpace = false;
       this.addLongSegment(bytes, s, e, style);
       return;
     }
 
+    let runBytes = bytes;
+    let runStart = s;
+    let runEnd = e;
+    if (this.pendingSpace && this.lineWidth > 0) {
+      runBytes = new Uint8Array(e - s + 1);
+      runBytes[0] = 0x20;
+      runBytes.set(bytes.subarray(s, e), 1);
+      runStart = 0;
+      runEnd = runBytes.length;
+    }
+    this.pendingSpace = false;
     this.line.push({
-      bytes,
-      s,
-      e,
+      bytes: runBytes,
+      s: runStart,
+      e: runEnd,
       style: cloneStyle(style),
       width,
     });
