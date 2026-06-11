@@ -218,6 +218,35 @@ test("keeps PDF spaces attached to extractable text runs", () => {
   assert.doesNotMatch(text, /WhatThis|DoesWell|Markdownin|cleanHTMLandcan|Canvasfor|onmd2\.at|Westream/);
 });
 
+test("renders fenced code with syntax colors and extractable spacing", () => {
+  const pdf = renderPDFFromBlocks(
+    u8(`\`\`\`js
+const answer = 42;
+// comment
+\`\`\``),
+    {
+      pageSize: { width: 420, height: 240 },
+      margin: 24,
+      fontSize: 14,
+      codeColors: {
+        kw: [1, 0, 0],
+        id: [0.1, 0.1, 0.1],
+        num: [0, 0, 1],
+        com: [0, 0.5, 0],
+      },
+    },
+  );
+  const text = decodePdf(pdf);
+  const extracted = extractPdfText(pdf);
+
+  assert.match(text, /1 0 0 rg\n1 0 0 1 [\d.]+ [\d.]+ Tm\n<636F6E7374> Tj/);
+  assert.match(text, /0 0 1 rg\n1 0 0 1 [\d.]+ [\d.]+ Tm\n<203432> Tj/);
+  assert.match(text, /0 0.5 0 rg\n1 0 0 1 [\d.]+ [\d.]+ Tm\n<2F2F20636F6D6D656E74> Tj/);
+  assert.ok(extracted.includes("const answer = 42;"));
+  assert.ok(extracted.includes("// comment"));
+  assert.equal(extractTextRuns(pdf).filter((run) => run.value === " ").length, 0);
+});
+
 test("embeds JPEG images as DCT XObjects", async () => {
   let calls = 0;
   const pdf = await renderPDFFromBlocksAsync(u8("Before ![Photo](photo.jpg) after"), {

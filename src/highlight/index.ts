@@ -1,5 +1,13 @@
 import type { AuthorLanguageSpec } from './language-core';
-import { CompiledLanguageSpec, GenericHighlighter, compileLanguage, BinaryReader } from './language-core';
+import {
+  CompiledLanguageSpec,
+  GenericHighlighter,
+  GenericTokenizer,
+  TokenType,
+  type TokenTypeValue,
+  compileLanguage,
+  BinaryReader,
+} from './language-core';
 import { LANGUAGE_BINARY, fromBase64 } from './precompiled';
 import { HtmlArena } from '../parser';
 
@@ -43,6 +51,24 @@ type HighlighterLike = {
 type LanguageEntry = {
   spec: CompiledLanguageSpec;
   highlighter: HighlighterLike;
+};
+
+export type HighlightTokenKind =
+  | 'text'
+  | 'kw'
+  | 'id'
+  | 'num'
+  | 'str'
+  | 'tpl'
+  | 'com'
+  | 'rx'
+  | 'op'
+  | 'punc';
+
+export type HighlightTokenSpan = {
+  kind: HighlightTokenKind;
+  s: number;
+  e: number;
 };
 
 const aliasRegistry = new Map<string, LanguageEntry>();
@@ -105,6 +131,48 @@ export async function highlightCodeBlock(bytes: Uint8Array, lang?: string): Prom
     bytes,
     normalized?.className ?? (lang ? lang.toLowerCase() : undefined),
   );
+}
+
+function tokenKind(type: TokenTypeValue): HighlightTokenKind {
+  switch (type) {
+    case TokenType.Keyword:
+      return 'kw';
+    case TokenType.Identifier:
+      return 'id';
+    case TokenType.LiteralNum:
+      return 'num';
+    case TokenType.LiteralStr:
+      return 'str';
+    case TokenType.LiteralTpl:
+      return 'tpl';
+    case TokenType.Comment:
+      return 'com';
+    case TokenType.Regex:
+      return 'rx';
+    case TokenType.Operator:
+      return 'op';
+    case TokenType.Punct:
+      return 'punc';
+    default:
+      return 'text';
+  }
+}
+
+export function tokenizeCodeBlock(bytes: Uint8Array, lang?: string): HighlightTokenSpan[] | null {
+  ensurePrecompiledLoaded();
+  const normalized = normalizeLanguage(lang);
+  if (!normalized) return null;
+
+  const entry = aliasRegistry.get(normalized.key);
+  if (!entry) return null;
+
+  const tokens: HighlightTokenSpan[] = [];
+  const tokenizer = new GenericTokenizer(entry.spec);
+  tokenizer.tokenize(bytes, (type, s, e) => {
+    if (s >= e) return;
+    tokens.push({ kind: tokenKind(type), s, e });
+  });
+  return tokens;
 }
 
 export function getRegisteredHighlightLanguages(): string[] {

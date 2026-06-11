@@ -35,6 +35,20 @@ test('highlights JavaScript aliases with token markup', async () => {
   assert.ok(html.includes('<span class="tok-com">// comment</span>'));
 });
 
+test('exposes structured highlight token spans', async () => {
+  const mod = await loadHighlightModule();
+  const bytes = encoder.encode('const answer = 42;');
+  const tokens = mod.tokenizeCodeBlock(bytes, 'js');
+
+  assert.ok(tokens);
+  assert.deepEqual(
+    tokens.map((token) => token.kind),
+    ['kw', 'text', 'id', 'text', 'op', 'text', 'num', 'punc'],
+  );
+  assert.equal(decoder.decode(bytes.subarray(tokens[0].s, tokens[0].e)), 'const');
+  assert.equal(decoder.decode(bytes.subarray(tokens[6].s, tokens[6].e)), '42');
+});
+
 test('tokenizes JavaScript regexes and template literals', async () => {
   const source = 'const re = /foo+/g;\nconst msg = `value: ${42}`;';
   const html = await highlightToHtml(source, 'javascript');

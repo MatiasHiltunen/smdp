@@ -116,9 +116,12 @@ export type {
 } from './types';
 
 export type {
+  PdfCodeColorKey,
+  PdfCodeColorOptions,
   PdfImageResolver,
   PdfImageResolverContext,
   PdfPageSize,
+  PdfRGB,
   PdfRenderOptions,
   PdfResolvedImage,
 } from './pdf-renderer';

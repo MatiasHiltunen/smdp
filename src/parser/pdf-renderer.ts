@@ -4,6 +4,7 @@ import { FONT_SIZE, INDENT, TD, TE } from './constants';
 import type { InlineToken } from './types';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
+import { tokenizeCodeBlock, type HighlightTokenKind } from '../highlight';
 
 export type PdfPageSize =
   | 'letter'
@@ -18,6 +19,7 @@ export interface PdfRenderOptions extends ParserOptions {
   margin?: number;
   fontSize?: number;
   lineHeight?: number;
+  codeColors?: PdfCodeColorOptions;
   imageResolver?: PdfImageResolver;
   inflate?: PdfBinaryTransform;
   deflate?: PdfBinaryTransform;
@@ -47,7 +49,11 @@ export type PdfBinaryTransform = (
   input: Uint8Array,
 ) => Uint8Array | Promise<Uint8Array>;
 
-type PdfColor = readonly [number, number, number];
+export type PdfRGB = readonly [number, number, number];
+export type PdfCodeColorKey = Exclude<HighlightTokenKind, 'text'>;
+export type PdfCodeColorOptions = Partial<Record<PdfCodeColorKey, PdfRGB>>;
+
+type PdfColor = PdfRGB;
 
 type PdfFont =
   | 'regular'
@@ -149,6 +155,18 @@ const COLORS = {
   quote: [0.18, 0.34, 0.6] as const,
 } as const;
 
+const CODE_COLORS: Record<PdfCodeColorKey, PdfColor> = {
+  kw: [0.03, 0.35, 0.7] as const,
+  id: [0.08, 0.1, 0.12] as const,
+  num: [0.72, 0.5, 0.05] as const,
+  str: [0.09, 0.5, 0.22] as const,
+  tpl: [0.03, 0.45, 0.52] as const,
+  com: [0.45, 0.5, 0.57] as const,
+  op: [0.68, 0.2, 0.52] as const,
+  punc: [0.38, 0.42, 0.48] as const,
+  rx: [0.74, 0.32, 0.08] as const,
+};
+
 const FONT_IDS: Record<PdfFont, string> = {
   regular: 'F1',
   bold: 'F2',
@@ -206,6 +224,14 @@ function formatNumber(value: number): string {
 
 function colorCommand(color: PdfColor, operator: 'rg' | 'RG'): string {
   return `${formatNumber(color[0])} ${formatNumber(color[1])} ${formatNumber(color[2])} ${operator}`;
+}
+
+function isWhitespaceSpan(bytes: Uint8Array, s: number, e: number): boolean {
+  if (s >= e) return false;
+  for (let index = s; index < e; index++) {
+    if (!isAsciiWhitespace(bytes[index])) return false;
+  }
+  return true;
 }
 
 function resolvePageSize(pageSize: PdfPageSize | undefined): { width: number; height: number } {
@@ -1335,6 +1361,7 @@ class PdfBlockRenderer {
   private indent = 0;
   private para: PdfLineComposer | null = null;
   private inCode = false;
+  private codeLang: string | undefined;
   private listStack: ListFrame[] = [];
   private infoStackDepth = 0;
   private readonly options: PdfRenderOptions;
@@ -1434,6 +1461,7 @@ class PdfBlockRenderer {
         case 'codeOpen':
           this.closeParagraph();
           this.inCode = true;
+          this.codeLang = ev.info?.lang ?? ev.info?.rawLang;
           this.addVerticalSpace(this.baseFontSize * 0.4);
           break;
 
@@ -1446,6 +1474,7 @@ class PdfBlockRenderer {
         case 'codeClose':
           if (this.inCode) {
             this.inCode = false;
+            this.codeLang = undefined;
             this.addVerticalSpace(this.baseFontSize * 0.6);
           }
           break;
@@ -1581,6 +1610,7 @@ class PdfBlockRenderer {
         case 'codeOpen':
           this.closeParagraph();
           this.inCode = true;
+          this.codeLang = ev.info?.lang ?? ev.info?.rawLang;
           this.addVerticalSpace(this.baseFontSize * 0.4);
           break;
 
@@ -1593,6 +1623,7 @@ class PdfBlockRenderer {
         case 'codeClose':
           if (this.inCode) {
             this.inCode = false;
+            this.codeLang = undefined;
             this.addVerticalSpace(this.baseFontSize * 0.6);
           }
           break;
@@ -1930,6 +1961,11 @@ class PdfBlockRenderer {
     );
   }
 
+  private codeColor(kind: HighlightTokenKind): PdfColor {
+    if (kind === 'text') return COLORS.text;
+    return this.options.codeColors?.[kind] ?? CODE_COLORS[kind];
+  }
+
   private renderListItem(
     markdown: Uint8Array,
     ev: { s: number; e: number; task?: boolean; checked?: boolean },
@@ -2008,7 +2044,28 @@ class PdfBlockRenderer {
     );
     const line = this.createLine(lineHeight);
     if (s < e) {
-      line.addTextSpan(markdown, s, e, this.style({ font: 'mono', size: this.baseFontSize * 0.9 }), true);
+      const codeStyle = this.style({ font: 'mono', size: this.baseFontSize * 0.9 });
+      const lineBytes = markdown.subarray(s, e);
+      const tokens = tokenizeCodeBlock(lineBytes, this.codeLang);
+      if (!tokens) {
+        line.addTextSpan(lineBytes, 0, lineBytes.length, codeStyle, true);
+      } else {
+        let pendingWhitespaceStart = -1;
+        for (const token of tokens) {
+          if (isWhitespaceSpan(lineBytes, token.s, token.e)) {
+            if (pendingWhitespaceStart < 0) pendingWhitespaceStart = token.s;
+            continue;
+          }
+
+          const tokenStyle = mergeStyle(codeStyle, { color: this.codeColor(token.kind) });
+          const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : token.s;
+          line.addTextSpan(lineBytes, runStart, token.e, tokenStyle, true);
+          pendingWhitespaceStart = -1;
+        }
+        if (pendingWhitespaceStart >= 0) {
+          line.addTextSpan(lineBytes, pendingWhitespaceStart, lineBytes.length, codeStyle, true);
+        }
+      }
       line.flush();
     } else {
       this.cursorY -= lineHeight;
