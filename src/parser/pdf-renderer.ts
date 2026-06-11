@@ -141,6 +141,35 @@ type ListFrame = {
   counter: number;
 };
 
+type PdfTableAlign = 'left' | 'center' | 'right';
+
+type PdfTableInputCell = {
+  s: number;
+  e: number;
+  align: PdfTableAlign;
+};
+
+type PdfTableInputRow = {
+  header: boolean;
+  cells: PdfTableInputCell[];
+};
+
+type PdfTableBuffer = {
+  alignments: PdfTableAlign[];
+  rows: PdfTableInputRow[];
+};
+
+type PdfTableRenderCell = {
+  align: PdfTableAlign;
+  rows: PdfTextRun[][];
+};
+
+type PdfTableRenderRow = {
+  header: boolean;
+  cells: PdfTableRenderCell[];
+  height: number;
+};
+
 const PAGE_SIZES = {
   letter: { width: 612, height: 792 },
   a4: { width: 595.28, height: 841.89 },
@@ -152,6 +181,8 @@ const COLORS = {
   accent: [0.03, 0.35, 0.7] as const,
   rule: [0.72, 0.75, 0.8] as const,
   codeBg: [0.94, 0.95, 0.97] as const,
+  tableHeaderBg: [0.9, 0.93, 0.97] as const,
+  tableStripeBg: [0.98, 0.99, 1] as const,
   quote: [0.18, 0.34, 0.6] as const,
 } as const;
 
@@ -318,11 +349,31 @@ function readUtf8CodePoint(
   return { codePoint: 0x3f, next: index + 1 };
 }
 
-function mapWinAnsi(codePoint: number): number {
+function mapWinAnsi(codePoint: number): number | null {
   if (codePoint >= 0x20 && codePoint <= 0x7e) return codePoint;
   if (codePoint >= 0xa0 && codePoint <= 0xff) return codePoint;
 
   switch (codePoint) {
+    case 0x0152:
+      return 0x8c;
+    case 0x0153:
+      return 0x9c;
+    case 0x0160:
+      return 0x8a;
+    case 0x0161:
+      return 0x9a;
+    case 0x0178:
+      return 0x9f;
+    case 0x017d:
+      return 0x8e;
+    case 0x017e:
+      return 0x9e;
+    case 0x0192:
+      return 0x83;
+    case 0x02c6:
+      return 0x88;
+    case 0x02dc:
+      return 0x98;
     case 0x2013:
       return 0x96;
     case 0x2014:
@@ -335,16 +386,47 @@ function mapWinAnsi(codePoint: number): number {
       return 0x93;
     case 0x201d:
       return 0x94;
+    case 0x201a:
+      return 0x82;
+    case 0x201e:
+      return 0x84;
     case 0x2022:
       return 0x95;
     case 0x2026:
       return 0x85;
+    case 0x2030:
+      return 0x89;
+    case 0x2039:
+      return 0x8b;
+    case 0x203a:
+      return 0x9b;
     case 0x20ac:
       return 0x80;
+    case 0x2122:
+      return 0x99;
     default:
-      return 0x3f;
+      return null;
   }
 }
+
+function isPdfTextIgnorable(codePoint: number): boolean {
+  return (
+    codePoint === 0x200d ||
+    (codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+    (codePoint >= 0xe0100 && codePoint <= 0xe01ef)
+  );
+}
+
+function pdfDisplayByteForCodePoint(codePoint: number): number | null {
+  if (isPdfTextIgnorable(codePoint)) return null;
+  return mapWinAnsi(codePoint) ?? 0x3f;
+}
+
+type PdfEncodedText = {
+  hex: string;
+  actualHex?: string;
+  hasNonAscii: boolean;
+};
 
 function asciiWidth(byte: number, font: PdfFont): number {
   if (font === 'mono') return 0.6;
@@ -363,30 +445,65 @@ function measureTextSpan(bytes: Uint8Array, s: number, e: number, style: PdfText
       width += asciiWidth(isAsciiWhitespace(byte) ? 0x20 : byte, style.font);
       i++;
     } else {
-      width += style.font === 'mono' ? 0.6 : 0.56;
-      i = nextUtf8Index(bytes, i, e);
+      const decoded = readUtf8CodePoint(bytes, i, e);
+      const mapped = pdfDisplayByteForCodePoint(decoded.codePoint);
+      if (mapped !== null) {
+        width += asciiWidth(mapped, style.font);
+      }
+      i = decoded.next;
     }
   }
   return width * style.size;
 }
 
-function writePdfTextHex(out: PdfByteWriter, bytes: Uint8Array, s: number, e: number): void {
+function appendUtf16BeHex(hex: string, codePoint: number): string {
+  if (codePoint <= 0xffff) {
+    return hex + HEX[(codePoint >>> 8) & 0xff] + HEX[codePoint & 0xff];
+  }
+  const value = codePoint - 0x10000;
+  const high = 0xd800 + (value >>> 10);
+  const low = 0xdc00 + (value & 0x3ff);
+  return (
+    hex +
+    HEX[(high >>> 8) & 0xff] +
+    HEX[high & 0xff] +
+    HEX[(low >>> 8) & 0xff] +
+    HEX[low & 0xff]
+  );
+}
+
+function encodePdfText(bytes: Uint8Array, s: number, e: number): PdfEncodedText {
   let hex = '';
+  let actualHex = 'FEFF';
+  let hasNonAscii = false;
+  let differs = false;
   let i = s;
   while (i < e) {
     const byte = bytes[i];
     if (byte < 0x80) {
       const mapped = byte < 0x20 ? (isAsciiWhitespace(byte) ? 0x20 : 0x3f) : byte;
       hex += HEX[mapped];
+      actualHex = appendUtf16BeHex(actualHex, mapped);
+      differs ||= mapped !== byte;
       i++;
       continue;
     }
 
     const decoded = readUtf8CodePoint(bytes, i, e);
-    hex += HEX[mapWinAnsi(decoded.codePoint)];
+    hasNonAscii = true;
+    actualHex = appendUtf16BeHex(actualHex, decoded.codePoint);
+    const mapped = pdfDisplayByteForCodePoint(decoded.codePoint);
+    if (mapped !== null) {
+      hex += HEX[mapped];
+    }
+    differs ||= mapped !== mapWinAnsi(decoded.codePoint);
     i = decoded.next;
   }
-  out.writeAscii(hex);
+  return {
+    hex,
+    ...(hasNonAscii || differs ? { actualHex } : {}),
+    hasNonAscii,
+  };
 }
 
 function readUint16(bytes: Uint8Array, offset: number): number {
@@ -1363,6 +1480,15 @@ function pushTextRun(
   });
 }
 
+function pushGeneratedTextRun(runs: PdfTextRun[], text: string, style: PdfTextStyle): void {
+  const bytes = TE.encode(text);
+  pushTextRun(runs, bytes, 0, bytes.length, style);
+}
+
+function measureRuns(runs: readonly PdfTextRun[]): number {
+  return runs.reduce((width, run) => width + run.width, 0);
+}
+
 function measureRunSlice(
   run: PdfTextRun,
   s: number,
@@ -1444,6 +1570,173 @@ function wrapCodeRuns(runs: readonly PdfTextRun[], maxWidth: number): PdfTextRun
   return rows;
 }
 
+function fitTableColumnWidths(
+  desiredWidths: readonly number[],
+  availableWidth: number,
+  minColumnWidth: number,
+): number[] {
+  const columnCount = desiredWidths.length;
+  if (columnCount === 0) return [];
+
+  if (availableWidth <= minColumnWidth * columnCount) {
+    return new Array(columnCount).fill(availableWidth / columnCount);
+  }
+
+  const desiredTotal = desiredWidths.reduce((sum, width) => sum + width, 0);
+  if (desiredTotal <= availableWidth) {
+    const extra = (availableWidth - desiredTotal) / columnCount;
+    return desiredWidths.map((width) => width + extra);
+  }
+
+  const flex = desiredWidths.map((width) => Math.max(0, width - minColumnWidth));
+  const flexTotal = flex.reduce((sum, width) => sum + width, 0);
+  const flexibleWidth = availableWidth - minColumnWidth * columnCount;
+  if (flexTotal <= 0) {
+    return new Array(columnCount).fill(availableWidth / columnCount);
+  }
+  return desiredWidths.map((_, index) => minColumnWidth + flexibleWidth * (flex[index] / flexTotal));
+}
+
+function collectInlineRuns(
+  markdown: Uint8Array,
+  s: number,
+  e: number,
+  runs: PdfTextRun[],
+  baseStyle: PdfTextStyle,
+  options: PdfRenderOptions,
+  urlAllowlist: (url: string) => boolean,
+  baseUrl: string | undefined,
+  depth = 0,
+): void {
+  const inlineParseOptions = options.allowRawHtml ? { allowRawHtml: true } : undefined;
+  const styleStack: PdfTextStyle[] = [];
+  let currentStyle = cloneStyle(baseStyle);
+  let pendingTextStart = -1;
+  let pendingTextEnd = -1;
+
+  const flushText = (): void => {
+    if (pendingTextStart >= 0 && pendingTextEnd > pendingTextStart) {
+      pushTextRun(runs, markdown, pendingTextStart, pendingTextEnd, currentStyle);
+    }
+    pendingTextStart = -1;
+    pendingTextEnd = -1;
+  };
+
+  const pushStyle = (patch: Partial<PdfTextStyle>): void => {
+    flushText();
+    styleStack.push(currentStyle);
+    currentStyle = mergeStyle(currentStyle, patch);
+  };
+
+  const popStyle = (): void => {
+    flushText();
+    currentStyle = styleStack.pop() ?? cloneStyle(baseStyle);
+  };
+
+  const appendText = (tok: Extract<InlineToken, { kind: 'text' }>): void => {
+    if (pendingTextStart >= 0 && tok.s === pendingTextEnd) {
+      pendingTextEnd = tok.e;
+      return;
+    }
+    flushText();
+    pendingTextStart = tok.s;
+    pendingTextEnd = tok.e;
+  };
+
+  for (const tok of inlineTokens(markdown, s, e, inlineParseOptions)) {
+    switch (tok.kind) {
+      case 'text':
+        appendText(tok);
+        break;
+
+      case 'code':
+        flushText();
+        pushTextRun(runs, markdown, tok.s, tok.e, mergeStyle(currentStyle, {
+          font: 'mono',
+          size: Math.max(8, currentStyle.size * 0.9),
+          color: COLORS.quote,
+        }));
+        break;
+
+      case 'img':
+        flushText();
+        pushGeneratedTextRun(runs, '[image', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        if (tok.altE > tok.altS) {
+          pushGeneratedTextRun(runs, ': ', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+          pushTextRun(runs, markdown, tok.altS, tok.altE, mergeStyle(currentStyle, {
+            font: 'italic',
+            color: COLORS.muted,
+          }));
+        }
+        pushGeneratedTextRun(runs, ']', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        break;
+
+      case 'link': {
+        flushText();
+        const href = TD.decode(markdown.subarray(tok.hrefS, tok.hrefE));
+        const resolvedHref = resolveUrlRelativeToBase(href, baseUrl);
+        const linkStyle = urlAllowlist(resolvedHref)
+          ? mergeStyle(currentStyle, { color: COLORS.accent, underline: true })
+          : currentStyle;
+        if (depth < 8) {
+          collectInlineRuns(markdown, tok.textS, tok.textE, runs, linkStyle, options, urlAllowlist, baseUrl, depth + 1);
+        } else {
+          pushTextRun(runs, markdown, tok.textS, tok.textE, linkStyle);
+        }
+        break;
+      }
+
+      case 'autolink':
+        flushText();
+        pushTextRun(runs, markdown, tok.s, tok.e, mergeStyle(currentStyle, {
+          color: COLORS.accent,
+          underline: true,
+        }));
+        break;
+
+      case 'footnoteRef':
+        flushText();
+        pushGeneratedTextRun(runs, '[', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        pushTextRun(runs, markdown, tok.idS, tok.idE, mergeStyle(currentStyle, {
+          size: currentStyle.size * 0.75,
+          color: COLORS.accent,
+        }));
+        pushGeneratedTextRun(runs, ']', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        break;
+
+      case 'rawHtml':
+        flushText();
+        break;
+
+      case 'emOpen':
+        pushStyle({ font: currentStyle.font === 'bold' ? 'boldItalic' : 'italic' });
+        break;
+
+      case 'emClose':
+        popStyle();
+        break;
+
+      case 'strongOpen':
+        pushStyle({ font: currentStyle.font === 'italic' ? 'boldItalic' : 'bold' });
+        break;
+
+      case 'strongClose':
+        popStyle();
+        break;
+
+      case 'strikeOpen':
+        pushStyle({ strike: true });
+        break;
+
+      case 'strikeClose':
+        popStyle();
+        break;
+    }
+  }
+
+  flushText();
+}
+
 class PdfBlockRenderer {
   readonly pages: PdfPage[] = [];
   private readonly pageWidth: number;
@@ -1460,6 +1753,7 @@ class PdfBlockRenderer {
   private para: PdfLineComposer | null = null;
   private inCode = false;
   private codeLang: string | undefined;
+  private tableBuffer: PdfTableBuffer | null = null;
   private listStack: ListFrame[] = [];
   private infoStackDepth = 0;
   private readonly options: PdfRenderOptions;
@@ -1579,18 +1873,19 @@ class PdfBlockRenderer {
 
         case 'tableOpen':
           this.closeParagraph();
-          this.addVerticalSpace(this.baseFontSize * 0.4);
+          this.beginTable();
           break;
 
         case 'tableHeader':
-          this.renderTableCells(markdown, ev.cells, true);
+          this.addTableHeader(ev.cells);
           break;
 
         case 'tableRow':
-          this.renderTableCells(markdown, ev.cells, false);
+          this.addTableRow(ev.cells);
           break;
 
         case 'tableClose':
+          this.finishTable(markdown);
           this.addVerticalSpace(this.baseFontSize * 0.6);
           break;
 
@@ -1615,6 +1910,7 @@ class PdfBlockRenderer {
       }
     }
 
+    this.finishTable(markdown);
     this.closeParagraph();
     return buildPdfFile(this.pages, this.pageWidth, this.pageHeight, this.images);
   }
@@ -1728,18 +2024,19 @@ class PdfBlockRenderer {
 
         case 'tableOpen':
           this.closeParagraph();
-          this.addVerticalSpace(this.baseFontSize * 0.4);
+          this.beginTable();
           break;
 
         case 'tableHeader':
-          await this.renderTableCellsAsync(markdown, ev.cells, true, imageRenderer);
+          this.addTableHeader(ev.cells);
           break;
 
         case 'tableRow':
-          await this.renderTableCellsAsync(markdown, ev.cells, false, imageRenderer);
+          this.addTableRow(ev.cells);
           break;
 
         case 'tableClose':
+          this.finishTable(markdown);
           this.addVerticalSpace(this.baseFontSize * 0.6);
           break;
 
@@ -1764,6 +2061,7 @@ class PdfBlockRenderer {
       }
     }
 
+    this.finishTable(markdown);
     this.closeParagraph();
     return buildPdfFile(this.pages, this.pageWidth, this.pageHeight, this.images);
   }
@@ -1772,25 +2070,39 @@ class PdfBlockRenderer {
     const maxSize = runs.reduce((size, run) => Math.max(size, run.style.size), this.baseFontSize);
     this.ensureSpace(lineHeight);
     const baseline = this.cursorY - maxSize;
+    this.drawTextRunsAt(runs, x, baseline);
+    this.cursorY -= lineHeight;
+  }
+
+  private drawTextRunsAt(runs: readonly PdfTextRun[], x: number, baseline: number): void {
     let cursorX = x;
     const decorations: Array<{ run: PdfTextRun; x1: number; x2: number; baseline: number }> = [];
     const content = this.currentPage.content;
 
-    content.writeAscii('BT\n');
     for (const run of runs) {
       if (run.s >= run.e) continue;
+      const encoded = encodePdfText(run.bytes, run.s, run.e);
+      if (encoded.hex.length === 0) {
+        cursorX += run.width;
+        continue;
+      }
       const fontId = FONT_IDS[run.style.font];
+      if (encoded.actualHex) {
+        content.writeAscii(`/Span << /ActualText <${encoded.actualHex}> >> BDC\n`);
+      }
+      content.writeAscii('BT\n');
       content.writeAscii(`/${fontId} ${formatNumber(run.style.size)} Tf\n`);
       content.writeAscii(`${colorCommand(run.style.color, 'rg')}\n`);
-      content.writeAscii(`1 0 0 1 ${formatNumber(cursorX)} ${formatNumber(baseline)} Tm\n<`);
-      writePdfTextHex(content, run.bytes, run.s, run.e);
-      content.writeAscii('> Tj\n');
+      content.writeAscii(`1 0 0 1 ${formatNumber(cursorX)} ${formatNumber(baseline)} Tm\n<${encoded.hex}> Tj\n`);
+      content.writeAscii('ET\n');
+      if (encoded.actualHex) {
+        content.writeAscii('EMC\n');
+      }
       if (run.style.underline || run.style.strike) {
         decorations.push({ run, x1: cursorX, x2: cursorX + run.width, baseline });
       }
       cursorX += run.width;
     }
-    content.writeAscii('ET\n');
 
     for (const decoration of decorations) {
       if (decoration.run.style.underline) {
@@ -1814,8 +2126,6 @@ class PdfBlockRenderer {
         );
       }
     }
-
-    this.cursorY -= lineHeight;
   }
 
   private renderInlineImageSync(
@@ -2186,75 +2496,208 @@ class PdfBlockRenderer {
     const lineHeight = this.baseFontSize * 1.35;
     const x = this.margin + this.indent;
     const width = Math.max(80, this.contentWidth - this.indent);
-    if (s < e) {
-      const codeStyle = this.style({ font: 'mono', size: this.baseFontSize * 0.9 });
-      const lineBytes = markdown.subarray(s, e);
-      const rows = wrapCodeRuns(this.codeRunsForLine(lineBytes, codeStyle), width);
-      for (const row of rows) {
-        this.drawCodeLineBackground(lineHeight, width);
-        this.drawTextLine(row, x, lineHeight);
-      }
-    } else {
+    if (s >= e || isWhitespaceSpan(markdown, s, e)) {
       this.drawCodeLineBackground(lineHeight, width);
       this.cursorY -= lineHeight;
+      return;
+    }
+
+    const codeStyle = this.style({ font: 'mono', size: this.baseFontSize * 0.9 });
+    const lineBytes = markdown.subarray(s, e);
+    const rows = wrapCodeRuns(this.codeRunsForLine(lineBytes, codeStyle), width);
+    for (const row of rows) {
+      this.drawCodeLineBackground(lineHeight, width);
+      this.drawTextLine(row, x, lineHeight);
     }
   }
 
-  private renderTableCells(
-    markdown: Uint8Array,
-    cells: ReadonlyArray<{ s: number; e: number }>,
-    header: boolean,
-  ): void {
-    const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier);
-    const cellStyle = this.style(header ? { font: 'bold' } : {});
-    cells.forEach((cell, index) => {
-      if (index > 0) {
-        line.addGenerated(' | ', this.style({ color: COLORS.rule }));
-      }
-      renderInlineRange(
-        markdown,
-        cell.s,
-        cell.e,
-        line,
-        cellStyle,
-        this.options,
-        this.urlAllowlist,
-        this.baseUrl,
-        (token, targetLine, style) => this.renderInlineImageSync(markdown, token, targetLine, style),
-      );
+  private beginTable(): void {
+    this.finishTable();
+    this.addVerticalSpace(this.baseFontSize * 0.4);
+    this.tableBuffer = { alignments: [], rows: [] };
+  }
+
+  private addTableHeader(cells: ReadonlyArray<{ s: number; e: number; align: PdfTableAlign }>): void {
+    if (!this.tableBuffer) this.beginTable();
+    const alignments = cells.map((cell) => cell.align);
+    this.tableBuffer!.alignments = alignments;
+    this.tableBuffer!.rows.push({
+      header: true,
+      cells: cells.map((cell) => ({
+        s: cell.s,
+        e: cell.e,
+        align: cell.align,
+      })),
     });
-    line.flush();
-    if (header) this.drawRule();
   }
 
-  private async renderTableCellsAsync(
-    markdown: Uint8Array,
-    cells: ReadonlyArray<{ s: number; e: number }>,
-    header: boolean,
-    imageRenderer: PdfInlineImageRendererAsync,
-  ): Promise<void> {
-    const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier);
-    const cellStyle = this.style(header ? { font: 'bold' } : {});
-    let index = 0;
-    for (const cell of cells) {
-      if (index > 0) {
-        line.addGenerated(' | ', this.style({ color: COLORS.rule }));
-      }
-      await renderInlineRangeAsync(
+  private addTableRow(cells: ReadonlyArray<{ s: number; e: number }>): void {
+    if (!this.tableBuffer) this.beginTable();
+    const alignments = this.tableBuffer!.alignments;
+    this.tableBuffer!.rows.push({
+      header: false,
+      cells: cells.map((cell, index) => ({
+        s: cell.s,
+        e: cell.e,
+        align: alignments[index] ?? 'left',
+      })),
+    });
+  }
+
+  private finishTable(markdown?: Uint8Array): void {
+    if (!this.tableBuffer) return;
+    const table = this.tableBuffer;
+    this.tableBuffer = null;
+    if (markdown && table.rows.length > 0) {
+      this.renderTable(markdown, table);
+    }
+  }
+
+  private renderTable(markdown: Uint8Array, table: PdfTableBuffer): void {
+    const columnCount = Math.max(1, ...table.rows.map((row) => row.cells.length));
+    const tableX = this.margin + this.indent;
+    const tableWidth = Math.max(80, this.contentWidth - this.indent);
+    const paddingX = Math.max(4, this.baseFontSize * 0.45);
+    const paddingY = Math.max(3, this.baseFontSize * 0.3);
+    const lineHeight = this.baseFontSize * 1.2;
+    const minColumnWidth = Math.max(24, Math.min(72, tableWidth / columnCount));
+    const desiredWidths = new Array<number>(columnCount).fill(minColumnWidth);
+
+    const cellRuns = table.rows.map((row) =>
+      Array.from({ length: columnCount }, (_, index) => {
+        const cell = row.cells[index] ?? {
+          s: 0,
+          e: 0,
+          align: table.alignments[index] ?? 'left',
+        };
+        const style = this.style({
+          font: row.header ? 'bold' : 'regular',
+          size: this.baseFontSize * 0.88,
+        });
+        const runs = this.tableCellRuns(markdown, cell.s, cell.e, style);
+        desiredWidths[index] = Math.max(desiredWidths[index], measureRuns(runs) + paddingX * 2);
+        return {
+          align: cell.align ?? table.alignments[index] ?? 'left',
+          runs,
+        };
+      }),
+    );
+
+    const columnWidths = fitTableColumnWidths(desiredWidths, tableWidth, minColumnWidth);
+    const renderRows: PdfTableRenderRow[] = table.rows.map((row, rowIndex) => {
+      const cells = cellRuns[rowIndex].map((cell, cellIndex): PdfTableRenderCell => {
+        const contentWidth = Math.max(1, columnWidths[cellIndex] - paddingX * 2);
+        const wrapped = wrapCodeRuns(cell.runs, contentWidth);
+        return {
+          align: cell.align,
+          rows: wrapped.length > 0 ? wrapped : [[]],
+        };
+      });
+      const rowLineCount = Math.max(1, ...cells.map((cell) => cell.rows.length));
+      return {
+        header: row.header,
+        cells,
+        height: rowLineCount * lineHeight + paddingY * 2,
+      };
+    });
+
+    for (let rowIndex = 0; rowIndex < renderRows.length; rowIndex++) {
+      this.renderTableRow(
+        renderRows[rowIndex],
+        rowIndex,
+        tableX,
+        tableWidth,
+        columnWidths,
+        paddingX,
+        paddingY,
+        lineHeight,
+      );
+    }
+  }
+
+  private tableCellRuns(markdown: Uint8Array, s: number, e: number, style: PdfTextStyle): PdfTextRun[] {
+    const runs: PdfTextRun[] = [];
+    if (s < e) {
+      collectInlineRuns(
         markdown,
-        cell.s,
-        cell.e,
-        line,
-        cellStyle,
+        s,
+        e,
+        runs,
+        style,
         this.options,
         this.urlAllowlist,
         this.baseUrl,
-        imageRenderer,
       );
-      index++;
     }
-    line.flush();
-    if (header) this.drawRule();
+    return runs;
+  }
+
+  private renderTableRow(
+    row: PdfTableRenderRow,
+    rowIndex: number,
+    tableX: number,
+    tableWidth: number,
+    columnWidths: readonly number[],
+    paddingX: number,
+    paddingY: number,
+    lineHeight: number,
+  ): void {
+    this.ensureSpace(row.height);
+    const topY = this.cursorY;
+    const bottomY = topY - row.height;
+    const background = row.header
+      ? COLORS.tableHeaderBg
+      : rowIndex % 2 === 0
+        ? null
+        : COLORS.tableStripeBg;
+
+    if (background) {
+      this.fillRect(tableX, bottomY, tableWidth, row.height, background);
+    }
+
+    let cellX = tableX;
+    for (let cellIndex = 0; cellIndex < columnWidths.length; cellIndex++) {
+      const cell = row.cells[cellIndex] ?? {
+        align: 'left' as const,
+        rows: [[]],
+      };
+      const cellWidth = columnWidths[cellIndex];
+      const contentWidth = Math.max(1, cellWidth - paddingX * 2);
+      for (let lineIndex = 0; lineIndex < cell.rows.length; lineIndex++) {
+        const runs = cell.rows[lineIndex];
+        if (runs.length === 0) continue;
+        const lineWidth = measureRuns(runs);
+        const maxSize = runs.reduce((size, run) => Math.max(size, run.style.size), this.baseFontSize * 0.88);
+        const textX = cell.align === 'right'
+          ? cellX + cellWidth - paddingX - Math.min(lineWidth, contentWidth)
+          : cell.align === 'center'
+            ? cellX + paddingX + Math.max(0, (contentWidth - lineWidth) / 2)
+            : cellX + paddingX;
+        const baseline = topY - paddingY - lineIndex * lineHeight - maxSize;
+        this.drawTextRunsAt(runs, textX, baseline);
+      }
+      cellX += cellWidth;
+    }
+
+    this.drawTableGrid(tableX, topY, bottomY, tableWidth, columnWidths);
+    this.cursorY -= row.height;
+  }
+
+  private drawTableGrid(
+    tableX: number,
+    topY: number,
+    bottomY: number,
+    tableWidth: number,
+    columnWidths: readonly number[],
+  ): void {
+    this.drawLine(tableX, topY, tableX + tableWidth, topY, COLORS.rule, 0.6);
+    this.drawLine(tableX, bottomY, tableX + tableWidth, bottomY, COLORS.rule, 0.6);
+    let x = tableX;
+    this.drawLine(x, bottomY, x, topY, COLORS.rule, 0.6);
+    for (const width of columnWidths) {
+      x += width;
+      this.drawLine(x, bottomY, x, topY, COLORS.rule, 0.6);
+    }
   }
 
   private renderInfoLabel(label: string): void {

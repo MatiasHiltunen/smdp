@@ -29,6 +29,15 @@ function textFromHex(hex: string): string {
   return decoder.decode(bytes);
 }
 
+function textFromUtf16BeHex(hex: string): string {
+  const codeUnits: number[] = [];
+  const offset = hex.startsWith("FEFF") ? 4 : 0;
+  for (let index = offset; index + 3 < hex.length; index += 4) {
+    codeUnits.push(Number.parseInt(hex.slice(index, index + 4), 16));
+  }
+  return String.fromCharCode(...codeUnits);
+}
+
 function extractTextRuns(pdf: Uint8Array): Array<{ value: string; x: number; y: number }> {
   const text = decodePdf(pdf);
   const runs: Array<{ value: string; x: number; y: number }> = [];
@@ -41,6 +50,13 @@ function extractTextRuns(pdf: Uint8Array): Array<{ value: string; x: number; y: 
     });
   }
   return runs;
+}
+
+function extractActualText(pdf: Uint8Array): string[] {
+  const text = decodePdf(pdf);
+  return Array.from(text.matchAll(/\/ActualText <([0-9A-F]+)>/g), (match) =>
+    textFromUtf16BeHex(match[1]),
+  );
 }
 
 function extractColoredTextRuns(
@@ -235,6 +251,32 @@ test("keeps PDF spaces attached to extractable text runs", () => {
   assert.doesNotMatch(text, /WhatThis|DoesWell|Markdownin|cleanHTMLandcan|Canvasfor|onmd2\.at|Westream/);
 });
 
+test("preserves unicode and emoji text as PDF ActualText", () => {
+  const unicode = "Caf\u00e9 \u03b2 \u0416 \u4e2d\u6587 \u{1f600} \u2764\ufe0f";
+  const pdf = renderPDFFromBlocks(
+    u8(`Paragraph ${unicode}
+
+\`\`\`txt
+${unicode}
+\`\`\`
+
+| Kind | Value |
+|:-----|:------|
+| Text | ${unicode} |`),
+    {
+      pageSize: { width: 520, height: 520 },
+      margin: 24,
+      fontSize: 14,
+    },
+  );
+  const pdfText = decodePdf(pdf);
+  const actualText = extractActualText(pdf).join("\n");
+
+  assert.ok(actualText.includes(unicode));
+  assert.match(pdfText, /\/ActualText <FEFF/);
+  assert.match(pdfText, /<[^>]*3F[^>]*> Tj/);
+});
+
 test("renders fenced code with syntax colors and extractable spacing", () => {
   const pdf = renderPDFFromBlocks(
     u8(`\`\`\`js
@@ -293,6 +335,52 @@ ${sourceLine}
   assert.ok(new Set(greenRuns.map((run) => run.y)).size >= 2);
   assert.ok(greenRuns.map((run) => run.value).join("").includes(longLiteral));
   assert.equal(extractTextRuns(pdf).filter((run) => run.value === " ").length, 0);
+});
+
+test("colors empty and whitespace-only PDF code block rows", () => {
+  const pdf = renderPDFFromBlocks(
+    u8(`\`\`\`js
+const first = 1;
+
+${"   "}
+const second = 2;
+\`\`\``),
+    {
+      pageSize: { width: 420, height: 320 },
+      margin: 24,
+      fontSize: 14,
+    },
+  );
+  const text = decodePdf(pdf);
+  const codeBackgrounds = text.match(/q 0\.94 0\.95 0\.97 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/g) ?? [];
+
+  assert.equal(codeBackgrounds.length, 4);
+  assert.doesNotMatch(text, /<202020> Tj/);
+});
+
+test("renders markdown tables as bordered PDF tables", () => {
+  const pdf = renderPDFFromBlocks(
+    u8(`| Name | Score | Result |
+|:-----|------:|:------:|
+| **Ada** | \`42\` | yes |
+| Bob | 7 | no |`),
+    {
+      pageSize: { width: 420, height: 320 },
+      margin: 24,
+      fontSize: 14,
+    },
+  );
+  const text = decodePdf(pdf);
+  const extracted = extractPdfText(pdf).replace(/\n/g, " ");
+
+  assert.ok(extracted.includes("Name"));
+  assert.ok(extracted.includes("Score"));
+  assert.ok(extracted.includes("Ada"));
+  assert.ok(extracted.includes("42"));
+  assert.ok(extracted.includes("Bob"));
+  assert.doesNotMatch(text, /<207C20> Tj/);
+  assert.match(text, /q 0\.9 0\.93 0\.97 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/);
+  assert.match(text, /0\.72 0\.75 0\.8 RG 0\.6 w [\d.]+ [\d.]+ m [\d.]+ [\d.]+ l S Q/);
 });
 
 test("embeds JPEG images as DCT XObjects", async () => {

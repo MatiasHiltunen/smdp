@@ -393,6 +393,12 @@ export function* blocks(
     st.inFence = false;
     st.fenceInfo = undefined;
   }
+
+  if (st.inTable) {
+    yield { type: 'tableClose' };
+    st.inTable = false;
+    st.tableAlignments = [];
+  }
   
   while (st.bqLevel > 0) {
     yield { type: 'bqClose' };
