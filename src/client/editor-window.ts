@@ -8,6 +8,12 @@ import {
   getCurrentEditorPage,
   type EditorDocumentSnapshot,
 } from "./editor-model";
+import {
+  createEditorArchive,
+  importEditorArchive,
+  MAX_EDITOR_ARCHIVE_IMPORT_BYTES,
+} from "./editor-archive";
+import { getSourceLineAtTextOffset } from "./editor-preview-sync";
 
 type EditorWindowOptions = {
   host: HTMLElement;
@@ -20,6 +26,8 @@ type EditorWindowOptions = {
   subscribeInstallAvailability?: (
     listener: (available: boolean) => void,
   ) => () => void;
+  onCursorLineChange?: (line: number) => void;
+  onFollowCursorChange?: (enabled: boolean) => void;
 };
 
 export type EditorWindowHandle = {
@@ -69,6 +77,7 @@ type PersistedEditorWindowState = {
 
 const WINDOW_STORAGE_KEY = "smdp-editor-window-state";
 const LEGACY_RECT_STORAGE_KEY = "smdp-editor-window-rect";
+const FOLLOW_CURSOR_STORAGE_KEY = "smdp-editor-follow-cursor";
 const MOBILE_QUERY = "(max-width: 959px)";
 const MIN_WIDTH = 340;
 const MIN_HEIGHT = 260;
@@ -92,6 +101,31 @@ const DELETE_ICON_PATH =
   "M9 3a1 1 0 0 0-1 1v1H5a1 1 0 1 0 0 2h.583l.81 10.53A2 2 0 0 0 8.386 20h7.228a2 2 0 0 0 1.993-1.47L18.417 7H19a1 1 0 1 0 0-2h-3V4a1 1 0 0 0-1-1H9Zm5 2h-4V5h4V5Zm-5.61 2h7.22l-.77 10H9.16l-.77-10Z";
 const PAGES_ICON_PATH =
   "M5 5a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5Zm9 0a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2V5Z";
+const MORE_ICON_PATH =
+  "M5 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z";
+const BOOK_ICON_PATH =
+  "M4 5.5A2.5 2.5 0 0 1 6.5 3H11a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 19.5v-14Zm16 0A2.5 2.5 0 0 0 17.5 3H15v14h2.5a2.5 2.5 0 0 1 2.5 2.5v-14Z";
+const UPLOAD_ICON_PATH =
+  "M12 21a1 1 0 0 1-1-1v-8.586l-2.293 2.293a1 1 0 1 1-1.414-1.414l4-4a1 1 0 0 1 1.414 0l4 4a1 1 0 1 1-1.414 1.414L13 11.414V20a1 1 0 0 1-1 1ZM5 5a1 1 0 1 0 0 2h14a1 1 0 1 0 0-2H5Z";
+
+function readFollowCursorPreference(): boolean {
+  try {
+    return window.localStorage.getItem(FOLLOW_CURSOR_STORAGE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function persistFollowCursorPreference(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(
+      FOLLOW_CURSOR_STORAGE_KEY,
+      enabled ? "on" : "off",
+    );
+  } catch {
+    // Ignore persistence failures.
+  }
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -363,6 +397,31 @@ function createHeaderAction(
   return button;
 }
 
+function createMenuAction(
+  label: string,
+  pathData: string,
+): HTMLButtonElement {
+  const button = createElement("button");
+  button.className = "editor-window__menu-action";
+  button.type = "button";
+  button.append(
+    createSvgIcon(pathData, { className: "icon" }),
+    document.createTextNode(label),
+  );
+  return button;
+}
+
+function createMenuLink(label: string, pathData: string): HTMLAnchorElement {
+  const link = createElement("a");
+  link.className = "editor-window__menu-action";
+  link.href = "#";
+  link.append(
+    createSvgIcon(pathData, { className: "icon" }),
+    document.createTextNode(label),
+  );
+  return link;
+}
+
 function getDockResizeEdge(
   placement: Exclude<EditorDockPlacement, "floating">,
 ): "left" | "right" | "top" | "bottom" {
@@ -400,7 +459,11 @@ export function createEditorWindow(
   let isCompact = compactQuery.matches;
   let isOpen = !!options.externalWindow;
   let pagesOpen = false;
+  let menuOpen = false;
+  let followCursor = readFollowCursorPreference();
   let suppressInput = false;
+  let cursorSyncFrame: number | null = null;
+  let statusTimer: ReturnType<typeof setTimeout> | null = null;
   let state = readPersistedState() ?? buildDefaultWindowState(getViewportSize());
   let previewPlacement: Exclude<EditorDockPlacement, "floating"> | null = null;
   let previewRect: WindowRect | null = null;
@@ -449,7 +512,12 @@ export function createEditorWindow(
   const quickAddPageButton = createHeaderAction("Add page", ADD_ICON_PATH, {
     tooltip: "Add page",
   });
-  quickAddPageButton.hidden = true;
+
+  const menuButton = createHeaderAction("Document actions", MORE_ICON_PATH, {
+    tooltip: "Document actions",
+  });
+  menuButton.setAttribute("aria-haspopup", "menu");
+  menuButton.setAttribute("aria-expanded", "false");
 
   const installButton = createHeaderAction("Install app", INSTALL_ICON_PATH, {
     tooltip: "Install app",
@@ -472,11 +540,35 @@ export function createEditorWindow(
   actionGroup.append(
     pagesButton,
     quickAddPageButton,
+    menuButton,
     installButton,
     externalButton,
     closeButton,
   );
   header.append(dragHandle, actionGroup);
+
+  const documentMenu = createElement("div");
+  documentMenu.className = "editor-window__menu";
+  documentMenu.setAttribute("role", "menu");
+  documentMenu.hidden = true;
+
+  const newBookButton = createMenuAction("New book", BOOK_ICON_PATH);
+  newBookButton.setAttribute("role", "menuitem");
+  const importArchiveButton = createMenuAction("Import ZIP", UPLOAD_ICON_PATH);
+  importArchiveButton.setAttribute("role", "menuitem");
+  const downloadArchiveButton = createMenuLink(
+    "Download ZIP",
+    INSTALL_ICON_PATH,
+  );
+  downloadArchiveButton.setAttribute("role", "menuitem");
+  documentMenu.append(newBookButton, importArchiveButton, downloadArchiveButton);
+
+  const archiveInput = createElement("input");
+  archiveInput.className = "editor-window__archive-input";
+  archiveInput.type = "file";
+  archiveInput.accept = ".zip,application/zip";
+  archiveInput.tabIndex = -1;
+  archiveInput.setAttribute("aria-hidden", "true");
 
   const body = createElement("div");
   body.className = "editor-window__body";
@@ -516,6 +608,7 @@ export function createEditorWindow(
   const titleInput = createElement("input");
   titleInput.className = "editor-window__input";
   titleInput.type = "text";
+  titleInput.placeholder = "Page title";
   titleField.append(titleLabel, titleInput);
 
   const pathField = createElement("label");
@@ -526,6 +619,7 @@ export function createEditorWindow(
   const pathInput = createElement("input");
   pathInput.className = "editor-window__input";
   pathInput.type = "text";
+  pathInput.placeholder = "Page path";
   pathField.append(pathLabel, pathInput);
 
   const pageActions = createElement("div");
@@ -553,7 +647,29 @@ export function createEditorWindow(
   const modeBadge = createElement("span");
   modeBadge.className = "editor-window__badge";
 
-  footer.append(modeBadge, status);
+  const footerControls = createElement("div");
+  footerControls.className = "editor-window__footer-controls";
+
+  const followCursorLabel = createElement("label");
+  followCursorLabel.className = "editor-window__toggle";
+  followCursorLabel.title = "Keep the rendered preview aligned with the editor cursor";
+  const followCursorInput = createElement("input");
+  followCursorInput.type = "checkbox";
+  followCursorInput.checked = followCursor;
+  const followCursorTrack = createElement("span");
+  followCursorTrack.className = "editor-window__toggle-track";
+  followCursorTrack.setAttribute("aria-hidden", "true");
+  const followCursorText = createElement("span");
+  followCursorText.textContent = "Follow cursor";
+  followCursorLabel.append(
+    followCursorInput,
+    followCursorTrack,
+    followCursorText,
+  );
+  followCursorLabel.hidden = !options.onCursorLineChange;
+
+  footerControls.append(modeBadge, followCursorLabel);
+  footer.append(footerControls, status);
   main.append(metaRow, editorFrame, footer);
 
   body.append(sidebar, main);
@@ -567,8 +683,70 @@ export function createEditorWindow(
   resizeHandle.type = "button";
   resizeHandle.setAttribute("aria-label", "Resize floating editor window");
 
-  root.append(header, body, dockResizeHandle, resizeHandle);
+  root.append(
+    header,
+    documentMenu,
+    body,
+    archiveInput,
+    dockResizeHandle,
+    resizeHandle,
+  );
   options.host.append(snapPreview, root);
+
+  const setTransientStatus = (message: string): void => {
+    if (statusTimer) clearTimeout(statusTimer);
+    status.dataset.message = message;
+    status.textContent = message;
+    statusTimer = setTimeout(() => {
+      statusTimer = null;
+      delete status.dataset.message;
+      refresh(options.controller.getSnapshot());
+    }, 2800);
+  };
+
+  const scheduleCursorSync = (): void => {
+    if (!followCursor || !options.onCursorLineChange || cursorSyncFrame !== null) {
+      return;
+    }
+    cursorSyncFrame = window.requestAnimationFrame(() => {
+      cursorSyncFrame = null;
+      const line = getSourceLineAtTextOffset(
+        options.textarea.value,
+        options.textarea.selectionStart,
+      );
+      options.onCursorLineChange?.(line);
+    });
+  };
+
+  const setMenuOpen = (open: boolean): void => {
+    menuOpen = open;
+    documentMenu.hidden = !open;
+    menuButton.setAttribute("aria-expanded", String(open));
+    root.classList.toggle("show-menu", open);
+    if (open) newBookButton.focus();
+  };
+
+  const prepareCurrentArchiveDownload = (
+    link: HTMLAnchorElement,
+  ): boolean => {
+    try {
+      const archive = createEditorArchive(options.controller.getSnapshot());
+      const owned = Uint8Array.from(archive.bytes);
+      const blob = new Blob([owned.buffer], { type: "application/zip" });
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = archive.filename;
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTransientStatus(`Downloaded ${archive.filename}`);
+      return true;
+    } catch (error) {
+      console.error("Unable to export editor ZIP", error);
+      setTransientStatus(
+        error instanceof Error ? error.message : "ZIP export failed",
+      );
+      return false;
+    }
+  };
 
   const clearPreview = (): void => {
     previewPlacement = null;
@@ -602,6 +780,7 @@ export function createEditorWindow(
     root.classList.toggle("is-open", isOpen || !!options.externalWindow);
     root.classList.toggle("is-mobile", isCompact);
     root.classList.toggle("show-pages", pagesOpen);
+    pagesButton.setAttribute("aria-pressed", String(pagesOpen));
     root.classList.toggle("is-docked", isDocked);
     if (isDocked) {
       const dockPlacement = state.dockPlacement as Exclude<
@@ -641,27 +820,25 @@ export function createEditorWindow(
     const isBook = snapshot.mode === "book";
     const canDelete = isBook && snapshot.pages.length > 1;
 
-    pagesButton.hidden = !isBook;
-    quickAddPageButton.hidden = !isBook;
-    addPageButton.hidden = !isBook;
     deletePageButton.disabled = !canDelete;
-    sidebar.hidden = !isBook && !options.externalWindow;
     sidebar.classList.toggle("is-book", isBook);
     modeBadge.textContent = isBook
-      ? `Book | ${snapshot.pages.length} pages`
-      : "Single document";
+      ? `${snapshot.pages.length} ${snapshot.pages.length === 1 ? "page" : "pages"}`
+      : "Single page";
     subtitle.textContent = options.externalWindow
-      ? "Live edits sync to the rendered window"
+      ? "Synced workspace"
       : state.dockPlacement === "floating"
-        ? "Drag, resize, and edit live"
-        : "Docked to edge | drag header to snap elsewhere";
+        ? "Floating"
+        : `Docked ${state.dockPlacement}`;
 
     if (currentPage) {
       titleInput.value = currentPage.title;
       pathInput.value = getEditorPagePathValue(snapshot, currentPage);
       pathInput.disabled = !currentPage.synthetic;
       pathLabel.textContent = currentPage.synthetic ? "Page path" : "Source URL";
-      status.textContent = formatCurrentStats(currentPage.markdown);
+      if (!status.dataset.message) {
+        status.textContent = formatCurrentStats(currentPage.markdown);
+      }
       if (!suppressInput) {
         updateTextareaPreservingSelection(options.textarea, currentPage.markdown);
       }
@@ -669,46 +846,42 @@ export function createEditorWindow(
       titleInput.value = "";
       pathInput.value = "";
       pathInput.disabled = true;
-      status.textContent = "No page selected";
+      if (!status.dataset.message) {
+        status.textContent = "No page selected";
+      }
       if (!suppressInput) {
         updateTextareaPreservingSelection(options.textarea, "");
       }
     }
 
     pageList.replaceChildren();
-    if (!isBook) {
-      const helper = createElement("div");
-      helper.className = "editor-window__empty";
-      helper.textContent = "Single-document mode keeps one live markdown page.";
-      pageList.appendChild(helper);
-    } else {
-      for (const page of snapshot.pages) {
-        const item = createElement("button");
-        item.type = "button";
-        item.className = "editor-window__page";
-        if (page.id === snapshot.currentPageId) {
-          item.classList.add("is-current");
-          item.setAttribute("aria-current", "true");
-        }
-
-        const itemTitle = createElement("strong");
-        itemTitle.className = "editor-window__page-title";
-        itemTitle.textContent = page.title;
-
-        const itemMeta = createElement("span");
-        itemMeta.className = "editor-window__page-meta";
-        itemMeta.textContent = page.url.split("/").pop() ?? page.url;
-
-        item.append(itemTitle, itemMeta);
-        item.addEventListener("click", () => {
-          options.controller.setCurrentPage(page.id);
-          if (isCompact) {
-            pagesOpen = false;
-            applyLayout();
-          }
-        });
-        pageList.appendChild(item);
+    for (const page of snapshot.pages) {
+      const item = createElement("button");
+      item.type = "button";
+      item.className = "editor-window__page";
+      if (page.id === snapshot.currentPageId) {
+        item.classList.add("is-current");
+        item.setAttribute("aria-current", "true");
       }
+
+      const itemTitle = createElement("strong");
+      itemTitle.className = "editor-window__page-title";
+      itemTitle.textContent = page.title;
+
+      const itemMeta = createElement("span");
+      itemMeta.className = "editor-window__page-meta";
+      itemMeta.textContent = page.url.split("/").pop() ?? page.url;
+
+      item.append(itemTitle, itemMeta);
+      item.addEventListener("click", () => {
+        options.controller.setCurrentPage(page.id);
+        scheduleCursorSync();
+        if (isCompact) {
+          pagesOpen = false;
+          applyLayout();
+        }
+      });
+      pageList.appendChild(item);
     }
   };
 
@@ -746,12 +919,19 @@ export function createEditorWindow(
     suppressInput = true;
     options.controller.updateCurrentMarkdown(options.textarea.value);
     suppressInput = false;
+    scheduleCursorSync();
   });
+
+  options.textarea.addEventListener("click", scheduleCursorSync);
+  options.textarea.addEventListener("keyup", scheduleCursorSync);
+  options.textarea.addEventListener("select", scheduleCursorSync);
+  options.textarea.addEventListener("focus", scheduleCursorSync);
 
   addPageButton.addEventListener("click", () => {
     const created = options.controller.addBookPage();
     if (created) {
       options.textarea.focus();
+      scheduleCursorSync();
     }
   });
 
@@ -759,6 +939,7 @@ export function createEditorWindow(
     const created = options.controller.addBookPage();
     if (created) {
       options.textarea.focus();
+      scheduleCursorSync();
     }
   });
 
@@ -770,6 +951,92 @@ export function createEditorWindow(
     pagesOpen = !pagesOpen;
     applyLayout();
   });
+
+  menuButton.addEventListener("click", () => {
+    setMenuOpen(!menuOpen);
+  });
+
+  newBookButton.addEventListener("click", () => {
+    setMenuOpen(false);
+    const confirmed =
+      typeof window.confirm !== "function" ||
+      window.confirm("Create a new book and replace the current editor pages?");
+    if (!confirmed) return;
+    options.controller.createNewBook({ fallbackOrigin: window.location.href });
+    pagesOpen = true;
+    applyLayout();
+    options.textarea.focus();
+    scheduleCursorSync();
+    setTransientStatus("New book created");
+  });
+
+  importArchiveButton.addEventListener("click", () => {
+    setMenuOpen(false);
+    archiveInput.click();
+  });
+
+  downloadArchiveButton.addEventListener("click", (event) => {
+    if (!prepareCurrentArchiveDownload(downloadArchiveButton)) {
+      event.preventDefault();
+    }
+    setMenuOpen(false);
+  });
+
+  archiveInput.addEventListener("change", () => {
+    const file = archiveInput.files?.[0];
+    if (!file) return;
+    void (async () => {
+      try {
+        if (file.size > MAX_EDITOR_ARCHIVE_IMPORT_BYTES) {
+          throw new Error("ZIP file is too large to import");
+        }
+        const snapshot = await importEditorArchive(await file.arrayBuffer(), file.name);
+        options.controller.replaceDocument(snapshot);
+        pagesOpen = snapshot.mode === "book";
+        applyLayout();
+        options.textarea.focus();
+        scheduleCursorSync();
+        setTransientStatus(
+          `Imported ${snapshot.pages.length} ${snapshot.pages.length === 1 ? "page" : "pages"}`,
+        );
+      } catch (error) {
+        console.error("Unable to import editor ZIP", error);
+        setTransientStatus(
+          error instanceof Error ? error.message : "ZIP import failed",
+        );
+      } finally {
+        archiveInput.value = "";
+      }
+    })();
+  });
+
+  followCursorInput.addEventListener("change", () => {
+    followCursor = followCursorInput.checked;
+    persistFollowCursorPreference(followCursor);
+    options.onFollowCursorChange?.(followCursor);
+    if (followCursor) scheduleCursorSync();
+  });
+
+  const onDocumentPointerDown = (event: PointerEvent): void => {
+    if (
+      menuOpen &&
+      event.target instanceof Node &&
+      !documentMenu.contains(event.target) &&
+      !menuButton.contains(event.target)
+    ) {
+      setMenuOpen(false);
+    }
+  };
+  document.addEventListener("pointerdown", onDocumentPointerDown);
+
+  const onRootKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape" && menuOpen) {
+      event.preventDefault();
+      setMenuOpen(false);
+      menuButton.focus();
+    }
+  };
+  root.addEventListener("keydown", onRootKeyDown);
 
   externalButton.addEventListener("click", () => {
     options.onRequestOpenExternal?.();
@@ -958,6 +1225,7 @@ export function createEditorWindow(
     root.classList.add("is-open");
   }
 
+  options.onFollowCursorChange?.(followCursor);
   applyCompactState();
 
   return {
@@ -968,13 +1236,28 @@ export function createEditorWindow(
     },
     focusEditor(): void {
       options.textarea.focus();
+      scheduleCursorSync();
     },
     destroy(): void {
       stopSnapshotSubscription();
       stopInstallSubscription?.();
       clearPreview();
+      document.removeEventListener("pointerdown", onDocumentPointerDown);
+      root.removeEventListener("keydown", onRootKeyDown);
+      options.textarea.removeEventListener("click", scheduleCursorSync);
+      options.textarea.removeEventListener("keyup", scheduleCursorSync);
+      options.textarea.removeEventListener("select", scheduleCursorSync);
+      options.textarea.removeEventListener("focus", scheduleCursorSync);
       window.removeEventListener("resize", onResizeViewport);
       compactQuery.removeEventListener("change", onCompactChange);
+      if (cursorSyncFrame !== null) {
+        window.cancelAnimationFrame(cursorSyncFrame);
+        cursorSyncFrame = null;
+      }
+      if (statusTimer) {
+        clearTimeout(statusTimer);
+        statusTimer = null;
+      }
       options.host.replaceChildren();
     },
   };

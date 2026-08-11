@@ -452,6 +452,78 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
   let codeLang: string | undefined;
   const footnotes: Array<{ idS: number; idE: number; contentS: number; contentE: number }> = [];
   const rawHtmlState: RawHtmlState = { suppressedTag: null };
+  let sourceOffset = 0;
+  let sourceLine = 1;
+
+  const getSourceLine = (offset: number): number => {
+    const target = Math.max(sourceOffset, Math.min(offset, u8.length));
+    while (sourceOffset < target) {
+      if (u8[sourceOffset] === 0x0a) sourceLine++;
+      sourceOffset++;
+    }
+    return sourceLine;
+  };
+
+  const writeSourceAnchorAtLine = (line: number): void => {
+    if (!options.sourceLineAttributes) return;
+    out.writeAscii('<span class="md-source-anchor" data-md-source-line="');
+    out.writeAscii(String(line));
+    out.writeAscii('" aria-hidden="true"></span>');
+  };
+
+  const writeSourceAnchor = (offset: number): void => {
+    writeSourceAnchorAtLine(getSourceLine(offset));
+  };
+
+  const writeHighlightedCode = (
+    highlighted: Uint8Array,
+    lines: readonly number[],
+  ): void => {
+    if (!options.sourceLineAttributes || lines.length === 0) {
+      out.writeBytes(highlighted);
+      return;
+    }
+
+    let codeContentStart = -1;
+    for (let index = 0; index + 5 < highlighted.length; index++) {
+      if (
+        highlighted[index] === 0x3c &&
+        highlighted[index + 1] === 0x63 &&
+        highlighted[index + 2] === 0x6f &&
+        highlighted[index + 3] === 0x64 &&
+        highlighted[index + 4] === 0x65
+      ) {
+        let cursor = index + 5;
+        while (cursor < highlighted.length && highlighted[cursor] !== 0x3e) {
+          cursor++;
+        }
+        if (cursor < highlighted.length) codeContentStart = cursor + 1;
+        break;
+      }
+    }
+
+    if (codeContentStart < 0) {
+      out.writeBytes(highlighted);
+      return;
+    }
+
+    out.writeBytes(highlighted.subarray(0, codeContentStart));
+    writeSourceAnchorAtLine(lines[0]);
+    let chunkStart = codeContentStart;
+    let lineIndex = 1;
+    for (
+      let index = codeContentStart;
+      index < highlighted.length && lineIndex < lines.length;
+      index++
+    ) {
+      if (highlighted[index] !== 0x0a) continue;
+      out.writeBytes(highlighted.subarray(chunkStart, index + 1));
+      writeSourceAnchorAtLine(lines[lineIndex]);
+      chunkStart = index + 1;
+      lineIndex++;
+    }
+    out.writeBytes(highlighted.subarray(chunkStart));
+  };
 
   const closePara = (): void => {
     if (paraOpen) {
@@ -462,6 +534,13 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
 
   const flushCodeBlock = async (): Promise<void> => {
     if (!codeBuffer) return;
+
+    const sourceLines = options.sourceLineAttributes
+      ? codeBuffer.map((span) => getSourceLine(span.s))
+      : [];
+    if (sourceLines.length > 0) {
+      writeSourceAnchorAtLine(Math.max(1, sourceLines[0] - 1));
+    }
 
     let totalLen = 0;
     for (const span of codeBuffer) {
@@ -481,7 +560,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
       }
     }
     const highlighted = await highlightCodeBlock(codeBytes, codeLang);
-    out.writeBytes(highlighted);
+    writeHighlightedCode(highlighted, sourceLines);
 
     codeBuffer = null;
     codeLang = undefined;
@@ -534,6 +613,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
       case 'heading':
         closePara();
         closeListsAll();
+        writeSourceAnchor(ev.s);
         out.writeBytes(TAG.hPre[ev.level - 1]);
         renderInline(u8, ev.s, ev.e, out, options, rawHtmlState);
         out.writeBytes(TAG.hClose[ev.level - 1]);
@@ -546,6 +626,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
 
       case 'listItem':
         startLi();
+        writeSourceAnchor(ev.s);
         if (ev.task) {
           out.writeAscii('<input type="checkbox" disabled');
           if (ev.checked) out.writeAscii(' checked');
@@ -574,12 +655,14 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         } else {
           out.writeBytes(TAG.br);
         }
+        writeSourceAnchor(ev.s);
         renderInline(u8, ev.s, ev.e, out, options, rawHtmlState);
         break;
 
       case 'rawHtmlLine':
         closePara();
         closeListsAll();
+        writeSourceAnchor(ev.s);
         renderRawHtmlLine(u8, ev.s, ev.e, out, options, rawHtmlState);
         out.writeBytes(TAG.lf);
         break;
@@ -613,10 +696,12 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
 
       case 'tableHeader':
         out.writeBytes(TAG.theadOpen);
-        for (const cell of ev.cells) {
+        for (let index = 0; index < ev.cells.length; index++) {
+          const cell = ev.cells[index];
           const thTag = cell.align === 'center' ? TAG.thCenter : 
                         cell.align === 'right' ? TAG.thRight : TAG.thLeft;
           out.writeBytes(thTag);
+          if (index === 0) writeSourceAnchor(cell.s);
           renderInline(u8, cell.s, cell.e, out, options, rawHtmlState);
           out.writeBytes(TAG.thClose);
         }
@@ -625,8 +710,10 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
 
       case 'tableRow':
         out.writeBytes(TAG.trOpen);
-        for (const cell of ev.cells) {
+        for (let index = 0; index < ev.cells.length; index++) {
+          const cell = ev.cells[index];
           out.writeBytes(TAG.tdOpen);
+          if (index === 0) writeSourceAnchor(cell.s);
           renderInline(u8, cell.s, cell.e, out, options, rawHtmlState);
           out.writeBytes(TAG.tdClose);
         }

@@ -31,6 +31,7 @@ export type ThemeEditorHandle = {
 type MetaField = {
   key: keyof ThemeMeta;
   label: string;
+  placeholder?: string;
 };
 
 type TokenField = {
@@ -38,13 +39,37 @@ type TokenField = {
   label: string;
 };
 
+type CustomField = {
+  key: string;
+  label: string;
+  placeholder?: string;
+};
+
 const META_FIELDS: readonly MetaField[] = [
-  { key: 'colorScheme', label: 'Color scheme' },
+  { key: 'colorScheme', label: 'Color scheme', placeholder: 'dark | light' },
   { key: 'fontFamily', label: 'Font family' },
   { key: 'monoFontFamily', label: 'Mono font family' },
   { key: 'fontSize', label: 'Font size' },
   { key: 'fontWeight', label: 'Font weight' },
   { key: 'lineHeight', label: 'Line height' },
+] as const;
+
+const CUSTOM_LAYOUT_FIELDS: readonly CustomField[] = [
+  {
+    key: '--viewer-padding-inline',
+    label: 'Viewer padding (inline)',
+    placeholder: 'e.g. clamp(1rem, 2vw, 1.5rem)',
+  },
+  {
+    key: '--viewer-padding-block',
+    label: 'Viewer padding (block)',
+    placeholder: 'e.g. clamp(1rem, 2vw, 1.5rem)',
+  },
+  {
+    key: '--viewer-margin-block',
+    label: 'Viewer margin (block)',
+    placeholder: 'e.g. clamp(1.5rem, 4vw, 2.5rem)',
+  },
 ] as const;
 
 const FONT_FAMILIES = [
@@ -222,7 +247,12 @@ function toHexColor(value: string): string {
   return '#000000'; // fallback
 }
 
-function createInputField(labelText: string, id: string, key: string): { field: HTMLDivElement; input: HTMLInputElement | HTMLSelectElement; textInput?: HTMLInputElement } {
+function createInputField(
+  labelText: string,
+  id: string,
+  key: string,
+  fieldOptions?: { placeholder?: string },
+): { field: HTMLDivElement; input: HTMLInputElement | HTMLSelectElement; textInput?: HTMLInputElement } {
   const field = document.createElement('div');
   field.className = 'theme-editor-field';
 
@@ -232,23 +262,23 @@ function createInputField(labelText: string, id: string, key: string): { field: 
   label.textContent = labelText;
 
   const isColor = isColorField(key);
-  
+
   // Handle select fields for fonts and specific properties
-  let options: readonly string[] | null = null;
-  if (key === 'fontFamily') options = FONT_FAMILIES;
-  else if (key === 'monoFontFamily') options = MONO_FONT_FAMILIES;
-  else if (key === 'fontSize') options = FONT_SIZES;
-  else if (key === 'fontWeight') options = FONT_WEIGHTS;
-  else if (key === 'lineHeight') options = LINE_HEIGHTS;
-  else if (key === 'frameMode') options = FRAME_MODES;
-  else if (key === 'backgroundMode') options = BACKGROUND_MODES;
-  
-  if (options) {
+  let choices: readonly string[] | null = null;
+  if (key === 'fontFamily') choices = FONT_FAMILIES;
+  else if (key === 'monoFontFamily') choices = MONO_FONT_FAMILIES;
+  else if (key === 'fontSize') choices = FONT_SIZES;
+  else if (key === 'fontWeight') choices = FONT_WEIGHTS;
+  else if (key === 'lineHeight') choices = LINE_HEIGHTS;
+  else if (key === 'frameMode') choices = FRAME_MODES;
+  else if (key === 'backgroundMode') choices = BACKGROUND_MODES;
+
+  if (choices) {
     const select = document.createElement('select');
     select.className = 'theme-editor-input';
     select.id = id;
-    
-    for (const option of options) {
+
+    for (const option of choices) {
       const opt = document.createElement('option');
       opt.value = option;
       if (key === 'frameMode' || key === 'backgroundMode') {
@@ -258,17 +288,23 @@ function createInputField(labelText: string, id: string, key: string): { field: 
       }
       select.appendChild(opt);
     }
-    
+
+    if (fieldOptions?.placeholder) {
+      select.setAttribute('data-placeholder', fieldOptions.placeholder);
+    }
     field.append(label, select);
     return { field, input: select };
   }
-  
+
   const input = document.createElement('input');
   input.className = 'theme-editor-input';
   input.id = id;
   input.autocomplete = 'off';
   input.spellcheck = false;
-  
+  if (fieldOptions?.placeholder) {
+    input.placeholder = fieldOptions.placeholder;
+  }
+
   if (isColor) {
     // Create a wrapper for color picker + text input
     const inputWrapper = document.createElement('div');
@@ -289,8 +325,8 @@ function createInputField(labelText: string, id: string, key: string): { field: 
     textInput.style.flex = '1';
     textInput.autocomplete = 'off';
     textInput.spellcheck = false;
-    textInput.placeholder = 'Color value';
-    
+    textInput.placeholder = fieldOptions?.placeholder ?? 'Color value';
+
     inputWrapper.append(input, textInput);
     field.append(label, inputWrapper);
     return { field, input, textInput };
@@ -361,14 +397,14 @@ export function initializeThemeEditor(
   const inputs = new Map<string, HTMLInputElement | HTMLSelectElement>();
   const textInputs = new Map<string, HTMLInputElement>();
 
-  META_FIELDS.forEach((fieldDef, index) => {
+  META_FIELDS.forEach((fieldDef) => {
     const fieldId = `theme-meta-${fieldDef.key}`;
-    const { field, input, textInput } = createInputField(fieldDef.label, fieldId, fieldDef.key);
+    const placeholderOptions = fieldDef.placeholder
+      ? { placeholder: fieldDef.placeholder }
+      : undefined;
+    const { field, input, textInput } = createInputField(fieldDef.label, fieldId, fieldDef.key, placeholderOptions);
     input.dataset.section = 'meta';
     input.dataset.key = fieldDef.key;
-    if (index === 0) {
-      input.setAttribute('placeholder', 'dark | light');
-    }
     metaFieldsContainer.append(field);
     inputs.set(`meta:${fieldDef.key}`, input);
     if (textInput) {
@@ -414,6 +450,31 @@ export function initializeThemeEditor(
 
   viewerSection.append(viewerHeading, viewerFieldsContainer);
 
+  const layoutSection = document.createElement('section');
+  layoutSection.className = 'theme-editor-section';
+
+  const layoutHeading = document.createElement('h3');
+  layoutHeading.className = 'theme-editor-section-title';
+  layoutHeading.textContent = 'Layout & spacing';
+
+  const layoutFieldsContainer = document.createElement('div');
+  layoutFieldsContainer.className = 'theme-editor-fields';
+
+  CUSTOM_LAYOUT_FIELDS.forEach((fieldDef) => {
+    const sanitizedKey = fieldDef.key.replace(/^--/, '');
+    const fieldId = `theme-custom-${sanitizedKey}`;
+    const placeholderOptions = fieldDef.placeholder
+      ? { placeholder: fieldDef.placeholder }
+      : undefined;
+    const { field, input } = createInputField(fieldDef.label, fieldId, fieldDef.key, placeholderOptions);
+    input.dataset.section = 'custom';
+    input.dataset.key = fieldDef.key;
+    layoutFieldsContainer.append(field);
+    inputs.set(`custom:${fieldDef.key}`, input);
+  });
+
+  layoutSection.append(layoutHeading, layoutFieldsContainer);
+
   const tokenSections = TOKEN_GROUPS.map((group) => {
     const section = document.createElement('section');
     section.className = 'theme-editor-section';
@@ -452,7 +513,7 @@ export function initializeThemeEditor(
   footer.className = 'theme-editor-footer';
   footer.append(resetButton);
 
-  content.append(metaSection, viewerSection, ...tokenSections);
+  content.append(metaSection, viewerSection, layoutSection, ...tokenSections);
   panel.append(header, content, footer);
   wrapper.append(overlay, panel);
 
@@ -547,6 +608,14 @@ export function initializeThemeEditor(
         }
       });
     });
+    CUSTOM_LAYOUT_FIELDS.forEach((fieldDef) => {
+      const key = `custom:${fieldDef.key}`;
+      const input = inputs.get(key);
+      if (input && document.activeElement !== input) {
+        const value = configuration.customProperties[fieldDef.key] ?? '';
+        input.value = value;
+      }
+    });
   };
 
   const open = () => {
@@ -622,6 +691,8 @@ export function initializeThemeEditor(
       builder.withMeta(partial);
     } else if (section === 'token') {
       builder.withToken(key as ThemeTokenKey, value);
+    } else if (section === 'custom') {
+      builder.withCustomProperty(key, value);
     }
     builder.apply();
     saveThemeToUrl(builder);

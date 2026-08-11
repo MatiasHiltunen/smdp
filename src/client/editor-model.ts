@@ -58,6 +58,15 @@ const DEFAULT_EDITOR_ORIGIN = "https://editor.smdp.app/";
 const PAGE_TITLE_FALLBACK = "Untitled page";
 const MARKDOWN_EXT_RE = /\.(md|markdown|mdown|mdx)$/i;
 
+function buildSyntheticBookEntryUrl(
+  title: string,
+  fallbackOrigin: string,
+): string {
+  const base = new URL(fallbackOrigin || DEFAULT_EDITOR_ORIGIN);
+  const slug = slugifyEditorPageTitle(title) || "book";
+  return new URL(`books/${slug}/README.md`, base).toString();
+}
+
 function toFallbackDocumentUrl(
   input: string | undefined,
   fallbackOrigin: string,
@@ -372,6 +381,57 @@ export function createBookEditorDocumentSnapshot(options: {
   };
 }
 
+export function createEmptyBookEditorDocumentSnapshot(options: {
+  title?: string;
+  fallbackOrigin?: string;
+} = {}): EditorDocumentSnapshot {
+  const title = options.title?.trim() || "Untitled book";
+  const entryUrl = buildSyntheticBookEntryUrl(
+    title,
+    options.fallbackOrigin ?? DEFAULT_EDITOR_ORIGIN,
+  );
+  const page: EditorPage = {
+    id: createPageId(),
+    title,
+    titleMode: "derived",
+    url: entryUrl,
+    baseUrl: entryUrl,
+    markdown: `# ${title}\n\nStart writing here.`,
+    sourceUrl: null,
+    synthetic: true,
+    pathMode: "manual",
+  };
+
+  return {
+    mode: "book",
+    entryUrl,
+    currentPageId: page.id,
+    pages: [page],
+    removedUrls: [],
+  };
+}
+
+export function promoteSingleEditorSnapshotToBook(
+  snapshot: EditorDocumentSnapshot,
+): EditorDocumentSnapshot {
+  if (snapshot.mode === "book") {
+    return cloneSnapshot(snapshot);
+  }
+
+  const currentPage = getCurrentEditorPage(snapshot) ?? snapshot.pages[0];
+  if (!currentPage) {
+    return createEmptyBookEditorDocumentSnapshot();
+  }
+
+  return {
+    mode: "book",
+    entryUrl: currentPage.url,
+    currentPageId: currentPage.id,
+    pages: snapshot.pages.map((page) => ({ ...page })),
+    removedUrls: [...snapshot.removedUrls],
+  };
+}
+
 export function getCurrentEditorPage(
   snapshot: EditorDocumentSnapshot,
 ): EditorPage | null {
@@ -519,6 +579,19 @@ export class EditorStateController {
     this.emitSnapshot();
   }
 
+  replaceDocument(snapshot: EditorDocumentSnapshot): void {
+    this.applyPatch({ type: "replace-snapshot", snapshot }, true);
+  }
+
+  createNewBook(options: {
+    title?: string;
+    fallbackOrigin?: string;
+  } = {}): EditorDocumentSnapshot {
+    const snapshot = createEmptyBookEditorDocumentSnapshot(options);
+    this.replaceDocument(snapshot);
+    return this.getSnapshot();
+  }
+
   applyRemotePatch(patch: EditorPatch): void {
     this.applyPatch(patch, false);
   }
@@ -570,6 +643,9 @@ export class EditorStateController {
   }
 
   addBookPage(afterPageId?: string | null): EditorPage | null {
+    if (this.snapshot.mode === "single") {
+      this.replaceDocument(promoteSingleEditorSnapshotToBook(this.snapshot));
+    }
     if (this.snapshot.mode !== "book" || !this.snapshot.entryUrl) {
       return null;
     }

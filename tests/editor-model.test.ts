@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   buildEditorBookContentLinks,
   createBookEditorDocumentSnapshot,
+  createEmptyBookEditorDocumentSnapshot,
+  createSingleEditorDocumentSnapshot,
   EditorStateController,
   getCurrentEditorPage,
   getEditorPagePathValue,
@@ -82,5 +84,41 @@ test("book editor controller supports nested synthetic page paths", () => {
   assert.equal(
     currentPage?.url,
     "https://raw.githubusercontent.com/acme/docs/main/drafts/intro-page.md",
+  );
+});
+
+test("adding a page promotes a single document into a book without losing it", () => {
+  const controller = new EditorStateController(
+    createSingleEditorDocumentSnapshot({
+      markdown: "# Existing\n\nKeep this text.",
+      baseUrl: "https://example.com/docs/README.md",
+    }),
+  );
+
+  const created = controller.addBookPage();
+  const snapshot = controller.getSnapshot();
+
+  assert.ok(created);
+  assert.equal(snapshot.mode, "book");
+  assert.equal(snapshot.entryUrl, "https://example.com/docs/README.md");
+  assert.equal(snapshot.pages.length, 2);
+  assert.equal(snapshot.pages[0].markdown, "# Existing\n\nKeep this text.");
+  assert.equal(snapshot.currentPageId, created?.id);
+});
+
+test("empty book snapshots expose an editable synthetic entry page", () => {
+  const snapshot = createEmptyBookEditorDocumentSnapshot({
+    title: "Product Notes",
+    fallbackOrigin: "https://example.com/workspace/",
+  });
+
+  assert.equal(snapshot.mode, "book");
+  assert.equal(snapshot.pages.length, 1);
+  assert.equal(snapshot.pages[0].title, "Product Notes");
+  assert.equal(snapshot.pages[0].synthetic, true);
+  assert.equal(snapshot.pages[0].sourceUrl, null);
+  assert.equal(
+    snapshot.entryUrl,
+    "https://example.com/workspace/books/product-notes/README.md",
   );
 });

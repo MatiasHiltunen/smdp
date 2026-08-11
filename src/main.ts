@@ -59,6 +59,12 @@ import {
   readPersistedEditorSession,
 } from "./client/editor-sync";
 import { initializePwaController } from "./client/pwa";
+import {
+  collectPreviewSourceAnchors,
+  findPreviewSourceAnchor,
+  PreviewCursorSyncState,
+  type PreviewSourceAnchor,
+} from "./client/editor-preview-sync";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -103,6 +109,7 @@ async function applyMarkdownToHtml(
   allowRawHtml = false,
 ): Promise<void> {
   const overrides = {
+    sourceLineAttributes: true,
     ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(allowRawHtml ? { allowRawHtml: true } : {}),
   };
@@ -551,6 +558,8 @@ async function init(): Promise<void> {
   let latestBytes = u8("");
   let latestBaseUrl: string | undefined;
   let latestAllowRawHtml = allowRawHtml;
+  let previewSourceAnchors: PreviewSourceAnchor[] = [];
+  let replayCursorScroll = (): void => {};
 
   const apply = async (
     bytes: Uint8Array,
@@ -561,6 +570,12 @@ async function init(): Promise<void> {
     latestBaseUrl = baseUrl;
     latestAllowRawHtml = allowRawHtmlOverride ?? false;
     await applyRender(bytes, baseUrl, latestAllowRawHtml);
+    if (route.mode === "html") {
+      previewSourceAnchors = collectPreviewSourceAnchors(
+        (view as HtmlView).viewer,
+      );
+    }
+    replayCursorScroll();
   };
 
   const rerenderCurrent = async (): Promise<void> => {
@@ -693,6 +708,69 @@ async function init(): Promise<void> {
   let previousSnapshot = latestSnapshot;
   let pendingAnchor = window.location.hash.replace(/^#/, "");
   let shouldScrollAfterPageChange = false;
+  const cursorSyncState = new PreviewCursorSyncState();
+  let cursorScrollFrame: number | null = null;
+
+  const scrollPreviewToCursorLine = (): void => {
+    cursorScrollFrame = null;
+    const pendingCursorLine = cursorSyncState.consumePendingLine();
+    if (pendingCursorLine === null) return;
+
+    if (route.mode === "html") {
+      const target = findPreviewSourceAnchor(
+        previewSourceAnchors,
+        pendingCursorLine,
+      );
+      target?.scrollIntoView({ block: "center", behavior: "auto" });
+      return;
+    }
+
+    const currentPage = getCurrentEditorPage(latestSnapshot);
+    const scrollElement = (view as CanvasView).canvas.closest<HTMLElement>(
+      ".canvas-scroll",
+    );
+    if (!currentPage || !scrollElement) return;
+    let lineCount = 1;
+    for (let index = 0; index < currentPage.markdown.length; index += 1) {
+      if (currentPage.markdown.charCodeAt(index) === 0x0a) lineCount += 1;
+    }
+    const ratio =
+      lineCount <= 1
+        ? 0
+        : Math.min(1, Math.max(0, (pendingCursorLine - 1) / (lineCount - 1)));
+    const maxScroll = Math.max(
+      0,
+      scrollElement.scrollHeight - scrollElement.clientHeight,
+    );
+    scrollElement.scrollTo({ top: maxScroll * ratio, behavior: "auto" });
+  };
+
+  const requestCursorScroll = (line: number): void => {
+    if (!cursorSyncState.request(line)) return;
+    if (renderTimer || renderInFlight || cursorScrollFrame !== null) return;
+    cursorScrollFrame = window.requestAnimationFrame(scrollPreviewToCursorLine);
+  };
+
+  replayCursorScroll = (): void => {
+    if (
+      cursorSyncState.getPendingLine() === null ||
+      renderTimer ||
+      renderInFlight
+    ) return;
+    if (cursorScrollFrame !== null) {
+      window.cancelAnimationFrame(cursorScrollFrame);
+    }
+    cursorScrollFrame = window.requestAnimationFrame(scrollPreviewToCursorLine);
+  };
+
+  const setFollowCursorEnabled = (enabled: boolean): void => {
+    cursorSyncState.setEnabled(enabled);
+    if (enabled) return;
+    if (cursorScrollFrame !== null) {
+      window.cancelAnimationFrame(cursorScrollFrame);
+      cursorScrollFrame = null;
+    }
+  };
 
   async function renderCurrentSnapshot(): Promise<void> {
     if (renderInFlight) {
@@ -741,6 +819,7 @@ async function init(): Promise<void> {
       console.error("Failed to render markdown snapshot", error);
     } finally {
       renderInFlight = false;
+      replayCursorScroll();
     }
   }
 
@@ -872,6 +951,10 @@ async function init(): Promise<void> {
       clearTimeout(renderTimer);
       renderTimer = null;
     }
+    if (cursorScrollFrame !== null) {
+      window.cancelAnimationFrame(cursorScrollFrame);
+      cursorScrollFrame = null;
+    }
   });
 
   let editorSessionId: string | null = null;
@@ -926,6 +1009,8 @@ async function init(): Promise<void> {
       },
       subscribeInstallAvailability: (listener) =>
         pwaController.subscribe(listener),
+      onCursorLineChange: requestCursorScroll,
+      onFollowCursorChange: setFollowCursorEnabled,
     });
     registerCleanup(() => editorWindowHandle?.destroy());
 
