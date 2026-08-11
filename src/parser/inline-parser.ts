@@ -206,19 +206,28 @@ export function* inlineTokens(
       continue;
     }
 
-    // Text byte (may be part of a multibyte UTF-8 sequence)
-    const byte = u8[i];
-    let advance = 1;
-    if ((byte & 0b11100000) === 0b11000000) {
-      advance = 2;
-    } else if ((byte & 0b11110000) === 0b11100000) {
-      advance = 3;
-    } else if ((byte & 0b11111000) === 0b11110000) {
-      advance = 4;
+    // Coalesce plain bytes until the next possible inline construct. UTF-8
+    // continuation bytes cannot collide with these ASCII sentinels.
+    let textEnd = i + 1;
+    while (textEnd < e) {
+      const next = u8[textEnd];
+      if (
+        next === 0x60 || // `
+        next === 0x21 || // !
+        next === 0x5b || // [
+        next === 0x68 || // h (http)
+        next === 0x77 || // w (www)
+        next === 0x7e || // ~
+        next === 0x2a || // *
+        next === 0x5f || // _
+        (allowRawHtml && next === 0x3c) // <
+      ) {
+        break;
+      }
+      textEnd++;
     }
-    const end = Math.min(i + advance, e);
-    yield { kind: 'text', s: i, e: end };
-    i = end;
+    yield { kind: 'text', s: i, e: textEnd };
+    i = textEnd;
   }
 
   // Close any unclosed emphasis markers at the end of the span

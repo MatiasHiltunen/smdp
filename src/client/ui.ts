@@ -462,16 +462,40 @@ async function fetchPdfImage(resolvedSrc: string): Promise<PdfResolvedImage | nu
   };
 }
 
+let pdfEmojiFontPromise: Promise<Uint8Array | undefined> | undefined;
+
+function loadPdfEmojiFont(): Promise<Uint8Array | undefined> {
+  if (!pdfEmojiFontPromise) {
+    pdfEmojiFontPromise = (async () => {
+      if (typeof window === "undefined" || typeof document === "undefined") {
+        return undefined;
+      }
+      try {
+        const response = await fetch("/fonts/NotoEmoji-Regular.ttf", {
+          credentials: "same-origin",
+        });
+        if (!response.ok) return undefined;
+        return new Uint8Array(await response.arrayBuffer());
+      } catch {
+        return undefined;
+      }
+    })();
+  }
+  return pdfEmojiFontPromise;
+}
+
 export async function buildPdfExportBlob(source: PdfExportSource): Promise<Blob> {
   const { MDParser, u8 } = await import("../parser");
   const markdown =
     typeof source.markdown === "string" ? u8(source.markdown) : source.markdown;
   const parser = new MDParser();
   const codeColors = resolvePdfCodeColors();
+  const emojiFont = await loadPdfEmojiFont();
   const pdf = await parser.renderToPDF(markdown, {
     ...(source.baseUrl !== undefined ? { baseUrl: source.baseUrl } : {}),
     ...(source.allowRawHtml ? { allowRawHtml: true } : {}),
     ...(codeColors ? { codeColors } : {}),
+    ...(emojiFont ? { emojiFont } : {}),
     imageResolver: fetchPdfImage,
   });
   const pdfBuffer = new ArrayBuffer(pdf.byteLength);

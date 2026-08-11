@@ -258,6 +258,7 @@ Important details:
 
 - **Writer**: The HTML renderer calls `HtmlArena.writeEscaped` and related methods that operate on byte slices, so writing out HTML stays allocation-friendly and avoids intermediate strings. Only at the end is `Uint8Array` converted back to a string (`TextDecoder`).
 - **Syntax highlighting**: The highlighting path is decoupled from the markdown parser. When a fenced code block is found, the captured byte ranges are passed to `highlightCodeBlock`. Highlighting uses a generative tokenizer compiled from language specs (or precompiled data), then writes markup via the same arena-like approach.
+- **SIMD core**: Large line scans and compatible syntax profiles dispatch to a checked-in, hand-written WebAssembly SIMD core. The host copies source bytes into exported WASM memory once, drains fixed-size byte-range event batches, and falls back to the scalar TypeScript implementation when SIMD validation fails. Template-enabled grammars currently remain on the scalar tokenizer.
 - **Canvas rendering**: `renderToCanvasFromBlocks` shares the block event stream but renders into a canvas context. It keeps cached font measurements, performs line-wrapping per block, and triggers a rerender when images finish loading. Virtual scrolling is used when the rendered height exceeds twice the viewport.
 
 ```ts
@@ -409,6 +410,10 @@ This is designed to work with Vite or similar modern bundlers.
 npm install
 npm run dev
 npm run build
+
+# Regenerate src/wasm/smdp-core.wasm and its embedded payload after editing WAT.
+# This development-only command requires wat2wasm from WABT.
+npm run build:wasm
 ```
 
 ## License

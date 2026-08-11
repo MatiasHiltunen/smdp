@@ -1,0 +1,1267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Zero-dependency LaTeX-subset to PDF compiler v0.2</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    header { padding: 14px 18px; border-bottom: 1px solid #9994; }
+    main { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr); gap: 0; min-height: calc(100vh - 58px); }
+    section { padding: 14px; box-sizing: border-box; }
+    textarea { width: 100%; height: 62vh; box-sizing: border-box; font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 12px; resize: vertical; }
+    iframe { width: 100%; height: 74vh; border: 1px solid #9995; background: white; }
+    button, a.button { display: inline-block; margin: 10px 8px 10px 0; padding: 8px 12px; border: 1px solid #7778; border-radius: 8px; background: #eee2; color: inherit; cursor: pointer; text-decoration: none; }
+    pre { white-space: pre-wrap; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 10px; border: 1px solid #9994; max-height: 18vh; overflow: auto; }
+    .muted { opacity: 0.75; }
+    .badge { font-size: 12px; padding: 2px 6px; border: 1px solid #9995; border-radius: 999px; margin-left: 8px; }
+    @media (max-width: 850px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <strong>Zero-dependency LaTeX-subset to PDF compiler</strong>
+  <span class="badge">v0.2 math boxes</span>
+  <span class="muted"> - single HTML file, no libraries, direct PDF output</span>
+</header>
+<main>
+  <section>
+    <textarea id="src" spellcheck="false">\documentclass{article}
+\begin{document}
+
+\section{v0.2: Math box engine}
+This version still writes PDF objects directly, but inline math is no longer emitted as plain text. It now parses formulas into temporary boxes and paints them into the PDF content stream.
+
+Inline math: $E = mc^2$, $x_i^2 + y_i^2 = r^2$, and $\alpha + \beta \leq \gamma$.
+
+\subsection{Display math}
+\[
+  \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+\]
+
+\begin{equation}
+  \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+\end{equation}
+
+\subsection{Still supported}
+Normal text, \textbf{bold}, \emph{italic}, lists, escaped characters like \%, \$, \&, \#, \_, \{ and \}, page breaks, and source-position warnings are still handled without external libraries.
+
+\begin{itemize}
+\item The parser is offset-based over the original source string.
+\item Math formulas allocate only short-lived boxes for the current formula.
+\item The PDF writer uses Base-14 fonts: Helvetica, Courier, and Symbol.
+\end{itemize}
+
+\end{document}</textarea>
+    <br>
+    <button id="compile">Compile to PDF</button>
+    <a id="download" class="button" download="compiled-v02.pdf" href="#" hidden>Download PDF</a>
+    <pre id="log">Ready.</pre>
+  </section>
+  <section>
+    <iframe id="preview" title="PDF preview"></iframe>
+  </section>
+</main>
+<script>
+(function (global) {
+  'use strict';
+
+  const A4 = { w: 595.28, h: 841.89 };
+  const FONT = {
+    normal: 'F1',
+    bold: 'F2',
+    italic: 'F3',
+    mono: 'F4',
+    symbol: 'F5'
+  };
+  const NORMAL = Object.freeze({ font: FONT.normal, size: 12, rise: 0 });
+
+  function isAlpha(c) { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122); }
+  function isDigit(c) { return c >= 48 && c <= 57; }
+  function isAlphaNum(c) { return isAlpha(c) || isDigit(c); }
+  function isSpaceCode(c) { return c === 32 || c === 9 || c === 10 || c === 13 || c === 12; }
+  function styleWith(style, patch) {
+    return {
+      font: patch.font || style.font,
+      size: patch.size || style.size,
+      rise: patch.rise === undefined ? style.rise : patch.rise
+    };
+  }
+  function fmt(n) {
+    return Number(n).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+  }
+  function spanEq(src, s, e, word) {
+    if (e - s !== word.length) return false;
+    for (let i = 0; i < word.length; i++) if (src.charCodeAt(s + i) !== word.charCodeAt(i)) return false;
+    return true;
+  }
+  function spanTrimEq(src, s, e, word) {
+    while (s < e && isSpaceCode(src.charCodeAt(s))) s++;
+    while (e > s && isSpaceCode(src.charCodeAt(e - 1))) e--;
+    return spanEq(src, s, e, word);
+  }
+  function escapePdfStringLiteral(text) {
+    let out = '';
+    for (let i = 0; i < text.length; i++) out += escapePdfChar(text.charCodeAt(i));
+    return out;
+  }
+  function escapePdfSpan(src, s, e) {
+    let out = '';
+    for (let i = s; i < e; i++) out += escapePdfChar(src.charCodeAt(i));
+    return out;
+  }
+  function octalByte(c) {
+    return '\\' + (c & 255).toString(8).padStart(3, '0');
+  }
+  function escapePdfChar(c) {
+    if (c === 40) return '\\(';     // (
+    if (c === 41) return '\\)';     // )
+    if (c === 92) return '\\\\';   // backslash
+    if (c === 9 || c === 10 || c === 13 || c === 12) return ' ';
+    if (c < 32) return '';
+    if (c >= 32 && c <= 126) return String.fromCharCode(c);
+    if (c >= 128 && c <= 255) return octalByte(c);
+    // Base-14 fonts without embedded Unicode: transliterate common characters.
+    if (c === 0x2013 || c === 0x2014 || c === 0x2212) return '-';
+    if (c === 0x2018 || c === 0x2019) return "'";
+    if (c === 0x201c || c === 0x201d) return '"';
+    if (c === 0x2026) return '...';
+    if (c === 0x00a0) return ' ';
+    if (c === 0x00d7) return octalByte(0xd7);
+    if (c === 0x00f7) return octalByte(0xf7);
+    if (c === 0x2264) return '<=';
+    if (c === 0x2265) return '>=';
+    if (c === 0x2260) return '!=';
+    return '?';
+  }
+
+  // Approximate Base-14 font metrics. The compiler does not embed fonts, but
+  // these tables keep direct-positioned boxes aligned with PDF-rendered text.
+  const HELV_WIDTHS = Object.freeze({
+    32:278,33:278,34:355,35:556,36:556,37:889,38:667,39:191,40:333,41:333,
+    42:389,43:584,44:278,45:333,46:278,47:278,48:556,49:556,50:556,51:556,
+    52:556,53:556,54:556,55:556,56:556,57:556,58:278,59:278,60:584,61:584,
+    62:584,63:556,64:1015,65:667,66:667,67:722,68:722,69:667,70:611,71:778,
+    72:722,73:278,74:500,75:667,76:556,77:833,78:722,79:778,80:667,81:778,
+    82:722,83:667,84:611,85:722,86:667,87:944,88:667,89:667,90:611,91:278,
+    92:278,93:278,94:469,95:556,96:333,97:556,98:556,99:500,100:556,101:556,
+    102:278,103:556,104:556,105:222,106:222,107:500,108:222,109:833,110:556,
+    111:556,112:556,113:556,114:333,115:500,116:278,117:556,118:500,119:722,
+    120:500,121:500,122:500,123:334,124:260,125:334,126:584
+  });
+  const HELV_BOLD_WIDTHS = Object.freeze({
+    32:278,33:333,34:474,35:556,36:556,37:889,38:722,39:238,40:333,41:333,
+    42:389,43:584,44:278,45:333,46:278,47:278,48:556,49:556,50:556,51:556,
+    52:556,53:556,54:556,55:556,56:556,57:556,58:333,59:333,60:584,61:584,
+    62:584,63:611,64:975,65:722,66:722,67:722,68:722,69:667,70:611,71:778,
+    72:722,73:278,74:556,75:722,76:611,77:833,78:722,79:778,80:667,81:778,
+    82:722,83:667,84:611,85:722,86:667,87:944,88:667,89:667,90:611,91:333,
+    92:278,93:333,94:584,95:556,96:333,97:556,98:611,99:556,100:611,101:556,
+    102:333,103:611,104:611,105:278,106:278,107:556,108:278,109:889,110:611,
+    111:611,112:611,113:611,114:389,115:556,116:333,117:611,118:556,119:778,
+    120:556,121:556,122:500,123:389,124:280,125:389,126:584
+  });
+  function measureChar(c, size, font) {
+    if (font === FONT.mono) return size * 0.60;
+    if (font === FONT.symbol) {
+      if (c === 32 || c === 9) return size * 0.25;
+      if (c === 0xE5 || c === 0xF2) return size * 0.82; // sum/integral
+      if (c === 0xA3 || c === 0xB3 || c === 0xB9) return size * 0.62;
+      if (c >= 128 && c <= 255) return size * 0.55;
+      return size * 0.58;
+    }
+    const table = font === FONT.bold ? HELV_BOLD_WIDTHS : HELV_WIDTHS;
+    const w = table[c];
+    if (w !== undefined) return size * w / 1000;
+    if (c >= 128 && c <= 255) return size * 0.55;
+    return size * 0.56;
+  }
+  function measureSpan(src, s, e, style) {
+    let w = 0;
+    for (let i = s; i < e; i++) w += measureChar(src.charCodeAt(i), style.size, style.font);
+    return w;
+  }
+  function measureText(text, style) {
+    let w = 0;
+    for (let i = 0; i < text.length; i++) w += measureChar(text.charCodeAt(i), style.size, style.font);
+    return w;
+  }
+  function textAscent(style) { return style.size * 0.78 + Math.max(0, style.rise || 0); }
+  function textDescent(style) { return style.size * 0.22 + Math.max(0, -(style.rise || 0)); }
+
+  class Renderer {
+    constructor(src, warnings) {
+      this.src = src;
+      this.warnings = warnings;
+      this.pageW = A4.w;
+      this.pageH = A4.h;
+      this.margin = 56;
+      this.pages = [];
+      this.stream = null;
+      this.y = 0;
+      this.line = null;
+      this.pendingSpace = false;
+      this.currentIndent = 0;
+      this.newPage(false);
+    }
+    newPage(force) {
+      if (this.line) this.flushLine();
+      if (!force && this.stream && this.stream.length === 0) return;
+      this.stream = [];
+      this.pages.push(this.stream);
+      this.y = this.pageH - this.margin;
+      this.pendingSpace = false;
+      this.line = null;
+    }
+    textWidth() { return this.pageW - this.margin * 2; }
+    availableWidth() {
+      return this.pageW - this.margin * 2 - (this.line ? this.line.indent : this.currentIndent);
+    }
+    startLine() {
+      if (!this.line) this.line = { items: [], width: 0, maxAbove: 0, maxBelow: 0, indent: this.currentIndent };
+    }
+    pushTextItem(item, style) {
+      this.line.items.push(item);
+      this.line.width += item.width;
+      this.line.maxAbove = Math.max(this.line.maxAbove, textAscent(style));
+      this.line.maxBelow = Math.max(this.line.maxBelow, textDescent(style));
+    }
+    addSpace(style) {
+      this.startLine();
+      const w = measureText(' ', style);
+      this.pushTextItem({ literal: ' ', style, width: w }, style);
+    }
+    addWordSpan(s, e, style) {
+      if (s >= e) return;
+      this.startLine();
+      const wordWidth = measureSpan(this.src, s, e, style);
+      let leading = this.pendingSpace && this.line.items.length > 0;
+      let spaceWidth = leading ? measureText(' ', style) : 0;
+      if (this.line.items.length > 0 && this.line.width + spaceWidth + wordWidth > this.availableWidth()) {
+        this.flushLine();
+        this.startLine();
+        leading = false;
+        spaceWidth = 0;
+      }
+      if (leading) this.addSpace(style);
+      this.pushTextItem({ src: this.src, start: s, end: e, style, width: wordWidth }, style);
+      this.pendingSpace = false;
+    }
+    addWordLiteral(text, style) {
+      if (!text) return;
+      this.startLine();
+      const wordWidth = measureText(text, style);
+      let leading = this.pendingSpace && this.line.items.length > 0;
+      let spaceWidth = leading ? measureText(' ', style) : 0;
+      if (this.line.items.length > 0 && this.line.width + spaceWidth + wordWidth > this.availableWidth()) {
+        this.flushLine();
+        this.startLine();
+        leading = false;
+        spaceWidth = 0;
+      }
+      if (leading) this.addSpace(style);
+      this.pushTextItem({ literal: text, style, width: wordWidth }, style);
+      this.pendingSpace = false;
+    }
+    addBox(box) {
+      if (!box || box.width <= 0) return;
+      this.startLine();
+      const style = NORMAL;
+      let leading = this.pendingSpace && this.line.items.length > 0;
+      let spaceWidth = leading ? measureText(' ', style) : 0;
+      if (this.line.items.length > 0 && this.line.width + spaceWidth + box.width > this.availableWidth()) {
+        this.flushLine();
+        this.startLine();
+        leading = false;
+        spaceWidth = 0;
+      }
+      if (leading) this.addSpace(style);
+      this.line.items.push({ box, width: box.width });
+      this.line.width += box.width;
+      this.line.maxAbove = Math.max(this.line.maxAbove, box.height);
+      this.line.maxBelow = Math.max(this.line.maxBelow, box.depth);
+      this.pendingSpace = false;
+    }
+    addSpan(s, e, style) {
+      let wordStart = -1;
+      let newlines = 0;
+      const flushWord = (pos) => {
+        if (wordStart >= 0) {
+          this.addWordSpan(wordStart, pos, style);
+          wordStart = -1;
+        }
+      };
+      for (let i = s; i < e; i++) {
+        const c = this.src.charCodeAt(i);
+        if (isSpaceCode(c)) {
+          flushWord(i);
+          if (c === 10 || c === 13) {
+            if (c === 13 && this.src.charCodeAt(i + 1) === 10) i++;
+            newlines++;
+            if (newlines >= 2) this.paragraph(8);
+          } else if (newlines === 0) {
+            this.pendingSpace = true;
+          }
+        } else {
+          if (newlines === 1) this.pendingSpace = true;
+          newlines = 0;
+          if (wordStart < 0) wordStart = i;
+        }
+      }
+      flushWord(e);
+    }
+    addLiteral(text, style) {
+      let word = '';
+      for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        if (isSpaceCode(c)) {
+          if (word) { this.addWordLiteral(word, style); word = ''; }
+          this.pendingSpace = true;
+        } else {
+          word += text[i];
+        }
+      }
+      if (word) this.addWordLiteral(word, style);
+    }
+    lineBreak() {
+      this.flushLine();
+      this.pendingSpace = false;
+    }
+    paragraph(gap) {
+      this.flushLine();
+      this.pendingSpace = false;
+      this.y -= gap === undefined ? 8 : gap;
+      if (this.y < this.margin + 20) this.newPage(true);
+    }
+    addDisplayBox(box) {
+      if (!box) return;
+      this.paragraph(8);
+      const blockHeight = box.height + box.depth;
+      if (this.y - blockHeight < this.margin) this.newPage(true);
+      const x = this.margin + Math.max(0, (this.textWidth() - box.width) / 2);
+      const baseline = this.y - box.height;
+      box.paint(this, x, baseline);
+      this.y = baseline - box.depth - 12;
+      if (this.y < this.margin + 20) this.newPage(true);
+    }
+    flushLine() {
+      if (!this.line || this.line.items.length === 0) {
+        this.line = null;
+        this.pendingSpace = false;
+        return;
+      }
+      const lineHeight = Math.max(14, this.line.maxAbove + this.line.maxBelow + 3);
+      if (this.y < this.margin + lineHeight) {
+        const saved = this.line;
+        this.line = null;
+        this.newPage(true);
+        this.line = saved;
+      }
+      const x = this.margin + this.line.indent;
+      this.writeLine(x, this.y, this.line.items);
+      this.y -= lineHeight;
+      this.line = null;
+      this.pendingSpace = false;
+    }
+    writeLine(x, y, items) {
+      let cx = x;
+      let run = [];
+      const flushRun = () => {
+        if (!run.length) return;
+        this.writeTextItemsSequential(cx, y, run);
+        for (const it of run) cx += it.width || 0;
+        run = [];
+      };
+      for (const it of items) {
+        if (it.box) {
+          flushRun();
+          it.box.paint(this, cx, y);
+          cx += it.width || 0;
+        } else {
+          run.push(it);
+        }
+      }
+      flushRun();
+    }
+    writeTextItemsSequential(x, y, items) {
+      let font = null, size = null, rise = 0;
+      this.stream.push('BT\n');
+      this.stream.push('1 0 0 1 ' + fmt(x) + ' ' + fmt(y) + ' Tm\n');
+      for (const span of items) {
+        const st = span.style || NORMAL;
+        if (st.font !== font || st.size !== size) {
+          this.stream.push('/' + st.font + ' ' + fmt(st.size) + ' Tf\n');
+          font = st.font;
+          size = st.size;
+        }
+        const sr = st.rise || 0;
+        if (sr !== rise) {
+          this.stream.push(fmt(sr) + ' Ts\n');
+          rise = sr;
+        }
+        this.stream.push('(');
+        this.stream.push(span.literal !== undefined ? escapePdfStringLiteral(span.literal) : escapePdfSpan(span.src, span.start, span.end));
+        this.stream.push(') Tj\n');
+      }
+      if (rise !== 0) this.stream.push('0 Ts\n');
+      this.stream.push('ET\n');
+    }
+    writeTextRun(x, y, span) {
+      const st = span.style || NORMAL;
+      this.stream.push('BT\n');
+      this.stream.push('/' + st.font + ' ' + fmt(st.size) + ' Tf\n');
+      const rise = st.rise || 0;
+      if (rise) this.stream.push(fmt(rise) + ' Ts\n');
+      this.stream.push('1 0 0 1 ' + fmt(x) + ' ' + fmt(y) + ' Tm\n');
+      this.stream.push('(');
+      this.stream.push(span.literal !== undefined ? escapePdfStringLiteral(span.literal) : escapePdfSpan(span.src, span.start, span.end));
+      this.stream.push(') Tj\n');
+      if (rise) this.stream.push('0 Ts\n');
+      this.stream.push('ET\n');
+    }
+    drawLine(x1, y1, x2, y2, width) {
+      this.stream.push('q\n');
+      this.stream.push(fmt(width || 0.5) + ' w\n');
+      this.stream.push(fmt(x1) + ' ' + fmt(y1) + ' m\n');
+      this.stream.push(fmt(x2) + ' ' + fmt(y2) + ' l\n');
+      this.stream.push('S\nQ\n');
+    }
+    drawRule(x, y, w, h) {
+      this.stream.push('q\n');
+      this.stream.push(fmt(x) + ' ' + fmt(y) + ' ' + fmt(w) + ' ' + fmt(h) + ' re\nf\n');
+      this.stream.push('Q\n');
+    }
+    finish() {
+      this.flushLine();
+      if (this.pages.length === 0) this.newPage(true);
+      while (this.pages.length > 1 && this.pages[this.pages.length - 1].length === 0) this.pages.pop();
+      return this.pages.map(parts => parts.join(''));
+    }
+  }
+
+  class MathBox {
+    constructor(width, height, depth) {
+      this.width = width;
+      this.height = height;
+      this.depth = depth;
+    }
+    paint(_renderer, _x, _baseline) {}
+  }
+
+  class GlueBox extends MathBox {
+    constructor(width) { super(width, 0, 0); }
+    paint() {}
+  }
+
+  class MathTextBox extends MathBox {
+    constructor(opts) {
+      const style = opts.style || NORMAL;
+      const width = opts.literal !== undefined ? measureText(opts.literal, style) : measureSpan(opts.src, opts.start, opts.end, style);
+      super(width, style.size * 0.78, style.size * 0.22);
+      this.src = opts.src;
+      this.start = opts.start;
+      this.end = opts.end;
+      this.literal = opts.literal;
+      this.style = style;
+    }
+    paint(renderer, x, baseline) {
+      renderer.writeTextRun(x, baseline, {
+        src: this.src,
+        start: this.start,
+        end: this.end,
+        literal: this.literal,
+        style: this.style,
+        width: this.width
+      });
+    }
+  }
+
+  class HBox extends MathBox {
+    constructor(children) {
+      children = (children || []).filter(Boolean);
+      let w = 0, h = 0, d = 0;
+      for (const child of children) {
+        w += child.width;
+        h = Math.max(h, child.height);
+        d = Math.max(d, child.depth);
+      }
+      super(w, h, d);
+      this.children = children;
+    }
+    paint(renderer, x, baseline) {
+      let cx = x;
+      for (const child of this.children) {
+        child.paint(renderer, cx, baseline);
+        cx += child.width;
+      }
+    }
+  }
+
+  class FractionBox extends MathBox {
+    constructor(numerator, denominator, size) {
+      const pad = Math.max(2, size * 0.18);
+      const gap = Math.max(2, size * 0.18);
+      const rule = Math.max(0.45, size * 0.045);
+      const width = Math.max(numerator.width, denominator.width) + pad * 2;
+      const axis = size * 0.25;
+      const height = axis + gap + numerator.depth + numerator.height;
+      const depth = -axis + gap + denominator.height + denominator.depth;
+      super(width, height, depth);
+      this.numerator = numerator;
+      this.denominator = denominator;
+      this.size = size;
+      this.pad = pad;
+      this.gap = gap;
+      this.rule = rule;
+      this.axis = axis;
+    }
+    paint(renderer, x, baseline) {
+      const ruleY = baseline + this.axis;
+      const nx = x + (this.width - this.numerator.width) / 2;
+      const dx = x + (this.width - this.denominator.width) / 2;
+      this.numerator.paint(renderer, nx, ruleY + this.gap + this.numerator.depth);
+      renderer.drawRule(x + this.pad, ruleY, this.width - this.pad * 2, this.rule);
+      this.denominator.paint(renderer, dx, ruleY - this.gap - this.denominator.height);
+    }
+  }
+
+  class SqrtBox extends MathBox {
+    constructor(radicand, size) {
+      const rootW = Math.max(6, size * 0.62);
+      const overPad = Math.max(1.5, size * 0.12);
+      const width = rootW + radicand.width + overPad;
+      const height = Math.max(radicand.height + overPad * 1.2, size * 0.9);
+      const depth = radicand.depth;
+      super(width, height, depth);
+      this.radicand = radicand;
+      this.rootW = rootW;
+      this.overPad = overPad;
+      this.size = size;
+    }
+    paint(renderer, x, baseline) {
+      const childX = x + this.rootW;
+      const topY = baseline + this.radicand.height + this.overPad;
+      const lw = Math.max(0.45, this.size * 0.045);
+      renderer.drawLine(x + 0.5, baseline + this.size * 0.10, x + this.rootW * 0.32, baseline - this.size * 0.18, lw);
+      renderer.drawLine(x + this.rootW * 0.32, baseline - this.size * 0.18, x + this.rootW * 0.72, topY, lw);
+      renderer.drawLine(x + this.rootW * 0.72, topY, childX + this.radicand.width + this.overPad, topY, lw);
+      this.radicand.paint(renderer, childX, baseline);
+    }
+  }
+
+  class ScriptBox extends MathBox {
+    constructor(base, sup, sub, size) {
+      const scriptW = Math.max(sup ? sup.width : 0, sub ? sub.width : 0);
+      const supShift = size * 0.58;
+      const subShift = size * 0.34;
+      const gap = Math.max(1, size * 0.07);
+      const height = Math.max(base.height, sup ? supShift + sup.height : 0);
+      const depth = Math.max(base.depth, sub ? subShift + sub.depth : 0);
+      super(base.width + (scriptW ? scriptW + gap : 0), height, depth);
+      this.base = base;
+      this.sup = sup;
+      this.sub = sub;
+      this.supShift = supShift;
+      this.subShift = subShift;
+      this.gap = gap;
+    }
+    paint(renderer, x, baseline) {
+      this.base.paint(renderer, x, baseline);
+      const sx = x + this.base.width + this.gap;
+      if (this.sup) this.sup.paint(renderer, sx, baseline + this.supShift);
+      if (this.sub) this.sub.paint(renderer, sx, baseline - this.subShift);
+    }
+  }
+
+  const SYMBOL_CODES = Object.freeze({
+    alpha: 0x61, beta: 0x62, gamma: 0x67, delta: 0x64, epsilon: 0x65, zeta: 0x7a,
+    eta: 0x68, theta: 0x71, iota: 0x69, kappa: 0x6b, lambda: 0x6c, mu: 0x6d,
+    nu: 0x6e, xi: 0x78, omicron: 0x6f, pi: 0x70, rho: 0x72, sigma: 0x73,
+    tau: 0x74, upsilon: 0x75, phi: 0x66, chi: 0x63, psi: 0x79, omega: 0x77,
+    Gamma: 0x47, Delta: 0x44, Theta: 0x51, Lambda: 0x4c, Xi: 0x58, Pi: 0x50,
+    Sigma: 0x53, Upsilon: 0x55, Phi: 0x46, Psi: 0x59, Omega: 0x57,
+    pm: 0xb1, mp: 0xb1, times: 0xb4, cdot: 0xd7, div: 0xb8, leq: 0xa3, geq: 0xb3,
+    neq: 0xb9, approx: 0xbb, sim: 0x7e, infty: 0xa5, partial: 0xb6, nabla: 0xd1,
+    sum: 0xe5, prod: 0xd5, int: 0xf2, oint: 0xf3, bullet: 0xb7
+  });
+  const OPERATORS = Object.freeze({
+    sin: true, cos: true, tan: true, cot: true, sec: true, csc: true, log: true, ln: true,
+    exp: true, lim: true, min: true, max: true, sup: true, inf: true, det: true, dim: true
+  });
+
+  class MathParser {
+    constructor(src, start, end, warnings, size, opts) {
+      this.src = src;
+      this.pos = start;
+      this.end = end;
+      this.warnings = warnings;
+      this.size = size || 12;
+      this.opts = opts || {};
+      this.letterFont = this.opts.letterFont || FONT.italic;
+      this.digitFont = this.opts.digitFont || FONT.normal;
+      this.operatorFont = this.opts.operatorFont || FONT.normal;
+    }
+    style(font, scale) { return { font, size: this.size * (scale || 1), rise: 0 }; }
+    parse() { return this.parseSequence(false); }
+    parseSequence(stopOnBrace) {
+      const children = [];
+      let lastWasSpace = false;
+      while (this.pos < this.end) {
+        const c = this.src.charCodeAt(this.pos);
+        if (stopOnBrace && c === 125) break;
+        if (c === 37) { this.skipComment(); continue; }
+        if (isSpaceCode(c)) {
+          this.skipSpaces();
+          if (children.length && !lastWasSpace) children.push(new GlueBox(this.size * 0.22));
+          lastWasSpace = true;
+          continue;
+        }
+        const atom = this.parseAtom();
+        if (atom) {
+          children.push(this.parseScripts(atom));
+          lastWasSpace = false;
+        } else {
+          this.pos++;
+        }
+      }
+      return new HBox(children);
+    }
+    skipComment() {
+      while (this.pos < this.end && this.src.charCodeAt(this.pos) !== 10 && this.src.charCodeAt(this.pos) !== 13) this.pos++;
+    }
+    skipSpaces() {
+      while (this.pos < this.end && isSpaceCode(this.src.charCodeAt(this.pos))) this.pos++;
+    }
+    skipSpacesAt(i) {
+      while (i < this.end && isSpaceCode(this.src.charCodeAt(i))) i++;
+      return i;
+    }
+    readGroupBounds(i) {
+      i = this.skipSpacesAt(i);
+      if (this.src.charCodeAt(i) !== 123) return null;
+      const start = i + 1;
+      let depth = 1;
+      i++;
+      while (i < this.end && depth > 0) {
+        const c = this.src.charCodeAt(i);
+        if (c === 92) i += 2;
+        else {
+          if (c === 123) depth++;
+          else if (c === 125) depth--;
+          if (depth === 0) return { start, end: i, next: i + 1 };
+          i++;
+        }
+      }
+      this.warnings.push('Unclosed math group near byte offset ' + start + '.');
+      return { start, end: this.end, next: this.end };
+    }
+    readRequiredGroup() {
+      const g = this.readGroupBounds(this.pos);
+      if (g) this.pos = g.next;
+      return g;
+    }
+    skipOptionalAt(i) {
+      i = this.skipSpacesAt(i);
+      if (this.src.charCodeAt(i) !== 91) return i;
+      let depth = 1;
+      i++;
+      while (i < this.end && depth > 0) {
+        const c = this.src.charCodeAt(i);
+        if (c === 92) i += 2;
+        else { if (c === 91) depth++; else if (c === 93) depth--; i++; }
+      }
+      return i;
+    }
+    parseAtom() {
+      const c = this.src.charCodeAt(this.pos);
+      if (c === 123) {
+        const g = this.readGroupBounds(this.pos);
+        this.pos = g.next;
+        return new MathParser(this.src, g.start, g.end, this.warnings, this.size, this.opts).parse();
+      }
+      if (c === 92) return this.parseCommand();
+      if (c === 94 || c === 95) {
+        // A stray script marker is rendered literally and diagnosed.
+        this.warnings.push('Stray math script marker "' + String.fromCharCode(c) + '" near byte offset ' + this.pos + '.');
+        this.pos++;
+        return new MathTextBox({ literal: String.fromCharCode(c), style: this.style(FONT.mono, 0.9) });
+      }
+      if (isAlpha(c)) {
+        const s = this.pos;
+        while (this.pos < this.end && isAlpha(this.src.charCodeAt(this.pos))) this.pos++;
+        return new MathTextBox({ src: this.src, start: s, end: this.pos, style: this.style(this.letterFont, 1) });
+      }
+      if (isDigit(c)) {
+        const s = this.pos;
+        while (this.pos < this.end && (isDigit(this.src.charCodeAt(this.pos)) || this.src.charCodeAt(this.pos) === 46)) this.pos++;
+        return new MathTextBox({ src: this.src, start: s, end: this.pos, style: this.style(this.digitFont, 1) });
+      }
+      this.pos++;
+      return new MathTextBox({ literal: String.fromCharCode(c), style: this.style(this.operatorFont, 1) });
+    }
+    parseScripts(base) {
+      let sup = null, sub = null;
+      let saw = false;
+      for (;;) {
+        const save = this.pos;
+        this.skipSpaces();
+        const c = this.src.charCodeAt(this.pos);
+        if (c !== 94 && c !== 95) { this.pos = save; break; }
+        this.pos++;
+        const arg = this.readScriptArgument(this.size * 0.70);
+        if (c === 94) {
+          if (sup) this.warnings.push('Repeated superscript near byte offset ' + save + '.');
+          sup = arg;
+        } else {
+          if (sub) this.warnings.push('Repeated subscript near byte offset ' + save + '.');
+          sub = arg;
+        }
+        saw = true;
+      }
+      return saw ? new ScriptBox(base, sup, sub, this.size) : base;
+    }
+    readScriptArgument(scriptSize) {
+      this.skipSpaces();
+      if (this.pos >= this.end) return new HBox([]);
+      if (this.src.charCodeAt(this.pos) === 123) {
+        const g = this.readGroupBounds(this.pos);
+        this.pos = g.next;
+        return new MathParser(this.src, g.start, g.end, this.warnings, scriptSize, this.opts).parse();
+      }
+      const s = this.pos;
+      this.pos = this.consumeOneAtomRange(this.pos);
+      return new MathParser(this.src, s, this.pos, this.warnings, scriptSize, this.opts).parse();
+    }
+    consumeOneAtomRange(i) {
+      if (i >= this.end) return i;
+      const c = this.src.charCodeAt(i);
+      if (c === 123) {
+        const g = this.readGroupBounds(i);
+        return g ? g.next : Math.min(i + 1, this.end);
+      }
+      if (c !== 92) return Math.min(i + 1, this.end);
+      i++;
+      if (i >= this.end) return i;
+      if (!isAlpha(this.src.charCodeAt(i))) return Math.min(i + 1, this.end);
+      const ns = i;
+      while (i < this.end && isAlpha(this.src.charCodeAt(i))) i++;
+      const name = this.src.slice(ns, i);
+      i = this.skipSpacesAt(i);
+      if (name === 'frac') {
+        const g1 = this.readGroupBounds(i); if (!g1) return i;
+        const g2 = this.readGroupBounds(g1.next); if (!g2) return g1.next;
+        return g2.next;
+      }
+      if (name === 'sqrt' || name === 'text' || name === 'mathrm' || name === 'mathbf' || name === 'mathit' || name === 'mathtt' || name === 'operatorname') {
+        if (name === 'sqrt') i = this.skipOptionalAt(i);
+        const g = this.readGroupBounds(i);
+        return g ? g.next : i;
+      }
+      if (name === 'left' || name === 'right') {
+        i = this.skipSpacesAt(i);
+        if (this.src.charCodeAt(i) === 92) {
+          i++;
+          if (i < this.end && isAlpha(this.src.charCodeAt(i))) while (i < this.end && isAlpha(this.src.charCodeAt(i))) i++;
+          else i++;
+          return i;
+        }
+        return Math.min(i + 1, this.end);
+      }
+      return i;
+    }
+    parseCommand() {
+      const slash = this.pos;
+      this.pos++;
+      if (this.pos >= this.end) return new MathTextBox({ literal: '\\', style: this.style(FONT.mono, 1) });
+      const c = this.src.charCodeAt(this.pos);
+      if (!isAlpha(c)) {
+        this.pos++;
+        if (c === 44) return new GlueBox(this.size * 0.18);       // \,
+        if (c === 59) return new GlueBox(this.size * 0.28);       // \;
+        if (c === 33) return new GlueBox(-this.size * 0.12);      // \!
+        if (c === 32) return new GlueBox(this.size * 0.28);
+        if (c === 92) return new GlueBox(this.size * 0.5);        // line break in display math, approximate
+        if (c === 123) return new MathTextBox({ literal: '{', style: this.style(this.operatorFont, 1) });
+        if (c === 125) return new MathTextBox({ literal: '}', style: this.style(this.operatorFont, 1) });
+        if (c === 37) return new MathTextBox({ literal: '%', style: this.style(this.operatorFont, 1) });
+        if (c === 36) return new MathTextBox({ literal: '$', style: this.style(this.operatorFont, 1) });
+        if (c === 38) return new MathTextBox({ literal: '&', style: this.style(this.operatorFont, 1) });
+        if (c === 35) return new MathTextBox({ literal: '#', style: this.style(this.operatorFont, 1) });
+        if (c === 95) return new MathTextBox({ literal: '_', style: this.style(this.operatorFont, 1) });
+        return new MathTextBox({ literal: String.fromCharCode(c), style: this.style(this.operatorFont, 1) });
+      }
+      const ns = this.pos;
+      while (this.pos < this.end && isAlpha(this.src.charCodeAt(this.pos))) this.pos++;
+      const name = this.src.slice(ns, this.pos);
+
+      if (name === 'frac') {
+        const g1 = this.readRequiredGroup();
+        const g2 = g1 ? this.readRequiredGroup() : null;
+        if (!g1 || !g2) {
+          this.warnings.push('Malformed \\frac near byte offset ' + slash + '.');
+          return new MathTextBox({ literal: '\\frac', style: this.style(FONT.mono, 0.9) });
+        }
+        const n = new MathParser(this.src, g1.start, g1.end, this.warnings, this.size * 0.82, this.opts).parse();
+        const d = new MathParser(this.src, g2.start, g2.end, this.warnings, this.size * 0.82, this.opts).parse();
+        return new FractionBox(n, d, this.size);
+      }
+      if (name === 'sqrt') {
+        this.pos = this.skipOptionalAt(this.pos);
+        const g = this.readRequiredGroup();
+        if (!g) {
+          this.warnings.push('Malformed \\sqrt near byte offset ' + slash + '.');
+          return new MathTextBox({ literal: '\\sqrt', style: this.style(FONT.mono, 0.9) });
+        }
+        const r = new MathParser(this.src, g.start, g.end, this.warnings, this.size, this.opts).parse();
+        return new SqrtBox(r, this.size);
+      }
+      if (name === 'text') {
+        const g = this.readRequiredGroup();
+        if (!g) return new MathTextBox({ literal: '\\text', style: this.style(FONT.mono, 0.9) });
+        return new MathTextBox({ src: this.src, start: g.start, end: g.end, style: this.style(FONT.normal, 0.92) });
+      }
+      if (name === 'operatorname') {
+        const g = this.readRequiredGroup();
+        if (!g) return new MathTextBox({ literal: '\\operatorname', style: this.style(FONT.mono, 0.8) });
+        const op = new MathTextBox({ src: this.src, start: g.start, end: g.end, style: this.style(FONT.normal, 1) });
+        return new HBox([op, new GlueBox(this.size * 0.18)]);
+      }
+      if (name === 'mathrm' || name === 'mathbf' || name === 'mathit' || name === 'mathtt') {
+        const g = this.readRequiredGroup();
+        if (!g) return new MathTextBox({ literal: '\\' + name, style: this.style(FONT.mono, 0.9) });
+        const font = name === 'mathbf' ? FONT.bold : name === 'mathit' ? FONT.italic : name === 'mathtt' ? FONT.mono : FONT.normal;
+        return new MathParser(this.src, g.start, g.end, this.warnings, this.size, { letterFont: font, digitFont: font, operatorFont: font }).parse();
+      }
+      if (name === 'left' || name === 'right') {
+        this.skipSpaces();
+        return this.readDelimiter();
+      }
+      if (name === 'quad') return new GlueBox(this.size * 1.0);
+      if (name === 'qquad') return new GlueBox(this.size * 2.0);
+      if (name === 'thinspace') return new GlueBox(this.size * 0.18);
+      if (OPERATORS[name]) {
+        return new HBox([
+          new MathTextBox({ literal: name, style: this.style(FONT.normal, 1) }),
+          new GlueBox(this.size * 0.18)
+        ]);
+      }
+      if (Object.prototype.hasOwnProperty.call(SYMBOL_CODES, name)) {
+        const larger = (name === 'sum' || name === 'prod' || name === 'int' || name === 'oint') ? 1.25 : 1;
+        return new MathTextBox({ literal: String.fromCharCode(SYMBOL_CODES[name]), style: this.style(FONT.symbol, larger) });
+      }
+      if (name === 'to' || name === 'rightarrow') return new MathTextBox({ literal: '->', style: this.style(FONT.normal, 1) });
+      if (name === 'leftarrow') return new MathTextBox({ literal: '<-', style: this.style(FONT.normal, 1) });
+      if (name === 'ldots' || name === 'dots' || name === 'cdots') return new MathTextBox({ literal: '...', style: this.style(FONT.normal, 1) });
+
+      this.warnings.push('Unsupported math command: \\' + name);
+      return new MathTextBox({ literal: '\\' + name, style: this.style(FONT.mono, 0.85) });
+    }
+    readDelimiter() {
+      if (this.pos >= this.end) return new HBox([]);
+      const c = this.src.charCodeAt(this.pos);
+      if (c === 46) { this.pos++; return new HBox([]); }
+      if (c !== 92) {
+        this.pos++;
+        return new MathTextBox({ literal: String.fromCharCode(c), style: this.style(this.operatorFont, 1) });
+      }
+      this.pos++;
+      if (this.pos >= this.end) return new MathTextBox({ literal: '\\', style: this.style(FONT.mono, 1) });
+      if (!isAlpha(this.src.charCodeAt(this.pos))) {
+        const ch = this.src.charCodeAt(this.pos++);
+        if (ch === 123) return new MathTextBox({ literal: '{', style: this.style(this.operatorFont, 1) });
+        if (ch === 125) return new MathTextBox({ literal: '}', style: this.style(this.operatorFont, 1) });
+        return new MathTextBox({ literal: String.fromCharCode(ch), style: this.style(this.operatorFont, 1) });
+      }
+      const ns = this.pos;
+      while (this.pos < this.end && isAlpha(this.src.charCodeAt(this.pos))) this.pos++;
+      const name = this.src.slice(ns, this.pos);
+      if (name === 'lbrace') return new MathTextBox({ literal: '{', style: this.style(this.operatorFont, 1) });
+      if (name === 'rbrace') return new MathTextBox({ literal: '}', style: this.style(this.operatorFont, 1) });
+      if (name === 'vert' || name === 'mid') return new MathTextBox({ literal: '|', style: this.style(this.operatorFont, 1) });
+      if (name === 'langle') return new MathTextBox({ literal: '<', style: this.style(this.operatorFont, 1) });
+      if (name === 'rangle') return new MathTextBox({ literal: '>', style: this.style(this.operatorFont, 1) });
+      return new MathTextBox({ literal: name, style: this.style(FONT.normal, 1) });
+    }
+  }
+
+  class Compiler {
+    constructor(src) {
+      this.src = src;
+      this.warnings = [];
+      this.env = [];
+      this.renderer = new Renderer(src, this.warnings);
+    }
+    compile() {
+      let start = this.src.indexOf('\\begin{document}');
+      if (start >= 0) start += '\\begin{document}'.length;
+      else { start = 0; this.warnings.push('No \\begin{document}; compiling the entire input.'); }
+      let end = this.src.indexOf('\\end{document}', start);
+      if (end < 0) end = this.src.length;
+      this.parseRange(start, end, NORMAL);
+      const pages = this.renderer.finish();
+      const bytes = buildPdf(pages);
+      return { bytes, warnings: this.warnings, pages: pages.length };
+    }
+    syncIndent() {
+      this.renderer.currentIndent = this.env.length * 22;
+    }
+    parseRange(i, end, style) {
+      let textStart = i;
+      while (i < end) {
+        const c = this.src.charCodeAt(i);
+        if (c === 92) { // backslash
+          if (textStart < i) this.renderer.addSpan(textStart, i, style);
+          i = this.handleCommand(i + 1, end, style);
+          textStart = i;
+        } else if (c === 36) { // dollar math
+          if (textStart < i) this.renderer.addSpan(textStart, i, style);
+          if (this.src.charCodeAt(i + 1) === 36) i = this.handleDollarDisplay(i + 2, end, style);
+          else i = this.handleInlineMath(i + 1, end, style);
+          textStart = i;
+        } else if (c === 37) { // comment
+          if (textStart < i) this.renderer.addSpan(textStart, i, style);
+          i = this.skipComment(i, end);
+          textStart = i;
+        } else if (c === 123 || c === 125) { // grouping braces outside recognized command
+          if (textStart < i) this.renderer.addSpan(textStart, i, style);
+          i++;
+          textStart = i;
+        } else {
+          i++;
+        }
+      }
+      if (textStart < end) this.renderer.addSpan(textStart, end, style);
+      return i;
+    }
+    skipComment(i, end) {
+      while (i < end && this.src.charCodeAt(i) !== 10 && this.src.charCodeAt(i) !== 13) i++;
+      return i;
+    }
+    skipSpaces(i, end) {
+      while (i < end && isSpaceCode(this.src.charCodeAt(i))) i++;
+      return i;
+    }
+    skipOptional(i, end) {
+      i = this.skipSpaces(i, end);
+      if (this.src.charCodeAt(i) !== 91) return i;
+      let depth = 1;
+      i++;
+      while (i < end && depth > 0) {
+        const c = this.src.charCodeAt(i);
+        if (c === 92) i += 2;
+        else { if (c === 91) depth++; else if (c === 93) depth--; i++; }
+      }
+      return i;
+    }
+    readGroup(i, end) {
+      i = this.skipSpaces(i, end);
+      if (this.src.charCodeAt(i) !== 123) return null;
+      const start = i + 1;
+      let depth = 1;
+      i++;
+      while (i < end && depth > 0) {
+        const c = this.src.charCodeAt(i);
+        if (c === 92) i += 2;
+        else {
+          if (c === 123) depth++;
+          else if (c === 125) depth--;
+          if (depth === 0) return { start, end: i, next: i + 1 };
+          i++;
+        }
+      }
+      this.warnings.push('Unclosed brace group near byte offset ' + start + '.');
+      return { start, end, next: end };
+    }
+    handleCommand(i, end, style) {
+      if (i >= end) return i;
+      const c = this.src.charCodeAt(i);
+      if (!isAlpha(c)) return this.handleSymbolCommand(i, end, style);
+      const nameStart = i;
+      while (i < end && isAlpha(this.src.charCodeAt(i))) i++;
+      return this.handleNamedCommand(nameStart, i, i, end, style);
+    }
+    handleSymbolCommand(i, end, style) {
+      const c = this.src.charCodeAt(i);
+      if (c === 92) { this.renderer.lineBreak(); return i + 1; }       // \\
+      if (c === 91) return this.handleBracketDisplay(i + 1, end, style); // \[
+      if (c === 40) return this.handleParenInline(i + 1, end, style);    // \(
+      if (c === 37) { this.renderer.addLiteral('%', style); return i + 1; }
+      if (c === 36) { this.renderer.addLiteral('$', style); return i + 1; }
+      if (c === 38) { this.renderer.addLiteral('&', style); return i + 1; }
+      if (c === 35) { this.renderer.addLiteral('#', style); return i + 1; }
+      if (c === 95) { this.renderer.addLiteral('_', style); return i + 1; }
+      if (c === 123) { this.renderer.addLiteral('{', style); return i + 1; }
+      if (c === 125) { this.renderer.addLiteral('}', style); return i + 1; }
+      if (c === 126) { this.renderer.addLiteral(' ', style); return i + 1; }
+      if (c === 94) { this.renderer.addLiteral('^', style); return i + 1; }
+      return i + 1;
+    }
+    cmd(s, e, word) { return spanEq(this.src, s, e, word); }
+    handleNamedCommand(ns, ne, pos, end, style) {
+      const nameForWarn = this.src.slice(ns, ne);
+
+      if (this.cmd(ns, ne, 'section') || this.cmd(ns, ne, 'subsection') || this.cmd(ns, ne, 'subsubsection')) {
+        pos = this.skipOptional(pos, end);
+        const g = this.readGroup(pos, end);
+        if (!g) return pos;
+        const oldIndent = this.renderer.currentIndent;
+        this.renderer.currentIndent = 0;
+        this.renderer.paragraph(this.cmd(ns, ne, 'section') ? 14 : 10);
+        const size = this.cmd(ns, ne, 'section') ? 20 : (this.cmd(ns, ne, 'subsection') ? 16 : 14);
+        this.parseRange(g.start, g.end, styleWith(style, { font: FONT.bold, size }));
+        this.renderer.paragraph(8);
+        this.renderer.currentIndent = oldIndent;
+        return g.next;
+      }
+      if (this.cmd(ns, ne, 'textbf') || this.cmd(ns, ne, 'bfseries')) {
+        const g = this.readGroup(pos, end);
+        if (g) { this.parseRange(g.start, g.end, styleWith(style, { font: FONT.bold })); return g.next; }
+        return pos;
+      }
+      if (this.cmd(ns, ne, 'textit') || this.cmd(ns, ne, 'emph') || this.cmd(ns, ne, 'itshape')) {
+        const g = this.readGroup(pos, end);
+        if (g) { this.parseRange(g.start, g.end, styleWith(style, { font: FONT.italic })); return g.next; }
+        return pos;
+      }
+      if (this.cmd(ns, ne, 'texttt')) {
+        const g = this.readGroup(pos, end);
+        if (g) { this.parseRange(g.start, g.end, styleWith(style, { font: FONT.mono })); return g.next; }
+        return pos;
+      }
+      if (this.cmd(ns, ne, 'begin')) {
+        const g = this.readGroup(pos, end);
+        if (!g) return pos;
+        const envName = this.src.slice(g.start, g.end).trim();
+        if (envName === 'itemize') { this.renderer.paragraph(4); this.env.push({ type: 'itemize', count: 0 }); this.syncIndent(); }
+        else if (envName === 'enumerate') { this.renderer.paragraph(4); this.env.push({ type: 'enumerate', count: 0 }); this.syncIndent(); }
+        else if (envName === 'equation' || envName === 'displaymath') {
+          const close = this.findEndEnvironment(envName, g.next, end);
+          if (close) {
+            this.renderDisplayMathRange(g.next, close.start, style);
+            return close.next;
+          }
+          this.warnings.push('Unclosed math environment: ' + envName);
+          this.renderDisplayMathRange(g.next, end, style);
+          return end;
+        }
+        else if (envName === 'document') { /* already handled */ }
+        else this.warnings.push('Unsupported environment started: ' + envName);
+        return g.next;
+      }
+      if (this.cmd(ns, ne, 'end')) {
+        const g = this.readGroup(pos, end);
+        if (!g) return pos;
+        if (spanTrimEq(this.src, g.start, g.end, 'itemize') || spanTrimEq(this.src, g.start, g.end, 'enumerate')) {
+          this.renderer.paragraph(4);
+          this.env.pop();
+          this.syncIndent();
+        }
+        return g.next;
+      }
+      if (this.cmd(ns, ne, 'item')) {
+        this.renderer.paragraph(2);
+        const top = this.env[this.env.length - 1];
+        if (top && top.type === 'enumerate') { top.count++; this.syncIndent(); this.renderer.addLiteral(String(top.count) + '. ', style); }
+        else { if (top) top.count++; this.syncIndent(); this.renderer.addLiteral('* ', style); }
+        return pos;
+      }
+      if (this.cmd(ns, ne, 'par')) { this.renderer.paragraph(8); return pos; }
+      if (this.cmd(ns, ne, 'newline') || this.cmd(ns, ne, 'linebreak')) { this.renderer.lineBreak(); return pos; }
+      if (this.cmd(ns, ne, 'newpage') || this.cmd(ns, ne, 'clearpage')) { this.renderer.newPage(true); return pos; }
+      if (this.cmd(ns, ne, 'noindent')) { this.renderer.currentIndent = 0; return pos; }
+      if (this.cmd(ns, ne, 'textbackslash')) { this.renderer.addLiteral('\\', style); return pos; }
+      if (this.cmd(ns, ne, 'LaTeX')) { this.renderer.addLiteral('LaTeX', style); return pos; }
+      if (this.cmd(ns, ne, 'TeX')) { this.renderer.addLiteral('TeX', style); return pos; }
+      if (this.cmd(ns, ne, 'ldots') || this.cmd(ns, ne, 'dots')) { this.renderer.addLiteral('...', style); return pos; }
+      if (this.cmd(ns, ne, 'quad')) { this.renderer.addLiteral('    ', style); return pos; }
+      if (this.cmd(ns, ne, 'qquad')) { this.renderer.addLiteral('        ', style); return pos; }
+      if (this.cmd(ns, ne, 'alpha') || this.cmd(ns, ne, 'beta') || this.cmd(ns, ne, 'gamma') || this.cmd(ns, ne, 'delta') || this.cmd(ns, ne, 'pi') || this.cmd(ns, ne, 'theta') || this.cmd(ns, ne, 'lambda') || this.cmd(ns, ne, 'mu') || this.cmd(ns, ne, 'sigma') || this.cmd(ns, ne, 'omega')) {
+        this.renderer.addLiteral(nameForWarn, style);
+        return pos;
+      }
+      if (this.cmd(ns, ne, 'frac')) {
+        const g1 = this.readGroup(pos, end);
+        const g2 = g1 ? this.readGroup(g1.next, end) : null;
+        if (g1 && g2) {
+          this.renderer.addLiteral('(', style);
+          this.parseRange(g1.start, g1.end, style);
+          this.renderer.addLiteral(')/(', style);
+          this.parseRange(g2.start, g2.end, style);
+          this.renderer.addLiteral(')', style);
+          return g2.next;
+        }
+        return pos;
+      }
+      if (this.cmd(ns, ne, 'includegraphics')) {
+        pos = this.skipOptional(pos, end);
+        const g = this.readGroup(pos, end);
+        this.renderer.addLiteral('[image omitted]', styleWith(style, { font: FONT.italic }));
+        return g ? g.next : pos;
+      }
+      if (this.cmd(ns, ne, 'href')) {
+        const url = this.readGroup(pos, end);
+        const label = url ? this.readGroup(url.next, end) : null;
+        if (label) { this.parseRange(label.start, label.end, style); return label.next; }
+        return url ? url.next : pos;
+      }
+      if (this.cmd(ns, ne, 'url')) {
+        const g = this.readGroup(pos, end);
+        if (g) { this.parseRange(g.start, g.end, styleWith(style, { font: FONT.mono })); return g.next; }
+        return pos;
+      }
+
+      this.warnings.push('Ignored unsupported command: \\' + nameForWarn);
+      return pos;
+    }
+    findEndEnvironment(envName, start, end) {
+      const needle = '\\end{' + envName + '}';
+      const idx = this.src.indexOf(needle, start);
+      if (idx < 0 || idx >= end) return null;
+      return { start: idx, next: idx + needle.length };
+    }
+    findInlineDollar(start, end) {
+      let j = start;
+      while (j < end) {
+        const c = this.src.charCodeAt(j);
+        if (c === 92) j += 2;
+        else if (c === 36) return j;
+        else j++;
+      }
+      return -1;
+    }
+    findDoubleDollar(start, end) {
+      let j = start;
+      while (j < end - 1) {
+        const c = this.src.charCodeAt(j);
+        if (c === 92) j += 2;
+        else if (c === 36 && this.src.charCodeAt(j + 1) === 36) return j;
+        else j++;
+      }
+      return -1;
+    }
+    findBracketMathEnd(start, end, closeChar) {
+      let j = start;
+      while (j < end - 1) {
+        if (this.src.charCodeAt(j) === 92 && this.src.charCodeAt(j + 1) === closeChar) return j;
+        j++;
+      }
+      return -1;
+    }
+    renderInlineMathRange(start, stop, outerStyle) {
+      const size = Math.max(8, outerStyle.size || 12);
+      const box = new MathParser(this.src, start, stop, this.warnings, size, null).parse();
+      this.renderer.addBox(box);
+    }
+    renderDisplayMathRange(start, stop, outerStyle) {
+      const size = Math.max(13, (outerStyle.size || 12) * 1.15);
+      const box = new MathParser(this.src, start, stop, this.warnings, size, null).parse();
+      this.renderer.addDisplayBox(box);
+    }
+    handleInlineMath(start, end, outerStyle) {
+      const stop = this.findInlineDollar(start, end);
+      if (stop < 0) { this.renderer.addLiteral('$', outerStyle); return start; }
+      this.renderInlineMathRange(start, stop, outerStyle);
+      return stop + 1;
+    }
+    handleDollarDisplay(start, end, outerStyle) {
+      const stop = this.findDoubleDollar(start, end);
+      if (stop < 0) { this.renderer.addLiteral('$$', outerStyle); return start; }
+      this.renderDisplayMathRange(start, stop, outerStyle);
+      return stop + 2;
+    }
+    handleBracketDisplay(start, end, outerStyle) {
+      const stop = this.findBracketMathEnd(start, end, 93); // ]
+      if (stop < 0) { this.renderer.addLiteral('\\[', outerStyle); return start; }
+      this.renderDisplayMathRange(start, stop, outerStyle);
+      return stop + 2;
+    }
+    handleParenInline(start, end, outerStyle) {
+      const stop = this.findBracketMathEnd(start, end, 41); // )
+      if (stop < 0) { this.renderer.addLiteral('\\(', outerStyle); return start; }
+      this.renderInlineMathRange(start, stop, outerStyle);
+      return stop + 2;
+    }
+  }
+
+  function buildPdf(pageStreams) {
+    const objects = [];
+    const put = (s) => { objects.push(s); return objects.length; };
+    put('<< /Type /Catalog /Pages 2 0 R >>');       // 1
+    put('');                                         // 2, filled later
+    put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+    put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+    put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>');
+    put('<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>');
+    put('<< /Type /Font /Subtype /Type1 /BaseFont /Symbol >>');
+
+    const kids = [];
+    for (const stream of pageStreams) {
+      const contentNo = put('<< /Length ' + stream.length + ' >>\nstream\n' + stream + 'endstream');
+      const pageNo = put('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + fmt(A4.w) + ' ' + fmt(A4.h) + '] ' +
+        '/Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R /F5 7 0 R >> >> ' +
+        '/Contents ' + contentNo + ' 0 R >>');
+      kids.push(pageNo + ' 0 R');
+    }
+    objects[1] = '<< /Type /Pages /Count ' + kids.length + ' /Kids [' + kids.join(' ') + '] >>';
+
+    let pdf = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+    const offsets = [0];
+    for (let i = 0; i < objects.length; i++) {
+      offsets.push(pdf.length);
+      pdf += (i + 1) + ' 0 obj\n' + objects[i] + '\nendobj\n';
+    }
+    const xrefOffset = pdf.length;
+    pdf += 'xref\n0 ' + (objects.length + 1) + '\n';
+    pdf += '0000000000 65535 f \n';
+    for (let i = 1; i < offsets.length; i++) pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+    pdf += 'trailer\n<< /Size ' + (objects.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xrefOffset + '\n%%EOF\n';
+
+    const out = new Uint8Array(pdf.length);
+    for (let i = 0; i < pdf.length; i++) out[i] = pdf.charCodeAt(i) & 255;
+    return out;
+  }
+
+  function compileLatexToPdf(src) {
+    return new Compiler(src).compile();
+  }
+  function compileSource(src) {
+    return compileLatexToPdf(src);
+  }
+
+  const api = { VERSION: 'v0.2', Compiler, compileLatexToPdf, compileSource, buildPdf };
+  global.ZeroLatexPDF = api;
+  global.ZeroLatexCompiler = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+</script>
+<script>
+(() => {
+  'use strict';
+  let currentUrl = null;
+  function compileNow() {
+    const src = document.getElementById('src').value;
+    const log = document.getElementById('log');
+    const preview = document.getElementById('preview');
+    const download = document.getElementById('download');
+    try {
+      const result = ZeroLatexPDF.compileLatexToPdf(src);
+      const blob = new Blob([result.bytes], { type: 'application/pdf' });
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      currentUrl = URL.createObjectURL(blob);
+      preview.src = currentUrl;
+      download.href = currentUrl;
+      download.hidden = false;
+      log.textContent = 'Compiled ' + result.pages + ' page(s), ' + result.bytes.length + ' bytes.\n' +
+        (result.warnings.length ? '\nWarnings:\n- ' + result.warnings.join('\n- ') : 'No warnings.');
+    } catch (err) {
+      log.textContent = 'Compiler error:\n' + (err && err.stack ? err.stack : String(err));
+    }
+  }
+  document.getElementById('compile').addEventListener('click', compileNow);
+  compileNow();
+})();
+</script>
+</body>
+</html>

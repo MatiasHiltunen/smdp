@@ -124,10 +124,14 @@ export function* blocks(
     inInfo: false,
   };
   
-  const lines = Array.from(lineSpans(u8));
+  const iterator = lineSpans(u8)[Symbol.iterator]();
+  let current = iterator.next();
+  let next = iterator.next();
 
-  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-    const { start, end } = lines[lineIdx];
+  while (!current.done) {
+    const { start, end } = current.value;
+    let skipNext = false;
+    try {
     
     // Handle info blocks
     const infoCheck = detectInfoBlock(u8, start, end);
@@ -268,8 +272,8 @@ export function* blocks(
     }
 
     // Tables - check if current line starts with | and next line is separator
-    if (!st.inTable && i < end && u8[i] === 0x7c && lineIdx + 1 < lines.length) { // |
-      const nextLine = lines[lineIdx + 1];
+    if (!st.inTable && i < end && u8[i] === 0x7c && !next.done) { // |
+      const nextLine = next.value;
       const sepCheck = isTableSeparator(u8, nextLine.start, nextLine.end);
       
       if (sepCheck.isTable) {
@@ -285,7 +289,7 @@ export function* blocks(
         }));
         yield { type: 'tableHeader', cells: headerWithAlign };
         
-        lineIdx++; // Skip separator line
+        skipNext = true; // Skip separator line
         continue;
       }
     }
@@ -385,6 +389,14 @@ export function* blocks(
     // Paragraph line (ensure we don't split inside a multibyte codepoint)
     const lineEnd = clampUtf8SliceEnd(u8, i, end, end);
     yield { type: 'paraLine', s: i, e: lineEnd };
+    } finally {
+      current = next;
+      next = iterator.next();
+      if (skipNext) {
+        current = next;
+        next = iterator.next();
+      }
+    }
   }
 
   // EOF flush

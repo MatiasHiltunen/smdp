@@ -13,7 +13,8 @@
     "test:bench": "SMDP_WRITE_BENCH=1 tsx --test tests/bench.test.ts",
     "test:watch": "tsx --test --watch tests/**/*.test.ts",
     "test:e2e": "playwright test",
-    "precompile": "tsx scripts/precompile-languages.ts"
+    "precompile": "tsx scripts/precompile-languages.ts",
+    "build:wasm": "tsx scripts/build-wasm-core.ts"
   },
   "exports": {
     ".": {
@@ -39,6 +40,10 @@
     "./theme": {
       "types": "./src/theme/index.ts",
       "import": "./src/theme/index.ts"
+    },
+    "./wasm": {
+      "types": "./src/wasm/index.ts",
+      "import": "./src/wasm/index.ts"
     }
   },
   "sideEffects": false,

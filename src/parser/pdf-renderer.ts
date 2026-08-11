@@ -20,6 +20,7 @@ export interface PdfRenderOptions extends ParserOptions {
   fontSize?: number;
   lineHeight?: number;
   codeColors?: PdfCodeColorOptions;
+  emojiFont?: Uint8Array | ArrayBuffer;
   imageResolver?: PdfImageResolver;
   inflate?: PdfBinaryTransform;
   deflate?: PdfBinaryTransform;
@@ -66,6 +67,7 @@ type PdfTextStyle = {
   font: PdfFont;
   size: number;
   color: PdfColor;
+  fallbackFont?: PdfEmbeddedTextFont;
   underline?: boolean;
   strike?: boolean;
 };
@@ -135,6 +137,19 @@ type PdfEmbeddedImage = PdfRasterXObject | PdfFormXObject;
 type PdfParsedImage =
   | Omit<PdfRasterXObject, 'name'>
   | Omit<PdfFormXObject, 'name'>;
+
+type PdfEmbeddedTextFont = {
+  resourceName: string;
+  baseFontName: string;
+  bytes: Uint8Array;
+  unitsPerEm: number;
+  ascent: number;
+  descent: number;
+  bbox: readonly [number, number, number, number];
+  glyphs: Map<number, number>;
+  widths: number[];
+  usedGlyphs: Map<number, number>;
+};
 
 type ListFrame = {
   kind: 'ul' | 'ol';
@@ -279,6 +294,7 @@ function cloneStyle(style: PdfTextStyle): PdfTextStyle {
     font: style.font,
     size: style.size,
     color: style.color,
+    ...(style.fallbackFont ? { fallbackFont: style.fallbackFont } : {}),
     ...(style.underline ? { underline: true } : {}),
     ...(style.strike ? { strike: true } : {}),
   };
@@ -422,10 +438,12 @@ function pdfDisplayByteForCodePoint(codePoint: number): number | null {
   return mapWinAnsi(codePoint) ?? 0x3f;
 }
 
-type PdfEncodedText = {
+type PdfEncodedTextSegment = {
+  kind: 'base' | 'embedded';
+  font?: PdfEmbeddedTextFont;
   hex: string;
+  width: number;
   actualHex?: string;
-  hasNonAscii: boolean;
 };
 
 function asciiWidth(byte: number, font: PdfFont): number {
@@ -434,26 +452,6 @@ function asciiWidth(byte: number, font: PdfFont): number {
     ? HELVETICA_BOLD_WIDTHS
     : HELVETICA_WIDTHS;
   return widths[byte] ?? (byte === 0x20 ? 0.278 : 0.556);
-}
-
-function measureTextSpan(bytes: Uint8Array, s: number, e: number, style: PdfTextStyle): number {
-  let width = 0;
-  let i = s;
-  while (i < e) {
-    const byte = bytes[i];
-    if (byte < 0x80) {
-      width += asciiWidth(isAsciiWhitespace(byte) ? 0x20 : byte, style.font);
-      i++;
-    } else {
-      const decoded = readUtf8CodePoint(bytes, i, e);
-      const mapped = pdfDisplayByteForCodePoint(decoded.codePoint);
-      if (mapped !== null) {
-        width += asciiWidth(mapped, style.font);
-      }
-      i = decoded.next;
-    }
-  }
-  return width * style.size;
 }
 
 function appendUtf16BeHex(hex: string, codePoint: number): string {
@@ -472,38 +470,100 @@ function appendUtf16BeHex(hex: string, codePoint: number): string {
   );
 }
 
-function encodePdfText(bytes: Uint8Array, s: number, e: number): PdfEncodedText {
+function embeddedGlyphForCodePoint(style: PdfTextStyle, codePoint: number): { font: PdfEmbeddedTextFont; glyphId: number } | null {
+  const font = style.fallbackFont;
+  if (!font || mapWinAnsi(codePoint) !== null) return null;
+  const glyphId = font.glyphs.get(codePoint);
+  return glyphId !== undefined && glyphId > 0 ? { font, glyphId } : null;
+}
+
+function appendFourDigitHex(hex: string, value: number): string {
+  return hex + HEX[(value >>> 8) & 0xff] + HEX[value & 0xff];
+}
+
+function encodePdfTextSegments(bytes: Uint8Array, s: number, e: number, style: PdfTextStyle): PdfEncodedTextSegment[] {
+  const segments: PdfEncodedTextSegment[] = [];
+  let kind: 'base' | 'embedded' | null = null;
+  let font: PdfEmbeddedTextFont | undefined;
   let hex = '';
   let actualHex = 'FEFF';
-  let hasNonAscii = false;
-  let differs = false;
+  let needsActual = false;
+  let width = 0;
+
+  const flush = (): void => {
+    if (!kind || hex.length === 0) return;
+    segments.push({
+      kind,
+      ...(font ? { font } : {}),
+      hex,
+      width,
+      ...(needsActual ? { actualHex } : {}),
+    });
+    kind = null;
+    font = undefined;
+    hex = '';
+    actualHex = 'FEFF';
+    needsActual = false;
+    width = 0;
+  };
+
+  const ensureSegment = (nextKind: 'base' | 'embedded', nextFont?: PdfEmbeddedTextFont): void => {
+    if (kind === nextKind && font === nextFont) return;
+    flush();
+    kind = nextKind;
+    font = nextFont;
+  };
+
   let i = s;
   while (i < e) {
     const byte = bytes[i];
     if (byte < 0x80) {
       const mapped = byte < 0x20 ? (isAsciiWhitespace(byte) ? 0x20 : 0x3f) : byte;
+      ensureSegment('base');
       hex += HEX[mapped];
       actualHex = appendUtf16BeHex(actualHex, mapped);
-      differs ||= mapped !== byte;
+      needsActual ||= mapped !== byte;
+      width += asciiWidth(isAsciiWhitespace(mapped) ? 0x20 : mapped, style.font) * style.size;
       i++;
       continue;
     }
 
     const decoded = readUtf8CodePoint(bytes, i, e);
-    hasNonAscii = true;
+    if (isPdfTextIgnorable(decoded.codePoint)) {
+      actualHex = appendUtf16BeHex(actualHex, decoded.codePoint);
+      needsActual = true;
+      i = decoded.next;
+      continue;
+    }
+
+    const embedded = embeddedGlyphForCodePoint(style, decoded.codePoint);
+    if (embedded) {
+      ensureSegment('embedded', embedded.font);
+      hex = appendFourDigitHex(hex, embedded.glyphId);
+      actualHex = appendUtf16BeHex(actualHex, decoded.codePoint);
+      needsActual = true;
+      width += (embedded.font.widths[embedded.glyphId] ?? 1000) * style.size / 1000;
+      embedded.font.usedGlyphs.set(embedded.glyphId, decoded.codePoint);
+      i = decoded.next;
+      continue;
+    }
+
+    ensureSegment('base');
     actualHex = appendUtf16BeHex(actualHex, decoded.codePoint);
+    needsActual = true;
     const mapped = pdfDisplayByteForCodePoint(decoded.codePoint);
     if (mapped !== null) {
       hex += HEX[mapped];
+      width += asciiWidth(mapped, style.font) * style.size;
     }
-    differs ||= mapped !== mapWinAnsi(decoded.codePoint);
     i = decoded.next;
   }
-  return {
-    hex,
-    ...(hasNonAscii || differs ? { actualHex } : {}),
-    hasNonAscii,
-  };
+  flush();
+  return segments;
+}
+
+function measureTextSpan(bytes: Uint8Array, s: number, e: number, style: PdfTextStyle): number {
+  return encodePdfTextSegments(bytes, s, e, style).reduce((total, segment) => total + segment.width, 0);
 }
 
 function readUint16(bytes: Uint8Array, offset: number): number {
@@ -515,6 +575,199 @@ function readUint32(bytes: Uint8Array, offset: number): number {
     (bytes[offset] * 0x1000000) +
     ((bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3])
   );
+}
+
+function readInt16(bytes: Uint8Array, offset: number): number {
+  const value = readUint16(bytes, offset);
+  return value >= 0x8000 ? value - 0x10000 : value;
+}
+
+function normalizeFontBytes(input: Uint8Array | ArrayBuffer | undefined): Uint8Array | undefined {
+  if (!input) return undefined;
+  if (input instanceof Uint8Array) return input;
+  return new Uint8Array(input);
+}
+
+function safePdfName(value: string): string {
+  const cleaned = value.replace(/[^A-Za-z0-9._-]/g, '');
+  return cleaned || 'EmbeddedFont';
+}
+
+function readFontName(bytes: Uint8Array, tableOffset: number, tableLength: number): string | null {
+  if (tableLength < 6 || tableOffset + tableLength > bytes.length) return null;
+  const count = readUint16(bytes, tableOffset + 2);
+  const stringOffset = tableOffset + readUint16(bytes, tableOffset + 4);
+  for (let index = 0; index < count; index++) {
+    const recordOffset = tableOffset + 6 + index * 12;
+    if (recordOffset + 12 > tableOffset + tableLength) return null;
+    const platformId = readUint16(bytes, recordOffset);
+    const nameId = readUint16(bytes, recordOffset + 6);
+    const length = readUint16(bytes, recordOffset + 8);
+    const offset = readUint16(bytes, recordOffset + 10);
+    const s = stringOffset + offset;
+    const e = s + length;
+    if (nameId !== 6 || e > tableOffset + tableLength) continue;
+    if (platformId === 0 || platformId === 3) {
+      const codeUnits: number[] = [];
+      for (let i = s; i + 1 < e; i += 2) {
+        codeUnits.push(readUint16(bytes, i));
+      }
+      return String.fromCharCode(...codeUnits);
+    }
+    return TD.decode(bytes.subarray(s, e));
+  }
+  return null;
+}
+
+function parseCmapFormat4(bytes: Uint8Array, offset: number, end: number, glyphs: Map<number, number>): void {
+  if (offset + 16 > end) return;
+  const length = readUint16(bytes, offset + 2);
+  const tableEnd = Math.min(end, offset + length);
+  const segCount = readUint16(bytes, offset + 6) / 2;
+  const endCodeOffset = offset + 14;
+  const startCodeOffset = endCodeOffset + segCount * 2 + 2;
+  const idDeltaOffset = startCodeOffset + segCount * 2;
+  const idRangeOffsetOffset = idDeltaOffset + segCount * 2;
+  if (idRangeOffsetOffset + segCount * 2 > tableEnd) return;
+
+  for (let segment = 0; segment < segCount; segment++) {
+    const endCode = readUint16(bytes, endCodeOffset + segment * 2);
+    const startCode = readUint16(bytes, startCodeOffset + segment * 2);
+    const idDelta = readInt16(bytes, idDeltaOffset + segment * 2);
+    const idRangeOffset = readUint16(bytes, idRangeOffsetOffset + segment * 2);
+    if (startCode === 0xffff && endCode === 0xffff) continue;
+    for (let codePoint = startCode; codePoint <= endCode; codePoint++) {
+      let glyphId = 0;
+      if (idRangeOffset === 0) {
+        glyphId = (codePoint + idDelta) & 0xffff;
+      } else {
+        const glyphOffset = idRangeOffsetOffset + segment * 2 + idRangeOffset + (codePoint - startCode) * 2;
+        if (glyphOffset + 2 > tableEnd) continue;
+        const rawGlyphId = readUint16(bytes, glyphOffset);
+        glyphId = rawGlyphId === 0 ? 0 : (rawGlyphId + idDelta) & 0xffff;
+      }
+      if (glyphId > 0) glyphs.set(codePoint, glyphId);
+    }
+  }
+}
+
+function parseCmapFormat12(bytes: Uint8Array, offset: number, end: number, glyphs: Map<number, number>): void {
+  if (offset + 16 > end) return;
+  const length = readUint32(bytes, offset + 4);
+  const groupCount = readUint32(bytes, offset + 12);
+  const tableEnd = Math.min(end, offset + length);
+  let groupOffset = offset + 16;
+  for (let group = 0; group < groupCount; group++) {
+    if (groupOffset + 12 > tableEnd) return;
+    const startCharCode = readUint32(bytes, groupOffset);
+    const endCharCode = readUint32(bytes, groupOffset + 4);
+    const startGlyphId = readUint32(bytes, groupOffset + 8);
+    const count = endCharCode - startCharCode + 1;
+    if (count <= 0 || count > 0x20000) {
+      groupOffset += 12;
+      continue;
+    }
+    for (let index = 0; index < count; index++) {
+      glyphs.set(startCharCode + index, startGlyphId + index);
+    }
+    groupOffset += 12;
+  }
+}
+
+function parseTrueTypeFont(
+  input: Uint8Array | ArrayBuffer | undefined,
+  resourceName: string,
+  fallbackBaseFontName: string,
+): PdfEmbeddedTextFont | undefined {
+  const bytes = normalizeFontBytes(input);
+  if (!bytes || bytes.length < 12) return undefined;
+  const tableCount = readUint16(bytes, 4);
+  const tables = new Map<string, { offset: number; length: number }>();
+  for (let index = 0; index < tableCount; index++) {
+    const recordOffset = 12 + index * 16;
+    if (recordOffset + 16 > bytes.length) return undefined;
+    const tag = TD.decode(bytes.subarray(recordOffset, recordOffset + 4));
+    const offset = readUint32(bytes, recordOffset + 8);
+    const length = readUint32(bytes, recordOffset + 12);
+    if (offset + length > bytes.length) return undefined;
+    tables.set(tag, { offset, length });
+  }
+
+  const head = tables.get('head');
+  const hhea = tables.get('hhea');
+  const maxp = tables.get('maxp');
+  const hmtx = tables.get('hmtx');
+  const cmap = tables.get('cmap');
+  if (!head || !hhea || !maxp || !hmtx || !cmap) return undefined;
+
+  const unitsPerEm = readUint16(bytes, head.offset + 18) || 1000;
+  const bbox: [number, number, number, number] = [
+    readInt16(bytes, head.offset + 36),
+    readInt16(bytes, head.offset + 38),
+    readInt16(bytes, head.offset + 40),
+    readInt16(bytes, head.offset + 42),
+  ];
+  const ascent = readInt16(bytes, hhea.offset + 4);
+  const descent = readInt16(bytes, hhea.offset + 6);
+  const numberOfHMetrics = readUint16(bytes, hhea.offset + 34);
+  const glyphCount = readUint16(bytes, maxp.offset + 4);
+  const widths = new Array<number>(glyphCount).fill(0);
+  let lastAdvance = 0;
+  for (let index = 0; index < glyphCount; index++) {
+    if (index < numberOfHMetrics) {
+      const metricOffset = hmtx.offset + index * 4;
+      if (metricOffset + 2 > hmtx.offset + hmtx.length) return undefined;
+      lastAdvance = readUint16(bytes, metricOffset);
+    }
+    widths[index] = Math.round((lastAdvance * 1000) / unitsPerEm);
+  }
+
+  const glyphs = new Map<number, number>();
+  const cmapEnd = cmap.offset + cmap.length;
+  const cmapTableCount = readUint16(bytes, cmap.offset + 2);
+  const subtables: Array<{ format: number; offset: number; priority: number }> = [];
+  for (let index = 0; index < cmapTableCount; index++) {
+    const recordOffset = cmap.offset + 4 + index * 8;
+    if (recordOffset + 8 > cmapEnd) return undefined;
+    const platformId = readUint16(bytes, recordOffset);
+    const encodingId = readUint16(bytes, recordOffset + 2);
+    const subtableOffset = cmap.offset + readUint32(bytes, recordOffset + 4);
+    if (subtableOffset + 2 > cmapEnd) continue;
+    const format = readUint16(bytes, subtableOffset);
+    const priority = platformId === 3 && encodingId === 10
+      ? 0
+      : platformId === 0
+        ? 1
+        : platformId === 3 && encodingId === 1
+          ? 2
+          : 3;
+    subtables.push({ format, offset: subtableOffset, priority });
+  }
+  subtables.sort((a, b) => a.priority - b.priority);
+  for (const subtable of subtables) {
+    if (subtable.format === 12) {
+      parseCmapFormat12(bytes, subtable.offset, cmapEnd, glyphs);
+    } else if (subtable.format === 4) {
+      parseCmapFormat4(bytes, subtable.offset, cmapEnd, glyphs);
+    }
+  }
+
+  const name = tables.get('name');
+  const baseFontName = safePdfName(
+    (name ? readFontName(bytes, name.offset, name.length) : null) ?? fallbackBaseFontName,
+  );
+  return {
+    resourceName,
+    baseFontName,
+    bytes,
+    unitsPerEm,
+    ascent,
+    descent,
+    bbox,
+    glyphs,
+    widths,
+    usedGlyphs: new Map(),
+  };
 }
 
 function bytesEqual(bytes: Uint8Array, offset: number, values: readonly number[]): boolean {
@@ -1757,12 +2010,14 @@ class PdfBlockRenderer {
   private listStack: ListFrame[] = [];
   private infoStackDepth = 0;
   private readonly options: PdfRenderOptions;
+  private readonly emojiFont: PdfEmbeddedTextFont | undefined;
   private readonly images: PdfEmbeddedImage[] = [];
   private readonly imageByKey = new Map<string, PdfEmbeddedImage>();
   private readonly imagePromises = new Map<string, Promise<PdfEmbeddedImage | null>>();
 
   constructor(options: PdfRenderOptions) {
     this.options = options;
+    this.emojiFont = parseTrueTypeFont(options.emojiFont, 'FE1', 'NotoEmoji');
     const page = resolvePageSize(options.pageSize);
     this.pageWidth = page.width;
     this.pageHeight = page.height;
@@ -1912,7 +2167,7 @@ class PdfBlockRenderer {
 
     this.finishTable(markdown);
     this.closeParagraph();
-    return buildPdfFile(this.pages, this.pageWidth, this.pageHeight, this.images);
+    return buildPdfFile(this.pages, this.pageWidth, this.pageHeight, this.images, this.embeddedFonts());
   }
 
   async renderAsync(markdown: Uint8Array): Promise<Uint8Array> {
@@ -2063,7 +2318,11 @@ class PdfBlockRenderer {
 
     this.finishTable(markdown);
     this.closeParagraph();
-    return buildPdfFile(this.pages, this.pageWidth, this.pageHeight, this.images);
+    return buildPdfFile(this.pages, this.pageWidth, this.pageHeight, this.images, this.embeddedFonts());
+  }
+
+  private embeddedFonts(): PdfEmbeddedTextFont[] {
+    return this.emojiFont && this.emojiFont.usedGlyphs.size > 0 ? [this.emojiFont] : [];
   }
 
   drawTextLine(runs: readonly PdfTextRun[], x: number, lineHeight: number): void {
@@ -2081,27 +2340,29 @@ class PdfBlockRenderer {
 
     for (const run of runs) {
       if (run.s >= run.e) continue;
-      const encoded = encodePdfText(run.bytes, run.s, run.e);
-      if (encoded.hex.length === 0) {
-        cursorX += run.width;
-        continue;
-      }
-      const fontId = FONT_IDS[run.style.font];
-      if (encoded.actualHex) {
-        content.writeAscii(`/Span << /ActualText <${encoded.actualHex}> >> BDC\n`);
-      }
-      content.writeAscii('BT\n');
-      content.writeAscii(`/${fontId} ${formatNumber(run.style.size)} Tf\n`);
-      content.writeAscii(`${colorCommand(run.style.color, 'rg')}\n`);
-      content.writeAscii(`1 0 0 1 ${formatNumber(cursorX)} ${formatNumber(baseline)} Tm\n<${encoded.hex}> Tj\n`);
-      content.writeAscii('ET\n');
-      if (encoded.actualHex) {
-        content.writeAscii('EMC\n');
+      const segments = encodePdfTextSegments(run.bytes, run.s, run.e, run.style);
+      const runStartX = cursorX;
+      for (const segment of segments) {
+        if (segment.hex.length === 0) continue;
+        const fontId = segment.kind === 'embedded' && segment.font
+          ? segment.font.resourceName
+          : FONT_IDS[run.style.font];
+        if (segment.actualHex) {
+          content.writeAscii(`/Span << /ActualText <${segment.actualHex}> >> BDC\n`);
+        }
+        content.writeAscii('BT\n');
+        content.writeAscii(`/${fontId} ${formatNumber(run.style.size)} Tf\n`);
+        content.writeAscii(`${colorCommand(run.style.color, 'rg')}\n`);
+        content.writeAscii(`1 0 0 1 ${formatNumber(cursorX)} ${formatNumber(baseline)} Tm\n<${segment.hex}> Tj\n`);
+        content.writeAscii('ET\n');
+        if (segment.actualHex) {
+          content.writeAscii('EMC\n');
+        }
+        cursorX += segment.width;
       }
       if (run.style.underline || run.style.strike) {
-        decorations.push({ run, x1: cursorX, x2: cursorX + run.width, baseline });
+        decorations.push({ run, x1: runStartX, x2: cursorX, baseline });
       }
-      cursorX += run.width;
     }
 
     for (const decoration of decorations) {
@@ -2330,6 +2591,7 @@ class PdfBlockRenderer {
         font: 'regular',
         size: this.baseFontSize,
         color: this.infoStackDepth > 0 ? COLORS.quote : COLORS.text,
+        ...(this.emojiFont ? { fallbackFont: this.emojiFont } : {}),
       },
       patch,
     );
@@ -3042,11 +3304,60 @@ async function renderInlineRangeAsync(
   flushText();
 }
 
+type PdfEmbeddedFontObjectIds = {
+  type0: number;
+  cidFont: number;
+  descriptor: number;
+  fontFile: number;
+  toUnicode: number;
+};
+
+function scaleFontMetric(font: PdfEmbeddedTextFont, value: number): number {
+  return Math.round((value * 1000) / font.unitsPerEm);
+}
+
+function buildEmbeddedFontWidths(font: PdfEmbeddedTextFont): string {
+  const glyphIds = Array.from(font.usedGlyphs.keys()).sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (const glyphId of glyphIds) {
+    parts.push(`${glyphId} [${font.widths[glyphId] ?? 1000}]`);
+  }
+  return parts.join(' ');
+}
+
+function buildToUnicodeCMap(font: PdfEmbeddedTextFont): string {
+  const entries = Array.from(font.usedGlyphs.entries()).sort((a, b) => a[0] - b[0]);
+  const out: string[] = [
+    '/CIDInit /ProcSet findresource begin',
+    '12 dict begin',
+    'begincmap',
+    '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def',
+    `/CMapName /${font.baseFontName}-UTF16 def`,
+    '/CMapType 2 def',
+    '1 begincodespacerange',
+    '<0000> <FFFF>',
+    'endcodespacerange',
+  ];
+
+  for (let index = 0; index < entries.length; index += 100) {
+    const chunk = entries.slice(index, index + 100);
+    out.push(`${chunk.length} beginbfchar`);
+    for (const [glyphId, codePoint] of chunk) {
+      out.push(`<${appendFourDigitHex('', glyphId)}> <${appendUtf16BeHex('', codePoint)}>`);
+    }
+    out.push('endbfchar');
+  }
+
+  out.push('endcmap', 'CMapName currentdict /CMap defineresource pop', 'end', 'end');
+  return `${out.join('\n')}\n`;
+}
+
 function buildPdfFile(
   pages: readonly PdfPage[],
   pageWidth: number,
   pageHeight: number,
   images: readonly PdfEmbeddedImage[],
+  embeddedFonts: readonly PdfEmbeddedTextFont[] = [],
 ): Uint8Array {
   const out = new PdfByteWriter();
   const offsets: number[] = [0];
@@ -3054,10 +3365,19 @@ function buildPdfFile(
   const firstPageObject = 3;
   const firstContentObject = firstPageObject + pageCount;
   const firstFontObject = firstContentObject + pageCount;
-  const firstImageObject = firstFontObject + FONT_OBJECTS.length;
+  const embeddedFontObjectIds = new Map<PdfEmbeddedTextFont, PdfEmbeddedFontObjectIds>();
+  let nextObjectId = firstFontObject + FONT_OBJECTS.length;
+  for (const font of embeddedFonts) {
+    embeddedFontObjectIds.set(font, {
+      type0: nextObjectId++,
+      cidFont: nextObjectId++,
+      descriptor: nextObjectId++,
+      fontFile: nextObjectId++,
+      toUnicode: nextObjectId++,
+    });
+  }
   const imageObjectIds = new Map<PdfEmbeddedImage, number>();
   const maskObjectIds = new Map<PdfImageMask, number>();
-  let nextObjectId = firstImageObject;
   for (const image of images) {
     imageObjectIds.set(image, nextObjectId++);
     if (image.kind === 'image' && image.softMask) {
@@ -3097,6 +3417,9 @@ function buildPdfFile(
       FONT_OBJECTS.forEach((font, fontIndex) => {
         out.writeAscii(`/${FONT_IDS[font.id]} ${firstFontObject + fontIndex} 0 R `);
       });
+      embeddedFonts.forEach((font) => {
+        out.writeAscii(`/${font.resourceName} ${embeddedFontObjectIds.get(font)?.type0 ?? 0} 0 R `);
+      });
       out.writeAscii('>>');
       if (images.length > 0) {
         out.writeAscii(' /XObject << ');
@@ -3124,6 +3447,54 @@ function buildPdfFile(
       out.writeAscii(
         `<< /Type /Font /Subtype /Type1 /BaseFont /${font.baseFont} /Encoding /WinAnsiEncoding >>`,
       );
+    });
+  });
+
+  embeddedFonts.forEach((font) => {
+    const objectIds = embeddedFontObjectIds.get(font);
+    if (!objectIds) return;
+
+    writeObject(objectIds.type0, () => {
+      out.writeAscii(
+        `<< /Type /Font /Subtype /Type0 /BaseFont /${font.baseFontName} /Encoding /Identity-H `,
+      );
+      out.writeAscii(`/DescendantFonts [${objectIds.cidFont} 0 R] /ToUnicode ${objectIds.toUnicode} 0 R >>`);
+    });
+
+    writeObject(objectIds.cidFont, () => {
+      out.writeAscii(
+        `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${font.baseFontName} `,
+      );
+      out.writeAscii('/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> ');
+      out.writeAscii(`/FontDescriptor ${objectIds.descriptor} 0 R /CIDToGIDMap /Identity `);
+      out.writeAscii(`/W [${buildEmbeddedFontWidths(font)}] >>`);
+    });
+
+    writeObject(objectIds.descriptor, () => {
+      const [xMin, yMin, xMax, yMax] = font.bbox;
+      out.writeAscii(
+        `<< /Type /FontDescriptor /FontName /${font.baseFontName} /Flags 4 `,
+      );
+      out.writeAscii(
+        `/FontBBox [${scaleFontMetric(font, xMin)} ${scaleFontMetric(font, yMin)} ${scaleFontMetric(font, xMax)} ${scaleFontMetric(font, yMax)}] `,
+      );
+      out.writeAscii(
+        `/ItalicAngle 0 /Ascent ${scaleFontMetric(font, font.ascent)} /Descent ${scaleFontMetric(font, font.descent)} `,
+      );
+      out.writeAscii(`/CapHeight ${scaleFontMetric(font, font.ascent)} /StemV 80 /FontFile2 ${objectIds.fontFile} 0 R >>`);
+    });
+
+    writeObject(objectIds.fontFile, () => {
+      out.writeAscii(`<< /Length ${font.bytes.length} /Length1 ${font.bytes.length} >>\nstream\n`);
+      out.writeBytes(font.bytes);
+      out.writeAscii('\nendstream');
+    });
+
+    writeObject(objectIds.toUnicode, () => {
+      const cmap = TE.encode(buildToUnicodeCMap(font));
+      out.writeAscii(`<< /Length ${cmap.length} >>\nstream\n`);
+      out.writeBytes(cmap);
+      out.writeAscii('endstream');
     });
   });
 

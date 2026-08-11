@@ -245,6 +245,55 @@ console.log(instance.method2());
   return { smallResult, mediumResult, largeResult };
 }
 
+async function benchmarkWasmCore() {
+  const { CompiledLanguageSpec, GenericTokenizer } = await import('../src/highlight/language-core.ts');
+  const { lineSpans } = await import('../src/parser/line-parser.ts');
+  const { setWasmCoreEnabled, tokenizeWithWasm } = await import('../src/wasm/core.ts');
+  const encoder = new TextEncoder();
+  const spec = new CompiledLanguageSpec({
+    name: 'wasm-bench',
+    keywords: [{ word: 'let' }, { word: 'return' }],
+    lineComments: ['//'],
+    blockComments: [['/*', '*/']],
+    numbers: { allowHex: true, allowUnderscore: true },
+  });
+  const code = encoder.encode('let value = 0xff_ff; // comment\nreturn value + 1;\n'.repeat(5000));
+  const markdown = encoder.encode(`${'x'.repeat(256)}\r\n`.repeat(3000));
+  const tokenizer = new GenericTokenizer(spec);
+  let observed = 0;
+
+  setWasmCoreEnabled(false);
+  for (let i = 0; i < 5; i++) tokenizer.tokenize(code, () => observed++);
+  const scalarTokens = await runBenchmark('Scalar syntax core', () => {
+    tokenizer.tokenize(code, () => observed++);
+  }, 25);
+
+  setWasmCoreEnabled(true);
+  for (let i = 0; i < 5; i++) tokenizeWithWasm(code, spec.getWasmProfile(), () => observed++);
+  const wasmTokens = await runBenchmark('WASM SIMD syntax core', () => {
+    assert.equal(tokenizeWithWasm(code, spec.getWasmProfile(), () => observed++), true);
+  }, 25);
+
+  setWasmCoreEnabled(false);
+  for (let i = 0; i < 5; i++) {
+    for (const span of lineSpans(markdown)) observed += span.end - span.start;
+  }
+  const scalarLines = await runBenchmark('Scalar line scanner', () => {
+    for (const span of lineSpans(markdown)) observed += span.end - span.start;
+  }, 25);
+
+  setWasmCoreEnabled(true);
+  for (let i = 0; i < 5; i++) {
+    for (const span of lineSpans(markdown)) observed += span.end - span.start;
+  }
+  const wasmLines = await runBenchmark('WASM SIMD line scanner', () => {
+    for (const span of lineSpans(markdown)) observed += span.end - span.start;
+  }, 25);
+
+  assert.ok(observed > 0);
+  return { scalarTokens, wasmTokens, scalarLines, wasmLines };
+}
+
 async function benchmarkInlineParsing() {
   const { inlineTokens } = await import('../src/parser/inline-parser.ts');
   const { u8 } = await import('../src/parser/index.ts');
@@ -305,6 +354,21 @@ test('benchmark: highlighting performance', async () => {
   assert.ok(results.smallResult.opsPerSec > 0);
   assert.ok(results.mediumResult.opsPerSec > 0);
   assert.ok(results.largeResult.opsPerSec > 0);
+});
+
+test('benchmark: WebAssembly SIMD core', async () => {
+  const benchmark = await benchmarkWasmCore();
+
+  console.log('\n=== WebAssembly SIMD Core Benchmarks ===');
+  console.log(`Syntax scalar: ${benchmark.scalarTokens.avgTimeMs.toFixed(3)}ms avg`);
+  console.log(`Syntax SIMD: ${benchmark.wasmTokens.avgTimeMs.toFixed(3)}ms avg`);
+  console.log(`Lines scalar: ${benchmark.scalarLines.avgTimeMs.toFixed(3)}ms avg`);
+  console.log(`Lines SIMD: ${benchmark.wasmLines.avgTimeMs.toFixed(3)}ms avg`);
+
+  assert.ok(benchmark.scalarTokens.opsPerSec > 0);
+  assert.ok(benchmark.wasmTokens.opsPerSec > 0);
+  assert.ok(benchmark.scalarLines.opsPerSec > 0);
+  assert.ok(benchmark.wasmLines.opsPerSec > 0);
 });
 
 test('benchmark: inline parsing performance', async () => {

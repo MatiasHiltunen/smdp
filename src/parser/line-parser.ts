@@ -2,6 +2,7 @@
  * Line-span generator for efficiently splitting input into lines
  */
 
+import { tryCreateWasmLineSpanIterator } from '../wasm/core';
 import type { LineSpan } from './types';
 
 /**
@@ -9,6 +10,12 @@ import type { LineSpan } from './types';
  * Handles \n, \r, and \r\n line endings
  */
 export function* lineSpans(u8: Uint8Array): Generator<LineSpan> {
+  const wasm = tryCreateWasmLineSpanIterator(u8);
+  if (wasm) {
+    yield* wasm;
+    return;
+  }
+
   const len = u8.length;
   let pos = 0;
   
@@ -35,4 +42,3 @@ export function* lineSpans(u8: Uint8Array): Generator<LineSpan> {
     yield { start, end };
   }
 }
-

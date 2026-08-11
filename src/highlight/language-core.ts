@@ -1,4 +1,6 @@
 import { HtmlArena } from '../parser';
+import { tryTokenizeWithWasm } from '../wasm/core';
+import type { WasmLanguageProfile } from '../wasm/types';
 
 const TE = new TextEncoder();
 const TD = new TextDecoder();
@@ -130,6 +132,14 @@ function toLowerAscii(b: number): number {
   return b;
 }
 
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 /**
  * Binary reader for language specs
  * Uses subarray() for zero-copy reads from a single binary blob
@@ -191,6 +201,8 @@ export class CompiledLanguageSpec {
   private readonly lineLookup!: Map<number, LineCommentDef[]>;
   private readonly blockLookup!: Map<number, BlockCommentDef[]>;
   private readonly stringLookup!: Map<number, StringDelimiter[]>;
+  private readonly defaultIdentifier!: boolean;
+  private wasmProfile?: WasmLanguageProfile;
 
   constructor(author: AuthorLanguageSpec);
   constructor(reader: BinaryReader);
@@ -216,6 +228,9 @@ export class CompiledLanguageSpec {
 
     this.identStartBits = createBitset(author.identStartRanges, defaultIdentStart);
     this.identPartBits = createBitset(author.identPartRanges, defaultIdentPart);
+    this.defaultIdentifier =
+      equalBytes(this.identStartBits, createBitset(undefined, defaultIdentStart)) &&
+      equalBytes(this.identPartBits, createBitset(undefined, defaultIdentPart));
 
     this.keywords = (author.keywords ?? []).map((kw) => ({
       bytes: TE.encode(kw.word.toLowerCase()),
@@ -309,6 +324,7 @@ export class CompiledLanguageSpec {
 
     (this as any).identStartBits = createBitset(undefined, defaultIdentStart);
     (this as any).identPartBits = createBitset(undefined, defaultIdentPart);
+    (this as any).defaultIdentifier = true;
 
     // Read keywords
     const keywordCount = reader.readU32();
@@ -671,6 +687,23 @@ export class CompiledLanguageSpec {
     }
     return n;
   }
+
+  getWasmProfile(): WasmLanguageProfile {
+    if (this.wasmProfile) return this.wasmProfile;
+    this.wasmProfile = {
+      identStartBits: this.identStartBits,
+      identPartBits: this.identPartBits,
+      keywords: this.keywords,
+      lineComments: Array.from(this.lineLookup.values()).flat(),
+      blockComments: Array.from(this.blockLookup.values()).flat(),
+      strings: Array.from(this.stringLookup.values()).flat(),
+      numberFlags: this.numbersFlags,
+      regexEnabled: this.regexEnabled,
+      templateEnabled: this.template !== undefined,
+      defaultIdentifier: this.defaultIdentifier,
+    };
+    return this.wasmProfile;
+  }
 }
 
 export class GenericTokenizer {
@@ -681,6 +714,11 @@ export class GenericTokenizer {
   }
 
   tokenize(u8: Uint8Array, emit: EmitFn): void {
+    if (tryTokenizeWithWasm(u8, this.spec.getWasmProfile(), emit)) return;
+    this.tokenizeScalar(u8, emit);
+  }
+
+  private tokenizeScalar(u8: Uint8Array, emit: EmitFn): void {
     const n = u8.length;
     let i = 0;
     let prevType: TokenTypeValue | null = null;

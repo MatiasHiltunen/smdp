@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { deflateSync, inflateSync } from "node:zlib";
 
@@ -10,6 +11,7 @@ import {
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+const notoEmojiFont = readFileSync(new URL("../public/fonts/NotoEmoji-Regular.ttf", import.meta.url));
 
 function decodePdf(pdf: Uint8Array): string {
   return decoder.decode(pdf);
@@ -277,6 +279,27 @@ ${unicode}
   assert.match(pdfText, /<[^>]*3F[^>]*> Tj/);
 });
 
+test("embeds Noto Emoji for visible PDF emoji glyphs", () => {
+  const emoji = "\u{1f600} \u2764\ufe0f \u2615";
+  const pdf = renderPDFFromBlocks(u8(`Emoji ${emoji}`), {
+    pageSize: { width: 420, height: 240 },
+    margin: 24,
+    fontSize: 14,
+    emojiFont: notoEmojiFont,
+  });
+  const text = decodePdf(pdf);
+  const actualText = extractActualText(pdf);
+
+  assert.match(text, /\/FE1 \d+(?:\.\d+)? Tf/);
+  assert.match(text, /\/Subtype \/Type0/);
+  assert.match(text, /\/Subtype \/CIDFontType2/);
+  assert.match(text, /\/FontFile2/);
+  assert.match(text, /\/BaseFont \/NotoEmoji/);
+  assert.ok(actualText.includes("\u{1f600}"));
+  assert.ok(actualText.includes("\u2764\ufe0f"));
+  assert.ok(actualText.includes("\u2615"));
+});
+
 test("renders fenced code with syntax colors and extractable spacing", () => {
   const pdf = renderPDFFromBlocks(
     u8(`\`\`\`js
@@ -371,6 +394,7 @@ test("renders markdown tables as bordered PDF tables", () => {
     },
   );
   const text = decodePdf(pdf);
+  const runs = extractTextRuns(pdf);
   const extracted = extractPdfText(pdf).replace(/\n/g, " ");
 
   assert.ok(extracted.includes("Name"));
@@ -381,6 +405,7 @@ test("renders markdown tables as bordered PDF tables", () => {
   assert.doesNotMatch(text, /<207C20> Tj/);
   assert.match(text, /q 0\.9 0\.93 0\.97 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/);
   assert.match(text, /0\.72 0\.75 0\.8 RG 0\.6 w [\d.]+ [\d.]+ m [\d.]+ [\d.]+ l S Q/);
+  assert.ok(runX(runs, "7") > runX(runs, "42"));
 });
 
 test("embeds JPEG images as DCT XObjects", async () => {
