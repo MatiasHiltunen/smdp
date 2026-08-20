@@ -3,6 +3,7 @@ import { MDParser, u8 } from "./parser/index";
 import { TD } from "./parser/constants";
 import type { ThemeEditorHandle } from "./theme/theme-editor";
 import "./style.css";
+import "./style-modern.css";
 import {
   applyTheme,
   applyThemeUrlOverrides,

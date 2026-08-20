@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildDockedEditorRect,
   detectEditorDockPlacement,
+  getEditorHostAccessibilityState,
 } from "../src/client/editor-window";
 
 const VIEWPORT = { width: 1600, height: 900 };
@@ -55,4 +56,19 @@ test("buildDockedEditorRect stretches editor along the snapped edge", () => {
       height: 300,
     },
   );
+});
+
+test("editor host is hidden and inert only while the editor is closed", () => {
+  assert.deepEqual(getEditorHostAccessibilityState(false), {
+    inert: true,
+    ariaHidden: "true",
+  });
+  assert.deepEqual(getEditorHostAccessibilityState(true), {
+    inert: false,
+    ariaHidden: null,
+  });
+  assert.deepEqual(getEditorHostAccessibilityState(false, true), {
+    inert: false,
+    ariaHidden: null,
+  });
 });

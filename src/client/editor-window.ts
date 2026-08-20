@@ -37,6 +37,22 @@ export type EditorWindowHandle = {
   destroy(): void;
 };
 
+export type EditorHostAccessibilityState = {
+  inert: boolean;
+  ariaHidden: "true" | null;
+};
+
+export function getEditorHostAccessibilityState(
+  open: boolean,
+  externalWindow = false,
+): EditorHostAccessibilityState {
+  const accessible = open || externalWindow;
+  return {
+    inert: !accessible,
+    ariaHidden: accessible ? null : "true",
+  };
+}
+
 type WindowRect = {
   left: number;
   top: number;
@@ -600,6 +616,14 @@ export function createEditorWindow(
   const metaRow = createElement("div");
   metaRow.className = "editor-window__meta";
 
+  const metadataDetails = createElement("details");
+  metadataDetails.className = "editor-window__metadata";
+  metadataDetails.open = !isCompact;
+
+  const metadataSummary = createElement("summary");
+  metadataSummary.className = "editor-window__metadata-summary";
+  metadataSummary.textContent = "Page details";
+
   const titleField = createElement("label");
   titleField.className = "editor-window__field";
   const titleLabel = createElement("span");
@@ -670,7 +694,8 @@ export function createEditorWindow(
 
   footerControls.append(modeBadge, followCursorLabel);
   footer.append(footerControls, status);
-  main.append(metaRow, editorFrame, footer);
+  metadataDetails.append(metadataSummary, metaRow);
+  main.append(metadataDetails, editorFrame, footer);
 
   body.append(sidebar, main);
 
@@ -815,11 +840,26 @@ export function createEditorWindow(
     applyPreview();
   };
 
+  const syncOpenAccessibility = (): void => {
+    const accessibility = getEditorHostAccessibilityState(
+      isOpen,
+      !!options.externalWindow,
+    );
+    options.host.inert = accessibility.inert;
+    if (accessibility.ariaHidden === null) {
+      options.host.removeAttribute("aria-hidden");
+    } else {
+      options.host.setAttribute("aria-hidden", accessibility.ariaHidden);
+    }
+  };
+
   const refresh = (snapshot: EditorDocumentSnapshot): void => {
     const currentPage = getCurrentEditorPage(snapshot);
     const isBook = snapshot.mode === "book";
     const canDelete = isBook && snapshot.pages.length > 1;
 
+    pagesButton.hidden = !isBook;
+    quickAddPageButton.hidden = !isBook;
     deletePageButton.disabled = !canDelete;
     sidebar.classList.toggle("is-book", isBook);
     modeBadge.textContent = isBook
@@ -890,7 +930,11 @@ export function createEditorWindow(
   });
 
   const applyCompactState = (): void => {
+    const wasCompact = isCompact;
     isCompact = compactQuery.matches;
+    if (wasCompact !== isCompact) {
+      metadataDetails.open = !isCompact;
+    }
     if (isCompact) {
       clearPreview();
     }
@@ -1227,12 +1271,17 @@ export function createEditorWindow(
 
   options.onFollowCursorChange?.(followCursor);
   applyCompactState();
+  syncOpenAccessibility();
 
   return {
     root,
     setOpen(open: boolean): void {
       isOpen = open;
+      if (!open) {
+        setMenuOpen(false);
+      }
       applyLayout();
+      syncOpenAccessibility();
     },
     focusEditor(): void {
       options.textarea.focus();
@@ -1258,6 +1307,8 @@ export function createEditorWindow(
         clearTimeout(statusTimer);
         statusTimer = null;
       }
+      options.host.inert = false;
+      options.host.removeAttribute("aria-hidden");
       options.host.replaceChildren();
     },
   };

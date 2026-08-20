@@ -3,6 +3,7 @@ import {
   type ThemeTokenKey,
   type ThemeMeta,
   defaultTheme,
+  lightTheme,
 } from './theme-builder';
 import { serializeTheme } from './theme-serializer';
 import { loadThemeFromUrl } from './theme-url';
@@ -308,21 +309,15 @@ function createInputField(
   if (isColor) {
     // Create a wrapper for color picker + text input
     const inputWrapper = document.createElement('div');
-    inputWrapper.style.display = 'flex';
-    inputWrapper.style.gap = '0.5rem';
+    inputWrapper.className = 'theme-editor-color-inputs';
     
     // Color picker
     input.type = 'color';
-    input.style.width = '3rem';
-    input.style.height = '2.25rem';
-    input.style.padding = '0.25rem';
-    input.style.cursor = 'pointer';
     
     // Text input for manual editing
     const textInput = document.createElement('input');
     textInput.className = 'theme-editor-input';
     textInput.type = 'text';
-    textInput.style.flex = '1';
     textInput.autocomplete = 'off';
     textInput.spellcheck = false;
     textInput.placeholder = fieldOptions?.placeholder ?? 'Color value';
@@ -352,6 +347,7 @@ export function initializeThemeEditor(
   const wrapper = document.createElement('div');
   wrapper.className = 'theme-editor-wrapper';
   wrapper.setAttribute('aria-hidden', 'true');
+  wrapper.inert = true;
 
   const overlay = document.createElement('div');
   overlay.className = 'theme-editor-overlay';
@@ -381,15 +377,41 @@ export function initializeThemeEditor(
   header.className = 'theme-editor-header';
   header.append(title, closeButton);
 
+  const introduction = document.createElement('div');
+  introduction.className = 'theme-editor-introduction';
+
+  const description = document.createElement('p');
+  description.className = 'theme-editor-description';
+  description.textContent = 'Start with a preset, then refine the sections you need.';
+
+  const presets = document.createElement('div');
+  presets.className = 'theme-editor-presets';
+  presets.setAttribute('role', 'group');
+  presets.setAttribute('aria-label', 'Theme presets');
+
+  const darkPresetButton = document.createElement('button');
+  darkPresetButton.className = 'theme-editor-preset';
+  darkPresetButton.type = 'button';
+  darkPresetButton.textContent = 'Dark';
+
+  const lightPresetButton = document.createElement('button');
+  lightPresetButton.className = 'theme-editor-preset';
+  lightPresetButton.type = 'button';
+  lightPresetButton.textContent = 'Light';
+
+  presets.append(darkPresetButton, lightPresetButton);
+  introduction.append(description, presets);
+
   const content = document.createElement('div');
   content.className = 'theme-editor-content';
 
-  const metaSection = document.createElement('section');
+  const metaSection = document.createElement('details');
   metaSection.className = 'theme-editor-section';
+  metaSection.open = true;
 
-  const metaHeading = document.createElement('h3');
+  const metaHeading = document.createElement('summary');
   metaHeading.className = 'theme-editor-section-title';
-  metaHeading.textContent = 'Base settings';
+  metaHeading.textContent = 'Typography';
 
   const metaFieldsContainer = document.createElement('div');
   metaFieldsContainer.className = 'theme-editor-fields';
@@ -416,12 +438,13 @@ export function initializeThemeEditor(
 
   metaSection.append(metaHeading, metaFieldsContainer);
 
-  const viewerSection = document.createElement('section');
+  const viewerSection = document.createElement('details');
   viewerSection.className = 'theme-editor-section';
+  viewerSection.open = true;
 
-  const viewerHeading = document.createElement('h3');
+  const viewerHeading = document.createElement('summary');
   viewerHeading.className = 'theme-editor-section-title';
-  viewerHeading.textContent = 'Viewer';
+  viewerHeading.textContent = 'Reader';
 
   const viewerFieldsContainer = document.createElement('div');
   viewerFieldsContainer.className = 'theme-editor-fields';
@@ -450,12 +473,12 @@ export function initializeThemeEditor(
 
   viewerSection.append(viewerHeading, viewerFieldsContainer);
 
-  const layoutSection = document.createElement('section');
+  const layoutSection = document.createElement('details');
   layoutSection.className = 'theme-editor-section';
 
-  const layoutHeading = document.createElement('h3');
+  const layoutHeading = document.createElement('summary');
   layoutHeading.className = 'theme-editor-section-title';
-  layoutHeading.textContent = 'Layout & spacing';
+  layoutHeading.textContent = 'Layout and spacing';
 
   const layoutFieldsContainer = document.createElement('div');
   layoutFieldsContainer.className = 'theme-editor-fields';
@@ -476,10 +499,10 @@ export function initializeThemeEditor(
   layoutSection.append(layoutHeading, layoutFieldsContainer);
 
   const tokenSections = TOKEN_GROUPS.map((group) => {
-    const section = document.createElement('section');
+    const section = document.createElement('details');
     section.className = 'theme-editor-section';
 
-    const heading = document.createElement('h3');
+    const heading = document.createElement('summary');
     heading.className = 'theme-editor-section-title';
     heading.textContent = group.title;
 
@@ -514,7 +537,7 @@ export function initializeThemeEditor(
   footer.append(resetButton);
 
   content.append(metaSection, viewerSection, layoutSection, ...tokenSections);
-  panel.append(header, content, footer);
+  panel.append(header, introduction, content, footer);
   wrapper.append(overlay, panel);
 
   const firstInput = inputs.values().next().value ?? null;
@@ -527,6 +550,15 @@ export function initializeThemeEditor(
 
   let focusableElements: HTMLElement[] = [];
   let restoreFocus: HTMLElement | null = null;
+  let inertedSiblings: Array<{ element: HTMLElement; inert: boolean }> = [];
+
+  const collectFocusableElements = (): HTMLElement[] =>
+    Array.from(panel.querySelectorAll<HTMLElement>('button, [href], input, textarea, select, summary, [tabindex]:not([tabindex="-1"])'))
+      .filter((element) =>
+        !element.hasAttribute('disabled') &&
+        element.getAttribute('aria-hidden') !== 'true' &&
+        element.getClientRects().length > 0,
+      );
 
   const handleKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
@@ -536,6 +568,7 @@ export function initializeThemeEditor(
     }
 
     if (event.key === 'Tab' && wrapper.classList.contains('is-open')) {
+      focusableElements = collectFocusableElements();
       if (focusableElements.length === 0) {
         event.preventDefault();
         return;
@@ -560,6 +593,11 @@ export function initializeThemeEditor(
 
   const refresh = () => {
     const configuration = builder.build();
+    const activeTheme = document.documentElement.getAttribute('data-theme') === 'light'
+      ? 'light'
+      : 'dark';
+    darkPresetButton.setAttribute('aria-pressed', String(activeTheme === 'dark'));
+    lightPresetButton.setAttribute('aria-pressed', String(activeTheme === 'light'));
     META_FIELDS.forEach((fieldDef) => {
       const key = `meta:${fieldDef.key}`;
       const input = inputs.get(key);
@@ -623,13 +661,21 @@ export function initializeThemeEditor(
       return;
     }
     refresh();
-    focusableElements = Array.from(panel.querySelectorAll<HTMLElement>('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])'))
-      .filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true');
+    restoreFocus = (document.activeElement as HTMLElement) ?? null;
     wrapper.classList.add('is-open');
     wrapper.setAttribute('aria-hidden', 'false');
+    wrapper.inert = false;
+    inertedSiblings = Array.from(document.body.children)
+      .filter((element): element is HTMLElement =>
+        element instanceof HTMLElement && element !== wrapper,
+      )
+      .map((element) => ({ element, inert: element.inert }));
+    inertedSiblings.forEach(({ element }) => {
+      element.inert = true;
+    });
     document.body.classList.add('show-theme-editor');
     document.addEventListener('keydown', handleKeydown);
-    restoreFocus = (document.activeElement as HTMLElement) ?? null;
+    focusableElements = collectFocusableElements();
     queueMicrotask(() => {
       if (document.body.classList.contains('show-theme-editor')) {
         const target = focusableElements[0] ?? firstInput ?? panel;
@@ -645,8 +691,13 @@ export function initializeThemeEditor(
     }
     wrapper.classList.remove('is-open');
     wrapper.setAttribute('aria-hidden', 'true');
+    wrapper.inert = true;
     document.body.classList.remove('show-theme-editor');
     document.removeEventListener('keydown', handleKeydown);
+    inertedSiblings.forEach(({ element, inert }) => {
+      element.inert = inert;
+    });
+    inertedSiblings = [];
     if (restoreFocus) {
       restoreFocus.focus({ preventScroll: true });
     }
@@ -699,6 +750,24 @@ export function initializeThemeEditor(
     emitThemeChange('editor');
   };
 
+  const applyPreset = (mode: 'light' | 'dark'): void => {
+    const configuration = mode === 'light' ? lightTheme : defaultTheme;
+    builder
+      .withMeta(configuration.meta)
+      .withTokens(configuration.tokens)
+      .withCustomProperties(configuration.customProperties)
+      .apply();
+    document.documentElement.setAttribute('data-theme', mode);
+    try {
+      window.localStorage?.setItem('smdp-theme', mode);
+    } catch {
+      // Ignore storage errors in private or restricted browsing modes.
+    }
+    saveThemeToUrl(builder);
+    refresh();
+    emitThemeChange('editor', mode);
+  };
+
   // Handle color picker changes
   inputs.forEach((input, key) => {
     input.addEventListener('input', (event) => {
@@ -736,10 +805,22 @@ export function initializeThemeEditor(
     });
   });
 
+  darkPresetButton.addEventListener('click', () => {
+    applyPreset('dark');
+  });
+
+  lightPresetButton.addEventListener('click', () => {
+    applyPreset('light');
+  });
+
   resetButton.addEventListener('click', () => {
-    builder.withMeta(defaultTheme.meta);
-    builder.withTokens(defaultTheme.tokens);
-    builder.withCustomProperties(defaultTheme.customProperties);
+    const mode = document.documentElement.getAttribute('data-theme') === 'light'
+      ? 'light'
+      : 'dark';
+    const configuration = mode === 'light' ? lightTheme : defaultTheme;
+    builder.withMeta(configuration.meta);
+    builder.withTokens(configuration.tokens);
+    builder.withCustomProperties(configuration.customProperties);
     builder.apply();
     saveThemeToUrl(builder);
     applyBackgroundMode('full');

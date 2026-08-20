@@ -14,7 +14,7 @@ import type { CanvasView, HtmlView } from "./views";
 import { createElement, replaceWithIcon, sanitizeHtmlString } from "./dom";
 import { encodeMarkdownToBase64 } from "../data-link";
 import { deserializeTheme } from "../theme/theme-serializer";
-import { emitThemeChange } from "./theme-events";
+import { emitThemeChange, onThemeChange } from "./theme-events";
 import { exportCanvasAsImageBlob } from "../parser/canvas-renderer";
 import {
   buildIframeEmbedCode,
@@ -552,6 +552,20 @@ export function createFabMenu(
   const isCanvasView = "canvas" in view;
   const isHtmlView = !isCanvasView;
 
+  const setActionContent = (
+    button: HTMLButtonElement,
+    label: string,
+    iconPath: string,
+  ): void => {
+    button.setAttribute("aria-label", label);
+    button.setAttribute("data-tooltip", label);
+    replaceWithIcon(button, iconPath);
+    const text = createElement("span");
+    text.className = "fab-action__label";
+    text.textContent = label;
+    button.appendChild(text);
+  };
+
   const menu = createElement("div");
   menu.className = "fab-menu";
 
@@ -560,27 +574,33 @@ export function createFabMenu(
   mainButton.className = "fab-main";
   mainButton.type = "button";
   mainButton.title = "Menu";
-  mainButton.ariaLabel = "Toggle menu";
   mainButton.setAttribute("aria-expanded", "false");
-  replaceWithIcon(mainButton, MENU_ICON_PATH);
+  mainButton.setAttribute("aria-controls", "smdp-document-actions");
+  setActionContent(mainButton, "Actions", MENU_ICON_PATH);
+  mainButton.ariaLabel = "Open document actions";
+  const mainButtonLabel = mainButton.querySelector<HTMLElement>(
+    ".fab-action__label",
+  );
 
   // Actions container
   const actions = createElement("div");
   actions.className = "fab-actions";
+  actions.id = "smdp-document-actions";
+  actions.setAttribute("aria-label", "Document actions");
+  actions.setAttribute("aria-hidden", "true");
+  actions.inert = true;
 
   // Edit button
   const editButton = createElement("button");
   editButton.className = "fab-action";
   editButton.type = "button";
-  editButton.setAttribute("data-tooltip", "Edit Markdown");
-  replaceWithIcon(editButton, EDIT_ICON_PATH);
+  setActionContent(editButton, "Edit Markdown", EDIT_ICON_PATH);
 
   // Theme editor button
   const themeButton = createElement("button");
   themeButton.className = "fab-action";
   themeButton.type = "button";
-  themeButton.setAttribute("data-tooltip", "Theme Editor");
-  replaceWithIcon(themeButton, THEME_EDITOR_ICON_PATH);
+  setActionContent(themeButton, "Theme Editor", THEME_EDITOR_ICON_PATH);
 
   // Light/Dark theme toggle button
   const themeToggleButton = createElement("button");
@@ -592,41 +612,48 @@ export function createFabMenu(
     themeToggleButton.setAttribute("data-theme", theme);
     if (theme === "dark") {
       // Show sun icon (click to go light)
-      themeToggleButton.setAttribute("data-tooltip", "Switch to Light Mode");
-      replaceWithIcon(themeToggleButton, THEME_DARK_TO_LIGHT_ICON_PATH);
+      setActionContent(
+        themeToggleButton,
+        "Switch to Light Mode",
+        THEME_DARK_TO_LIGHT_ICON_PATH,
+      );
     } else {
       // Show moon icon (click to go dark)
-      themeToggleButton.setAttribute("data-tooltip", "Switch to Dark Mode");
-      replaceWithIcon(themeToggleButton, THEME_LIGHT_TO_DARK_ICON_PATH);
+      setActionContent(
+        themeToggleButton,
+        "Switch to Dark Mode",
+        THEME_LIGHT_TO_DARK_ICON_PATH,
+      );
     }
   };
 
   // Initialize with current theme
   updateThemeIcon(getCurrentTheme());
+  const stopThemeChangeSubscription = onThemeChange(({ theme }) => {
+    updateThemeIcon(theme);
+  });
 
   // Export button
   const exportButton = createElement("button");
   exportButton.className = "fab-action";
   exportButton.type = "button";
-  exportButton.setAttribute(
-    "data-tooltip",
+  setActionContent(
+    exportButton,
     isCanvasView ? "Export as Image" : "Export as HTML",
+    EXPORT_ICON_PATH,
   );
-  replaceWithIcon(exportButton, EXPORT_ICON_PATH);
 
   // PDF export button
   const pdfExportButton = createElement("button");
   pdfExportButton.className = "fab-action";
   pdfExportButton.type = "button";
-  pdfExportButton.setAttribute("data-tooltip", "Export as PDF");
-  replaceWithIcon(pdfExportButton, PDF_ICON_PATH);
+  setActionContent(pdfExportButton, "Export as PDF", PDF_ICON_PATH);
 
   // Share button
   const shareButton = createElement("button");
   shareButton.className = "fab-action";
   shareButton.type = "button";
-  shareButton.setAttribute("data-tooltip", "Share as Data Link");
-  replaceWithIcon(shareButton, SHARE_ICON_PATH);
+  setActionContent(shareButton, "Share as Data Link", SHARE_ICON_PATH);
 
   const copyEmbeddedGroup = isHtmlView ? createElement("div") : null;
   const copyEmbeddedButton = isHtmlView ? createElement("button") : null;
@@ -646,13 +673,19 @@ export function createFabMenu(
 
     copyEmbeddedButton.className = "fab-action";
     copyEmbeddedButton.type = "button";
-    copyEmbeddedButton.setAttribute("data-tooltip", "Copy Embedded Iframe");
     copyEmbeddedButton.setAttribute("aria-haspopup", "true");
     copyEmbeddedButton.setAttribute("aria-expanded", "false");
-    replaceWithIcon(copyEmbeddedButton, EMBED_ICON_PATH);
+    copyEmbeddedButton.setAttribute("aria-controls", "smdp-embed-actions");
+    setActionContent(
+      copyEmbeddedButton,
+      "Copy Embedded Iframe",
+      EMBED_ICON_PATH,
+    );
 
     copyEmbeddedSubmenu.className = "fab-submenu";
+    copyEmbeddedSubmenu.id = "smdp-embed-actions";
     copyEmbeddedSubmenu.setAttribute("aria-hidden", "true");
+    copyEmbeddedSubmenu.inert = true;
 
     copyEmbeddedInlineButton.className = "fab-subaction";
     copyEmbeddedInlineButton.type = "button";
@@ -686,6 +719,7 @@ export function createFabMenu(
     copyEmbeddedGroup.classList.toggle("is-open", isEmbedSubmenuOpen);
     copyEmbeddedButton.setAttribute("aria-expanded", String(isEmbedSubmenuOpen));
     copyEmbeddedSubmenu.setAttribute("aria-hidden", String(!isEmbedSubmenuOpen));
+    copyEmbeddedSubmenu.inert = !isEmbedSubmenuOpen;
   };
 
   const closeEmbedSubmenu = (): void => {
@@ -694,19 +728,34 @@ export function createFabMenu(
     syncEmbedSubmenuState();
   };
 
-  const closeMenu = (): void => {
-    isMenuOpen = false;
-    menu.classList.remove("is-open");
-    mainButton.setAttribute("aria-expanded", "false");
-    closeEmbedSubmenu();
-  };
-
-  mainButton.addEventListener("click", () => {
-    isMenuOpen = !isMenuOpen;
+  const syncMenuState = (): void => {
     menu.classList.toggle("is-open", isMenuOpen);
     mainButton.setAttribute("aria-expanded", String(isMenuOpen));
+    if (mainButtonLabel) {
+      mainButtonLabel.textContent = isMenuOpen ? "Close" : "Actions";
+    }
+    mainButton.setAttribute(
+      "aria-label",
+      isMenuOpen ? "Close document actions" : "Open document actions",
+    );
+    actions.setAttribute("aria-hidden", String(!isMenuOpen));
+    actions.inert = !isMenuOpen;
+  };
+
+  const closeMenu = (): void => {
+    isMenuOpen = false;
+    closeEmbedSubmenu();
+    syncMenuState();
+  };
+
+  mainButton.addEventListener("click", (event) => {
+    isMenuOpen = !isMenuOpen;
     if (!isMenuOpen) {
       closeEmbedSubmenu();
+    }
+    syncMenuState();
+    if (isMenuOpen && event.detail === 0) {
+      queueMicrotask(() => editButton.focus());
     }
   });
 
@@ -926,10 +975,21 @@ export function createFabMenu(
       closeMenu();
     }
   };
+  const onDocumentKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape" || !isMenuOpen) return;
+    event.preventDefault();
+    closeMenu();
+    mainButton.focus();
+  };
   document.addEventListener("click", onDocumentClick);
+  document.addEventListener("keydown", onDocumentKeydown);
   window.addEventListener(
     "pagehide",
-    () => document.removeEventListener("click", onDocumentClick),
+    () => {
+      document.removeEventListener("click", onDocumentClick);
+      document.removeEventListener("keydown", onDocumentKeydown);
+      stopThemeChangeSubscription();
+    },
     { once: true },
   );
 
