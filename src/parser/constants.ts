@@ -64,7 +64,9 @@ export const TAG = {
   thCenter: enc('<th style="text-align:center">'),
   thRight: enc('<th style="text-align:right">'),
   thClose: enc('</th>'),
-  tdOpen: enc('<td>'),
+  tdLeft: enc('<td style="text-align:left">'),
+  tdCenter: enc('<td style="text-align:center">'),
+  tdRight: enc('<td style="text-align:right">'),
   tdClose: enc('</td>'),
   // Info block tags
   infoBlockInfo: enc('<div class="info-block info">'),

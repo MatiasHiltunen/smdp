@@ -93,8 +93,8 @@ End of content`;
 <tr><th style="text-align:left">Header 1</th><th style="text-align:left">Header 2</th></tr>
 </thead>
 <tbody>
-<tr><td>Cell 1</td><td>Cell 2</td></tr>
-<tr><td>Cell 3</td><td>Cell 4</td></tr>
+<tr><td style="text-align:left">Cell 1</td><td style="text-align:left">Cell 2</td></tr>
+<tr><td style="text-align:left">Cell 3</td><td style="text-align:left">Cell 4</td></tr>
 </tbody>
 </table>
 <p>End of content</p>`;
@@ -181,8 +181,8 @@ End of table`;
 <tr><th style="text-align:left">Left</th><th style="text-align:center">Center</th><th style="text-align:right">Right</th></tr>
 </thead>
 <tbody>
-<tr><td>a</td><td>b</td><td>c</td></tr>
-<tr><td>d</td><td>e</td><td>f</td></tr>
+<tr><td style="text-align:left">a</td><td style="text-align:center">b</td><td style="text-align:right">c</td></tr>
+<tr><td style="text-align:left">d</td><td style="text-align:center">e</td><td style="text-align:right">f</td></tr>
 </tbody>
 </table>
 <p>End of table</p>`;

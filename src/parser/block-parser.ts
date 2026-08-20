@@ -70,6 +70,62 @@ function hasSummaryCloseTagOnLine(u8: Uint8Array, s: number, e: number): boolean
   return TD.decode(u8.subarray(s, e)).toLowerCase().includes('</summary');
 }
 
+function hasTablePipe(u8: Uint8Array, s: number, e: number): boolean {
+  for (let i = s; i < e; i++) {
+    if (u8[i] === 0x7c) return true; // |
+  }
+  return false;
+}
+
+function isAtxHeadingLine(u8: Uint8Array, s: number, e: number): boolean {
+  let i = s;
+  let level = 0;
+  while (i < e && level < 6 && u8[i] === 0x23) { // #
+    level++;
+    i++;
+  }
+  return level > 0 && i < e && u8[i] === 0x20;
+}
+
+function isFootnoteDefinitionLine(
+  u8: Uint8Array,
+  s: number,
+  e: number,
+): boolean {
+  if (s + 4 >= e || u8[s] !== 0x5b || u8[s + 1] !== 0x5e) return false; // [^
+  let i = s + 2;
+  while (i < e && u8[i] !== 0x5d) i++; // ]
+  return i + 1 < e && u8[i + 1] === 0x3a; // :
+}
+
+function isTableRowContinuation(
+  u8: Uint8Array,
+  start: number,
+  end: number,
+  allowRawHtml: boolean,
+): boolean {
+  const i = skipSpaces(u8, start, end);
+  if (i >= end || !hasTablePipe(u8, i, end)) return false;
+  if (u8[i] === 0x7c) return true; // Explicit leading pipe.
+
+  // Pipe-less rows are valid GFM table rows, but block constructs still end
+  // the table instead of becoming cell content.
+  if (u8[i] === 0x3e) return false; // >
+  if (isAtxHeadingLine(u8, i, end)) return false;
+  if (isFootnoteDefinitionLine(u8, i, end)) return false;
+  if (detectInfoBlock(u8, i, end).isInfo) return false;
+  if (detectFence(u8, i, end)) return false;
+  if (parseListMarker(u8, i, end)) return false;
+  if (isHr(u8, i, end)) return false;
+
+  if (allowRawHtml) {
+    const rawTag = parseRawHtmlBlockTag(u8, i, end);
+    if (rawTag && RAW_HTML_BLOCK_TAGS.has(rawTag.tagName)) return false;
+  }
+
+  return true;
+}
+
 function skipBlockquotePrefixes(
   u8: Uint8Array,
   s: number,
@@ -132,6 +188,23 @@ export function* blocks(
     const { start, end } = current.value;
     let skipNext = false;
     try {
+
+    // A table must close before any following block is emitted. Keeping this
+    // check ahead of headings, info blocks, raw HTML, and footnotes prevents
+    // those blocks from being nested inside <tbody> or reordered by buffered
+    // renderers.
+    if (st.inTable) {
+      if (isTableRowContinuation(u8, start, end, allowRawHtml)) {
+        const cells = parseTableRow(u8, start, end);
+        yield { type: 'tableRow', cells };
+        continue;
+      }
+
+      st.inTable = false;
+      st.tableAlignments = [];
+      yield { type: 'tableClose' };
+      // Process the same non-table line normally below.
+    }
     
     // Handle info blocks
     const infoCheck = detectInfoBlock(u8, start, end);
@@ -271,18 +344,21 @@ export function* blocks(
       }
     }
 
-    // Tables - check if current line starts with | and next line is separator
-    if (!st.inTable && i < end && u8[i] === 0x7c && !next.done) { // |
+    // Tables support optional outer pipes. At least one pipe is required in
+    // the header to avoid treating a plain `---` line as a one-column table.
+    if (i < end && hasTablePipe(u8, i, end) && !next.done) {
       const nextLine = next.value;
       const sepCheck = isTableSeparator(u8, nextLine.start, nextLine.end);
-      
-      if (sepCheck.isTable) {
+      const headerCells = parseTableRow(u8, i, end);
+
+      if (
+        sepCheck.isTable &&
+        headerCells.length === sepCheck.alignments.length
+      ) {
         st.inTable = true;
         st.tableAlignments = sepCheck.alignments;
         yield { type: 'tableOpen' };
         
-        // Parse header row
-        const headerCells = parseTableRow(u8, start, end);
         const headerWithAlign = headerCells.map((cell, idx) => ({
           ...cell,
           align: st.tableAlignments[idx] || 'left',
@@ -291,22 +367,6 @@ export function* blocks(
         
         skipNext = true; // Skip separator line
         continue;
-      }
-    }
-    
-    // Continue parsing table rows
-    if (st.inTable) {
-      // Check if line is a table row
-      if (i < end && u8[i] === 0x7c) { // |
-        const cells = parseTableRow(u8, start, end);
-        yield { type: 'tableRow', cells };
-        continue;
-      } else {
-        // End of table
-        st.inTable = false;
-        st.tableAlignments = [];
-        yield { type: 'tableClose' };
-        // Don't continue, process this line normally
       }
     }
 

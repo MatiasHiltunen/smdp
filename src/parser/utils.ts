@@ -309,6 +309,7 @@ export function scanUrl(u8: Uint8Array, i: number, e: number): UrlScan {
 
 /**
  * Detect if line is a table separator: |---|:---:|---:|
+ * Outer pipes are optional.
  * Returns alignments for each column
  */
 export function isTableSeparator(
@@ -318,12 +319,8 @@ export function isTableSeparator(
 ): { isTable: boolean; alignments: Array<'left' | 'center' | 'right'> } {
   let i = skipSpaces(u8, start, end);
   const alignments: Array<'left' | 'center' | 'right'> = [];
-  
-  // Must start with |
-  if (i >= end || u8[i] !== 0x7c) { // |
-    return { isTable: false, alignments: [] };
-  }
-  i++;
+
+  if (i < end && u8[i] === 0x7c) i++; // Optional leading |.
   
   while (i < end) {
     i = skipSpaces(u8, i, end);
@@ -368,6 +365,8 @@ export function isTableSeparator(
     // Should have | or end
     if (i < end && u8[i] === 0x7c) { // |
       i++;
+      i = skipSpaces(u8, i, end);
+      if (i >= end) break; // Optional trailing |.
     } else if (i < end) {
       return { isTable: false, alignments: [] };
     }

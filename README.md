@@ -56,7 +56,7 @@ The intent of this repository is not to compete with broad Markdown frameworks b
 - **Links**: `[text](url)`
 - **Images**: `![alt](src)`
 - **Autolinks**: Automatic linking of `http://`, `https://`, and `www.` URLs
-- **Tables**: `| Header | Header |\n|--------|--------|\n| Cell | Cell |`
+- **Tables**: optional outer pipes and alignment delimiters (`:--` left, `:--:` center, `--:` right)
 - **Info Blocks**: `::: info`, `::: warning`, `::: error`, `::: success`
 
 ## Syntax Highlighting

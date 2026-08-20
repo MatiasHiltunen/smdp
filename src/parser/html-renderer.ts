@@ -450,6 +450,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
   let inCode = false;
   let codeBuffer: Array<{ s: number; e: number }> | null = null;
   let codeLang: string | undefined;
+  let tableAlignments: Array<'left' | 'center' | 'right'> = [];
   const footnotes: Array<{ idS: number; idE: number; contentS: number; contentE: number }> = [];
   const rawHtmlState: RawHtmlState = { suppressedTag: null };
   let sourceOffset = 0;
@@ -695,6 +696,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         break;
 
       case 'tableHeader':
+        tableAlignments = ev.cells.map((cell) => cell.align);
         out.writeBytes(TAG.theadOpen);
         for (let index = 0; index < ev.cells.length; index++) {
           const cell = ev.cells[index];
@@ -712,7 +714,10 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
         out.writeBytes(TAG.trOpen);
         for (let index = 0; index < ev.cells.length; index++) {
           const cell = ev.cells[index];
-          out.writeBytes(TAG.tdOpen);
+          const align = tableAlignments[index] ?? 'left';
+          const tdTag = align === 'center' ? TAG.tdCenter :
+                        align === 'right' ? TAG.tdRight : TAG.tdLeft;
+          out.writeBytes(tdTag);
           if (index === 0) writeSourceAnchor(cell.s);
           renderInline(u8, cell.s, cell.e, out, options, rawHtmlState);
           out.writeBytes(TAG.tdClose);
@@ -723,6 +728,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
       case 'tableClose':
         out.writeBytes(TAG.tbodyClose);
         out.writeBytes(TAG.tableClose);
+        tableAlignments = [];
         break;
 
       case 'infoOpen':
