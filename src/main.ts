@@ -66,6 +66,7 @@ import {
   PreviewCursorSyncState,
   type PreviewSourceAnchor,
 } from "./client/editor-preview-sync";
+import { importMarkdownFiles } from "./client/markdown-file-import";
 
 let themeEditorHandle: ThemeEditorHandle | null = null;
 let themeEditorViewListenerAttached = false;
@@ -257,6 +258,23 @@ function rewriteBookLinksInViewer(
     });
     anchor.href = bookUrl.toString();
     anchor.dataset.bookPart = canonicalPart;
+    anchor.dataset.bookAnchor = target.anchor;
+  }
+}
+
+function rewriteImportedBookLinksInViewer(
+  view: HtmlView,
+  snapshot: EditorDocumentSnapshot,
+  currentBaseUrl: string,
+): void {
+  const pageUrls = new Set(snapshot.pages.map((page) => page.url));
+  const anchors = view.viewer.querySelectorAll<HTMLAnchorElement>("a[href]");
+  for (const anchor of anchors) {
+    const href = anchor.getAttribute("href");
+    if (!href) continue;
+    const target = canonicalizeBookLink(href, currentBaseUrl);
+    if (!target || !pageUrls.has(target.canonicalUrl)) continue;
+    anchor.dataset.bookPart = target.canonicalUrl;
     anchor.dataset.bookAnchor = target.anchor;
   }
 }
@@ -612,15 +630,20 @@ async function init(): Promise<void> {
   }
 
   let bookTopicsMenu: BookTopicsMenuHandle | null = null;
-  if (route.mode === "html" && route.bookEntryUrl) {
-    bookTopicsMenu = createBookTopicsMenu();
-    document.body.appendChild(bookTopicsMenu.root);
-    registerCleanup(() => {
-      bookTopicsMenu?.destroy();
-      bookTopicsMenu?.root.remove();
-      bookTopicsMenu = null;
-    });
-  }
+  const removeBookTopicsMenu = (): void => {
+    bookTopicsMenu?.destroy();
+    bookTopicsMenu?.root.remove();
+    bookTopicsMenu = null;
+  };
+  const ensureBookTopicsMenu = (): BookTopicsMenuHandle | null => {
+    if (route.mode !== "html") return null;
+    if (!bookTopicsMenu) {
+      bookTopicsMenu = createBookTopicsMenu();
+      document.body.appendChild(bookTopicsMenu.root);
+    }
+    return bookTopicsMenu;
+  };
+  registerCleanup(removeBookTopicsMenu);
 
   let resolved: MarkdownFetchResult | null = null;
   let bookLoader: BookLoader | null = null;
@@ -798,10 +821,18 @@ async function init(): Promise<void> {
 
         if (route.mode === "html") {
           const htmlView = view as HtmlView;
-          if (snapshot.mode === "book" && bookLoader) {
-            rewriteBookLinksInViewer(htmlView, bookLoader, currentPage.baseUrl, {
-              sharedMode: route.shared,
-            });
+          if (snapshot.mode === "book") {
+            if (bookLoader) {
+              rewriteBookLinksInViewer(htmlView, bookLoader, currentPage.baseUrl, {
+                sharedMode: route.shared,
+              });
+            } else {
+              rewriteImportedBookLinksInViewer(
+                htmlView,
+                snapshot,
+                currentPage.baseUrl,
+              );
+            }
           }
 
           const anchor = pendingAnchor;
@@ -847,17 +878,13 @@ async function init(): Promise<void> {
     anchor: string,
     pushHistory: boolean,
   ): Promise<void> {
-    if (!bookLoader) {
-      return;
-    }
-
     pendingAnchor = anchor;
     shouldScrollAfterPageChange = !anchor;
 
     const existingPage = controller.findPageByUrl(targetPartUrl);
     if (existingPage) {
       controller.setCurrentPage(existingPage.id);
-      if (pushHistory) {
+      if (pushHistory && bookLoader) {
         const next = buildBookUrl(
           bookLoader.getEntryUrl(),
           existingPage.url,
@@ -873,6 +900,10 @@ async function init(): Promise<void> {
           next,
         );
       }
+      return;
+    }
+
+    if (!bookLoader) {
       return;
     }
 
@@ -903,13 +934,28 @@ async function init(): Promise<void> {
   }
 
   const refreshBookTopicsMenu = (snapshot: EditorDocumentSnapshot): void => {
-    if (route.mode !== "html" || snapshot.mode !== "book" || !bookTopicsMenu) {
+    if (route.mode !== "html") {
       return;
     }
 
+    if (snapshot.mode !== "book") {
+      removeBookTopicsMenu();
+      return;
+    }
+
+    const topicsMenu = ensureBookTopicsMenu();
+    if (!topicsMenu) return;
+
     const htmlView = view as HtmlView;
-    bookTopicsMenu.update(htmlView.viewer, {
-      contents: buildEditorBookContentLinks(snapshot),
+    const contents = bookLoader
+      ? buildEditorBookContentLinks(snapshot)
+      : snapshot.pages.map((page) => ({
+          url: page.url,
+          title: page.title,
+          isCurrent: page.id === snapshot.currentPageId,
+        }));
+    topicsMenu.update(htmlView.viewer, {
+      contents,
       onSelectContent: (targetPartUrl) => {
         void navigateToBookPart(targetPartUrl, "", true).catch((error) => {
           console.error("Unable to open selected chapter", error);
@@ -1021,6 +1067,17 @@ async function init(): Promise<void> {
         onToggleEditor: () => {
           setEditorOpen(!document.body.classList.contains("is-editing"));
         },
+        onUploadMarkdownFiles: async (files) => {
+          const snapshot = await importMarkdownFiles(files, window.location.href);
+          bookLoader = null;
+          currentBookPartUrl = null;
+          currentSourceUrl = null;
+          pendingAnchor = "";
+          shouldScrollAfterPageChange = true;
+          controller.replaceDocument(snapshot);
+          setEditorOpen(false);
+          scrollToTop();
+        },
         enableLoadUrlEmbed:
           route.mode === "html" &&
           !route.dataPayload &&
@@ -1083,7 +1140,7 @@ async function init(): Promise<void> {
     }
   }
 
-  if (bookLoader && route.mode === "html") {
+  if (route.mode === "html") {
     const htmlView = view as HtmlView;
 
     const onBookLinkClick = (event: Event): void => {
@@ -1107,17 +1164,19 @@ async function init(): Promise<void> {
       htmlView.viewer.removeEventListener("click", onBookLinkClick),
     );
 
-    const onBookPopState = (): void => {
-      const nextRoute = parseRoute();
-      if (!nextRoute.bookEntryUrl || !bookLoader) return;
-      const partUrl = nextRoute.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
-      const anchor = window.location.hash.replace(/^#/, "");
-      void navigateToBookPart(partUrl, anchor, false).catch((error) => {
-        console.error("Unable to restore book navigation state", error);
-      });
-    };
-    window.addEventListener("popstate", onBookPopState);
-    registerCleanup(() => window.removeEventListener("popstate", onBookPopState));
+    if (bookLoader) {
+      const onBookPopState = (): void => {
+        const nextRoute = parseRoute();
+        if (!nextRoute.bookEntryUrl || !bookLoader) return;
+        const partUrl = nextRoute.bookPartUrl?.toString() ?? bookLoader.getEntryUrl();
+        const anchor = window.location.hash.replace(/^#/, "");
+        void navigateToBookPart(partUrl, anchor, false).catch((error) => {
+          console.error("Unable to restore book navigation state", error);
+        });
+      };
+      window.addEventListener("popstate", onBookPopState);
+      registerCleanup(() => window.removeEventListener("popstate", onBookPopState));
+    }
   }
 
   if (route.mode === "canvas") {

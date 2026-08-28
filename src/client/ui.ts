@@ -61,6 +61,8 @@ const SHARE_ICON_PATH =
   "M18 3a3 3 0 1 1-2.668 4.301l-6.01 3.004a3 3 0 0 1 0 2.39l6.01 3.004a3 3 0 1 1-.898 1.79l-6.01-3.004a3 3 0 1 1 0-4.98l6.01-3.004A3 3 0 0 1 18 3Z";
 const EMBED_ICON_PATH =
   "M5 4a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1a1 1 0 1 0-2 0v1a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h1a1 1 0 1 0 0-2H5Zm7 0a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h7a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3h-7Zm0 2h7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z";
+const UPLOAD_ICON_PATH =
+  "M12 3a1 1 0 0 1 .707.293l4 4a1 1 0 0 1-1.414 1.414L13 6.414V15a1 1 0 1 1-2 0V6.414L8.707 8.707a1 1 0 0 1-1.414-1.414l4-4A1 1 0 0 1 12 3ZM5 14a1 1 0 0 1 1 1v4h12v-4a1 1 0 1 1 2 0v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4a1 1 0 0 1 1-1Z";
 
 function sanitizeCssDeclarationValue(value: string): string | null {
   const trimmed = value.trim();
@@ -519,6 +521,7 @@ export async function exportAsPdf(source: PdfExportSource): Promise<void> {
 
 export type FabMenuOptions = {
   onToggleEditor?: () => void;
+  onUploadMarkdownFiles?: (files: readonly File[]) => void | Promise<void>;
   buildHtmlExportSource?: (
     view: HtmlView,
   ) => string | Promise<string | null> | null;
@@ -595,6 +598,20 @@ export function createFabMenu(
   editButton.className = "fab-action";
   editButton.type = "button";
   setActionContent(editButton, "Edit Markdown", EDIT_ICON_PATH);
+
+  const uploadButton = createElement("button");
+  uploadButton.className = "fab-action";
+  uploadButton.type = "button";
+  uploadButton.disabled = !options.onUploadMarkdownFiles;
+  setActionContent(uploadButton, "Upload Markdown", UPLOAD_ICON_PATH);
+
+  const uploadInput = createElement("input");
+  uploadInput.type = "file";
+  uploadInput.accept = ".md";
+  uploadInput.multiple = true;
+  uploadInput.hidden = true;
+  uploadInput.tabIndex = -1;
+  uploadInput.setAttribute("aria-hidden", "true");
 
   // Theme editor button
   const themeButton = createElement("button");
@@ -763,6 +780,39 @@ export function createFabMenu(
     e.stopPropagation();
     options.onToggleEditor?.();
     closeMenu();
+  });
+
+  uploadButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    uploadInput.click();
+    closeMenu();
+  });
+
+  uploadInput.addEventListener("change", () => {
+    const files = Array.from(uploadInput.files ?? []);
+    if (files.length === 0 || !options.onUploadMarkdownFiles) {
+      uploadInput.value = "";
+      return;
+    }
+
+    void (async () => {
+      uploadButton.disabled = true;
+      uploadButton.setAttribute("aria-busy", "true");
+      try {
+        await options.onUploadMarkdownFiles?.(files);
+      } catch (error) {
+        console.error("Failed to upload Markdown files", error);
+        displayError(
+          error instanceof Error
+            ? error.message
+            : "Unable to upload Markdown files",
+        );
+      } finally {
+        uploadInput.value = "";
+        uploadButton.disabled = !options.onUploadMarkdownFiles;
+        uploadButton.removeAttribute("aria-busy");
+      }
+    })();
   });
 
   themeButton.addEventListener("click", (e) => {
@@ -996,6 +1046,7 @@ export function createFabMenu(
   if (copyEmbeddedGroup) {
     actions.append(
       editButton,
+      uploadButton,
       themeButton,
       themeToggleButton,
       exportButton,
@@ -1006,6 +1057,7 @@ export function createFabMenu(
   } else {
     actions.append(
       editButton,
+      uploadButton,
       themeButton,
       themeToggleButton,
       exportButton,
@@ -1013,7 +1065,7 @@ export function createFabMenu(
       shareButton,
     );
   }
-  menu.append(mainButton, actions);
+  menu.append(uploadInput, mainButton, actions);
 
   return menu;
 }
