@@ -243,6 +243,7 @@ The parser is split into logical modules:
 - **`block-parser.ts`**: Block-level structure parser (headings, lists, code blocks, etc.)
 - **`html-renderer.ts`**: HTML output renderer
 - **`canvas-renderer.ts`**: Canvas output renderer
+- **`pdf-renderer.ts`**: Native text/vector PDF renderer with document-style options
 - **`index.ts`**: Main MDParser class and public API
 
 ### Parser Pipeline
@@ -252,14 +253,15 @@ The core pipeline is built around byte ranges rather than strings. The process i
 1. **Line segmentation**: `lineSpans` walks the Uint8Array, recording start/end offsets for each line. No copies are made, and the raw array is never converted to strings at this stage.
 2. **Block parsing**: `blocks` iterates through the line spans once, emitting events such as `heading`, `listOpen`, `listItem`, `codeOpen`, etc. Indentation, fences, and info blocks are resolved here. Since block parsing is single-pass, nested structures (lists-in-lists, blockquotes) are tracked via a small stack structure.
 3. **Inline parsing**: For ranges that require inline formatting (links, emphasis, code spans), `inlineTokens` performs another byte-level pass within the line boundaries. It produces typed tokens (`text`, `link`, `img`, `code`, `autolink`, `strike`, ...). Multiple passes are avoided by piggybacking on the already segmented line spans.
-4. **Rendering**: Both renderers consume the block/inlines event stream without reparsing. The HTML renderer writes directly into an arena-like buffer (see `arena.ts`), which grows geometrically to limit reallocations. The Canvas renderer replays the same stream into 2D drawing commands, relying on the same inline tokenization for highlighting and styling.
+4. **Rendering**: HTML, Canvas, and PDF consume the block/inline event stream without building an intermediate document tree. The HTML renderer writes directly into an arena-like buffer (see `arena.ts`), while Canvas and PDF emit drawing operations from the same source ranges.
 
 Important details:
 
 - **Writer**: The HTML renderer calls `HtmlArena.writeEscaped` and related methods that operate on byte slices, so writing out HTML stays allocation-friendly and avoids intermediate strings. Only at the end is `Uint8Array` converted back to a string (`TextDecoder`).
-- **Syntax highlighting**: The highlighting path is decoupled from the markdown parser. When a fenced code block is found, the captured byte ranges are passed to `highlightCodeBlock`. Highlighting uses a generative tokenizer compiled from language specs (or precompiled data), then writes markup via the same arena-like approach.
-- **SIMD core**: Large line scans and compatible syntax profiles dispatch to a checked-in, hand-written WebAssembly SIMD core. The host copies source bytes into exported WASM memory once, drains fixed-size byte-range event batches, and falls back to the scalar TypeScript implementation when SIMD validation fails. Template-enabled grammars currently remain on the scalar tokenizer.
-- **Canvas rendering**: `renderToCanvasFromBlocks` shares the block event stream but renders into a canvas context. It keeps cached font measurements, performs line-wrapping per block, and triggers a rerender when images finish loading. Virtual scrolling is used when the rendered height exceeds twice the viewport.
+- **Syntax highlighting**: The highlighting path is decoupled from the markdown parser. Each fenced block is assembled from source spans once and tokenized as a whole, preserving multiline strings and comments in HTML, Canvas, and PDF without constructing a document tree.
+- **SIMD core**: Large line scans and compatible syntax profiles dispatch to a checked-in, hand-written WebAssembly SIMD core. The host copies source bytes into exported WASM memory once, drains fixed-size byte-range event batches, bounds the per-language instance cache, and falls back to the scalar TypeScript implementation when SIMD validation fails. JavaScript-family blocks can use the SIMD tokenizer when no template delimiter is present; template-containing blocks retain the scalar path.
+- **Canvas rendering**: `renderToCanvasFromBlocks` shares the block event stream but renders into a canvas context. It keeps cached font measurements and reuses whole-block highlight spans between measure and draw passes. Virtual scrolling is used when the rendered height exceeds twice the viewport.
+- **PDF rendering**: `renderToPDF` emits searchable text and vector graphics directly. Its layout keeps headings with following content, repeats table headers across pages, and accepts `documentStyle` plus `codeColors` so exports can follow the active reader theme.
 
 ```ts
 // High-level structure: see src/parser/index.ts
@@ -326,7 +328,7 @@ for (const ev of blocks(u8)) {
 
 - **Predictable performance**: Byte-range processing and arena-like buffers keep allocations low, which shows up in the included micro-benchmarks (`npm run test:bench`).
 - **Single-pass correctness**: Blocks are identified without backtracking, inline parsing respects boundaries established by the block layer (for example, emphasis is never resolved inside code spans).
-- **Separation of concerns**: HTML and Canvas renderers consume the same block/inline events so new renderers (e.g., PDF or terminal) can be added without touching the parser core.
+- **Separation of concerns**: HTML, Canvas, and PDF renderers consume the same block/inline events, so output behavior can evolve without changing the parser core.
 - **Themeable UI**: The public theme builder feeds both the default UI and consumer customizations; the new light/dark presets are simply predefined token sets.
 
 ### Areas for Improvement

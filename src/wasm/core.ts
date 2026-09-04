@@ -74,7 +74,9 @@ let enabled = true;
 let compiledModule: WebAssembly.Module | null | undefined;
 let moduleFailure: string | undefined;
 
-const packedProfiles = new WeakMap<WasmLanguageProfile, PackedTokenizer>();
+const PACKED_PROFILE_CACHE_LIMIT = 4;
+const MAX_RETAINED_TOKENIZER_BYTES = 8 * 1024 * 1024;
+const packedProfiles = new Map<WasmLanguageProfile, PackedTokenizer>();
 
 function align(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
@@ -178,6 +180,7 @@ function verifyResult(view: DataView, returnedStatus: number, capacity: number):
 function disableAfterFailure(error: unknown): void {
   moduleFailure = failureMessage(error);
   compiledModule = null;
+  packedProfiles.clear();
 }
 
 export function setWasmCoreEnabled(value: boolean): void {
@@ -355,6 +358,10 @@ class PackedTokenizer {
     this.sourcePtr = align(cursor, 16);
   }
 
+  retainedByteLength(): number {
+    return this.core.exports.memory.buffer.byteLength;
+  }
+
   tokenize(u8: Uint8Array, emit: WasmTokenEmit): boolean {
     if (this.busy) return false;
     this.busy = true;
@@ -436,10 +443,18 @@ class PackedTokenizer {
 
 function getPackedTokenizer(profile: WasmLanguageProfile): PackedTokenizer | null {
   const cached = packedProfiles.get(profile);
-  if (cached) return cached;
+  if (cached) {
+    packedProfiles.delete(profile);
+    packedProfiles.set(profile, cached);
+    return cached;
+  }
   try {
     const tokenizer = new PackedTokenizer(profile);
     packedProfiles.set(profile, tokenizer);
+    if (packedProfiles.size > PACKED_PROFILE_CACHE_LIMIT) {
+      const oldest = packedProfiles.keys().next().value as WasmLanguageProfile | undefined;
+      if (oldest) packedProfiles.delete(oldest);
+    }
     return tokenizer;
   } catch (error) {
     disableAfterFailure(error);
@@ -452,12 +467,22 @@ export function tokenizeWithWasm(
   profile: WasmLanguageProfile,
   emit: WasmTokenEmit,
 ): boolean {
-  if (!enabled || profile.templateEnabled || u8.length === 0) return false;
+  if (!enabled || u8.length === 0) return false;
+  if (
+    profile.templateEnabled &&
+    (profile.templateStart == null || u8.includes(profile.templateStart))
+  ) {
+    return false;
+  }
   if (!getModule()) return false;
   const tokenizer = getPackedTokenizer(profile);
   if (!tokenizer) return false;
   try {
-    return tokenizer.tokenize(u8, emit);
+    const used = tokenizer.tokenize(u8, emit);
+    if (tokenizer.retainedByteLength() > MAX_RETAINED_TOKENIZER_BYTES) {
+      packedProfiles.delete(profile);
+    }
+    return used;
   } catch (error) {
     if (!(error instanceof WasmCoreRuntimeError)) throw error;
     disableAfterFailure(error);

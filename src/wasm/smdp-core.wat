@@ -1,7 +1,7 @@
 (module
   ;; Hand-written SIMD scanning core. The host owns allocation and passes
   ;; non-overlapping source/output regions in this exported memory.
-  (memory (export "memory") 8 4096)
+  (memory (export "memory") 2 4096)
 
   (global $keyword_code (mut i32) (i32.const 0))
 

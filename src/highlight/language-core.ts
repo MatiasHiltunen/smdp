@@ -700,6 +700,7 @@ export class CompiledLanguageSpec {
       numberFlags: this.numbersFlags,
       regexEnabled: this.regexEnabled,
       templateEnabled: this.template !== undefined,
+      templateStart: this.template?.start ?? null,
       defaultIdentifier: this.defaultIdentifier,
     };
     return this.wasmProfile;

@@ -7,6 +7,7 @@ import {
   buildExportHtmlDocumentFromViewerHtml,
   parseCssColorToPdfRGB,
   resolvePdfCodeColorsFromStyle,
+  resolvePdfDocumentStyleFromStyle,
 } from "../src/client/ui";
 
 test("buildExportHtmlDocument keeps mode-html shell and visual body classes", () => {
@@ -158,12 +159,18 @@ test("buildPdfExportBlob returns PDF bytes", async () => {
   assert.match(text, /\/Type \/Catalog/);
 });
 
-test("buildPdfExportBlob applies computed theme code colors", async () => {
+test("buildPdfExportBlob applies computed document theme and typography", async () => {
   const originalDocument = (globalThis as any).document;
   const originalWindow = (globalThis as any).window;
   const style = {
+    fontSize: "16px",
+    lineHeight: "27.2px",
     getPropertyValue(name: string): string {
-      return name === "--code-kw" ? "#ff0000" : "";
+      if (name === "--code-kw") return "#ff0000";
+      if (name === "--bg-glass-strong") return "#101820";
+      if (name === "--text-primary") return "#f8fafc";
+      if (name === "--text-secondary") return "#c8d2dc";
+      return "";
     },
   };
 
@@ -183,6 +190,8 @@ test("buildPdfExportBlob applies computed theme code colors", async () => {
     const text = new TextDecoder().decode(await blob.arrayBuffer());
 
     assert.match(text, /1 0 0 rg\n1 0 0 1 [\d.]+ [\d.]+ Tm\n<636F6E7374> Tj/);
+    assert.match(text, /q 0\.063 0\.094 0\.125 rg 0 0 [\d.]+ [\d.]+ re f Q/);
+    assert.match(text, /\/F5 10\.56 Tf/);
   } finally {
     if (originalDocument) {
       (globalThis as any).document = originalDocument;
@@ -236,4 +245,27 @@ test("resolvePdfCodeColorsFromStyle maps theme code tokens", () => {
   assert.deepEqual(colors.kw, [1, 0, 0]);
   assert.deepEqual(colors.num, [0, 0, 1]);
   assert.equal(colors.com, undefined);
+});
+
+test("resolvePdfDocumentStyleFromStyle maps and composites document theme colors", () => {
+  const style = {
+    getPropertyValue(name: string): string {
+      const values: Record<string, string> = {
+        "--bg-glass-strong": "#101820",
+        "--text-primary": "#f8fafc",
+        "--text-secondary": "rgb(200 210 220)",
+        "--border-glass": "rgba(255, 255, 255, 0.25)",
+        "--warning-bg": "rgb(255 200 0 / 20%)",
+      };
+      return values[name] ?? "";
+    },
+  };
+  const documentStyle = resolvePdfDocumentStyleFromStyle(style);
+
+  assert.deepEqual(documentStyle.pageBackground, [16 / 255, 24 / 255, 32 / 255]);
+  assert.deepEqual(documentStyle.text, [248 / 255, 250 / 255, 252 / 255]);
+  assert.ok(documentStyle.border);
+  assert.ok(documentStyle.border[0] > documentStyle.pageBackground[0]);
+  assert.ok(documentStyle.warningBackground);
+  assert.ok(documentStyle.warningBackground[0] > documentStyle.pageBackground[0]);
 });

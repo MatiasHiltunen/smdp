@@ -1,10 +1,15 @@
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
-import { FONT_SIZE, INDENT, TD, TE } from './constants';
+import { INDENT, TD, TE } from './constants';
 import type { InlineToken } from './types';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
-import { tokenizeCodeBlock, type HighlightTokenKind } from '../highlight';
+import {
+  tokenizeCodeBlock,
+  type HighlightTokenKind,
+  type HighlightTokenSpan,
+} from '../highlight';
+import { bufferCodeBlock, type CodeBlockSourceSpan } from './code-block-buffer';
 
 export type PdfPageSize =
   | 'letter'
@@ -19,7 +24,9 @@ export interface PdfRenderOptions extends ParserOptions {
   margin?: number;
   fontSize?: number;
   lineHeight?: number;
+  maxContentWidth?: number;
   codeColors?: PdfCodeColorOptions;
+  documentStyle?: PdfDocumentStyleOptions;
   emojiFont?: Uint8Array | ArrayBuffer;
   imageResolver?: PdfImageResolver;
   inflate?: PdfBinaryTransform;
@@ -54,6 +61,31 @@ export type PdfRGB = readonly [number, number, number];
 export type PdfCodeColorKey = Exclude<HighlightTokenKind, 'text'>;
 export type PdfCodeColorOptions = Partial<Record<PdfCodeColorKey, PdfRGB>>;
 
+export interface PdfDocumentStyleOptions {
+  pageBackground?: PdfRGB;
+  text?: PdfRGB;
+  textSecondary?: PdfRGB;
+  accent?: PdfRGB;
+  border?: PdfRGB;
+  surface?: PdfRGB;
+  codeBackground?: PdfRGB;
+  codeBorder?: PdfRGB;
+  inlineCodeBackground?: PdfRGB;
+  inlineCodeText?: PdfRGB;
+  tableHeaderBackground?: PdfRGB;
+  tableStripeBackground?: PdfRGB;
+  blockquoteBorder?: PdfRGB;
+  blockquoteText?: PdfRGB;
+  infoBorder?: PdfRGB;
+  infoBackground?: PdfRGB;
+  warningBorder?: PdfRGB;
+  warningBackground?: PdfRGB;
+  errorBorder?: PdfRGB;
+  errorBackground?: PdfRGB;
+  successBorder?: PdfRGB;
+  successBackground?: PdfRGB;
+}
+
 type PdfColor = PdfRGB;
 
 type PdfFont =
@@ -70,6 +102,8 @@ type PdfTextStyle = {
   fallbackFont?: PdfEmbeddedTextFont;
   underline?: boolean;
   strike?: boolean;
+  background?: PdfColor;
+  backgroundPaddingX?: number;
 };
 
 type PdfTextRun = {
@@ -156,6 +190,17 @@ type ListFrame = {
   counter: number;
 };
 
+type PdfInfoKind = 'info' | 'warning' | 'error' | 'success';
+
+type PdfContainerFrame = {
+  x: number;
+  width: number;
+};
+
+type PdfInfoFrame = PdfContainerFrame & {
+  kind: PdfInfoKind;
+};
+
 type PdfTableAlign = 'left' | 'center' | 'right';
 
 type PdfTableInputCell = {
@@ -190,27 +235,99 @@ const PAGE_SIZES = {
   a4: { width: 595.28, height: 841.89 },
 } as const;
 
-const COLORS = {
+const DEFAULT_DOCUMENT_STYLE = {
+  pageBackground: [1, 1, 1] as const,
   text: [0.08, 0.1, 0.12] as const,
-  muted: [0.38, 0.42, 0.48] as const,
-  accent: [0.03, 0.35, 0.7] as const,
-  rule: [0.72, 0.75, 0.8] as const,
-  codeBg: [0.94, 0.95, 0.97] as const,
-  tableHeaderBg: [0.9, 0.93, 0.97] as const,
-  tableStripeBg: [0.98, 0.99, 1] as const,
-  quote: [0.18, 0.34, 0.6] as const,
+  textSecondary: [0.35, 0.38, 0.45] as const,
+  accent: [0.145, 0.388, 0.922] as const,
+  border: [0.86, 0.88, 0.91] as const,
+  surface: [0.96, 0.969, 0.98] as const,
+  codeBackground: [0.96, 0.969, 0.98] as const,
+  codeBorder: [0.86, 0.88, 0.91] as const,
+  inlineCodeBackground: [0.93, 0.95, 0.98] as const,
+  inlineCodeText: [0.145, 0.388, 0.922] as const,
+  tableHeaderBackground: [0.94, 0.955, 0.975] as const,
+  tableStripeBackground: [0.985, 0.989, 0.995] as const,
+  blockquoteBorder: [0.145, 0.388, 0.922] as const,
+  blockquoteText: [0.27, 0.31, 0.39] as const,
+  infoBorder: [0.36, 0.58, 0.93] as const,
+  infoBackground: [0.94, 0.965, 1] as const,
+  warningBorder: [0.82, 0.58, 0.08] as const,
+  warningBackground: [1, 0.975, 0.9] as const,
+  errorBorder: [0.82, 0.25, 0.25] as const,
+  errorBackground: [1, 0.94, 0.94] as const,
+  successBorder: [0.18, 0.65, 0.36] as const,
+  successBackground: [0.93, 0.99, 0.95] as const,
 } as const;
 
+type ResolvedPdfDocumentStyle = {
+  [K in keyof PdfDocumentStyleOptions]-?: PdfColor;
+};
+
+function resolveDocumentStyle(style: PdfDocumentStyleOptions | undefined): ResolvedPdfDocumentStyle {
+  const accent = style?.accent ?? DEFAULT_DOCUMENT_STYLE.accent;
+  const border = style?.border ?? DEFAULT_DOCUMENT_STYLE.border;
+  const surface = style?.surface ?? DEFAULT_DOCUMENT_STYLE.surface;
+  return {
+    pageBackground: style?.pageBackground ?? DEFAULT_DOCUMENT_STYLE.pageBackground,
+    text: style?.text ?? DEFAULT_DOCUMENT_STYLE.text,
+    textSecondary: style?.textSecondary ?? DEFAULT_DOCUMENT_STYLE.textSecondary,
+    accent,
+    border,
+    surface,
+    codeBackground: style?.codeBackground ?? style?.surface ?? DEFAULT_DOCUMENT_STYLE.codeBackground,
+    codeBorder: style?.codeBorder ?? style?.border ?? DEFAULT_DOCUMENT_STYLE.codeBorder,
+    inlineCodeBackground: style?.inlineCodeBackground ?? style?.surface ?? DEFAULT_DOCUMENT_STYLE.inlineCodeBackground,
+    inlineCodeText: style?.inlineCodeText ?? style?.accent ?? DEFAULT_DOCUMENT_STYLE.inlineCodeText,
+    tableHeaderBackground: style?.tableHeaderBackground ?? style?.surface ?? DEFAULT_DOCUMENT_STYLE.tableHeaderBackground,
+    tableStripeBackground: style?.tableStripeBackground ?? style?.surface ?? DEFAULT_DOCUMENT_STYLE.tableStripeBackground,
+    blockquoteBorder: style?.blockquoteBorder ?? style?.accent ?? DEFAULT_DOCUMENT_STYLE.blockquoteBorder,
+    blockquoteText: style?.blockquoteText ?? style?.textSecondary ?? DEFAULT_DOCUMENT_STYLE.blockquoteText,
+    infoBorder: style?.infoBorder ?? DEFAULT_DOCUMENT_STYLE.infoBorder,
+    infoBackground: style?.infoBackground ?? DEFAULT_DOCUMENT_STYLE.infoBackground,
+    warningBorder: style?.warningBorder ?? DEFAULT_DOCUMENT_STYLE.warningBorder,
+    warningBackground: style?.warningBackground ?? DEFAULT_DOCUMENT_STYLE.warningBackground,
+    errorBorder: style?.errorBorder ?? DEFAULT_DOCUMENT_STYLE.errorBorder,
+    errorBackground: style?.errorBackground ?? DEFAULT_DOCUMENT_STYLE.errorBackground,
+    successBorder: style?.successBorder ?? DEFAULT_DOCUMENT_STYLE.successBorder,
+    successBackground: style?.successBackground ?? DEFAULT_DOCUMENT_STYLE.successBackground,
+  };
+}
+
+function documentColor<K extends keyof PdfDocumentStyleOptions>(
+  options: PdfRenderOptions,
+  key: K,
+): PdfColor {
+  const style = options.documentStyle;
+  const direct = style?.[key];
+  if (direct) return direct;
+  if (
+    key === 'codeBackground' ||
+    key === 'inlineCodeBackground' ||
+    key === 'tableHeaderBackground'
+  ) {
+    return style?.surface ?? DEFAULT_DOCUMENT_STYLE[key];
+  }
+  if (key === 'codeBorder') return style?.border ?? DEFAULT_DOCUMENT_STYLE.codeBorder;
+  if (key === 'inlineCodeText' || key === 'blockquoteBorder') {
+    return style?.accent ?? DEFAULT_DOCUMENT_STYLE[key];
+  }
+  if (key === 'blockquoteText') {
+    return style?.textSecondary ?? DEFAULT_DOCUMENT_STYLE.blockquoteText;
+  }
+  return DEFAULT_DOCUMENT_STYLE[key];
+}
+
 const CODE_COLORS: Record<PdfCodeColorKey, PdfColor> = {
-  kw: [0.03, 0.35, 0.7] as const,
-  id: [0.08, 0.1, 0.12] as const,
-  num: [0.72, 0.5, 0.05] as const,
-  str: [0.09, 0.5, 0.22] as const,
-  tpl: [0.03, 0.45, 0.52] as const,
-  com: [0.45, 0.5, 0.57] as const,
-  op: [0.68, 0.2, 0.52] as const,
-  punc: [0.38, 0.42, 0.48] as const,
-  rx: [0.74, 0.32, 0.08] as const,
+  kw: [0.145, 0.388, 0.922] as const,
+  id: [0.153, 0.192, 0.259] as const,
+  num: [0.792, 0.541, 0.016] as const,
+  str: [0.082, 0.502, 0.239] as const,
+  tpl: [0.051, 0.58, 0.533] as const,
+  com: [0.408, 0.451, 0.525] as const,
+  op: [0.576, 0.2, 0.918] as const,
+  punc: [0.325, 0.376, 0.459] as const,
+  rx: [0.761, 0.255, 0.047] as const,
 };
 
 const FONT_IDS: Record<PdfFont, string> = {
@@ -297,6 +414,10 @@ function cloneStyle(style: PdfTextStyle): PdfTextStyle {
     ...(style.fallbackFont ? { fallbackFont: style.fallbackFont } : {}),
     ...(style.underline ? { underline: true } : {}),
     ...(style.strike ? { strike: true } : {}),
+    ...(style.background ? { background: style.background } : {}),
+    ...(style.backgroundPaddingX !== undefined
+      ? { backgroundPaddingX: style.backgroundPaddingX }
+      : {}),
   };
 }
 
@@ -1591,17 +1712,27 @@ class PdfLineComposer {
   private readonly x: number;
   private readonly maxWidth: number;
   private readonly lineHeight: number;
+  private readonly continuationIndent: number;
+  private lineIndex = 0;
 
   constructor(
     renderer: PdfBlockRenderer,
     x: number,
     maxWidth: number,
     lineHeight: number,
+    continuationIndent = 0,
   ) {
     this.renderer = renderer;
     this.x = x;
     this.maxWidth = maxWidth;
     this.lineHeight = lineHeight;
+    this.continuationIndent = Math.max(0, Math.min(continuationIndent, maxWidth - 1));
+  }
+
+  private currentMaxWidth(): number {
+    return this.lineIndex === 0
+      ? this.maxWidth
+      : Math.max(1, this.maxWidth - this.continuationIndent);
   }
 
   addGenerated(text: string, style: PdfTextStyle): void {
@@ -1613,7 +1744,7 @@ class PdfLineComposer {
     if (this.lineWidth === 0) return;
     this.pendingSpace = true;
     const spaceWidth = measureTextSpan(SPACE, 0, SPACE.length, style);
-    if (this.lineWidth + spaceWidth > this.maxWidth) {
+    if (this.lineWidth + spaceWidth > this.currentMaxWidth()) {
       this.flush();
     }
   }
@@ -1650,10 +1781,12 @@ class PdfLineComposer {
 
   flush(): void {
     if (this.line.length === 0) return;
-    this.renderer.drawTextLine(this.line, this.x, this.lineHeight);
+    const lineX = this.lineIndex === 0 ? this.x : this.x + this.continuationIndent;
+    this.renderer.drawTextLine(this.line, lineX, this.lineHeight);
     this.line.length = 0;
     this.lineWidth = 0;
     this.pendingSpace = false;
+    this.lineIndex++;
   }
 
   private addSegment(bytes: Uint8Array, s: number, e: number, style: PdfTextStyle): void {
@@ -1663,12 +1796,12 @@ class PdfLineComposer {
       ? measureTextSpan(SPACE, 0, SPACE.length, style)
       : 0;
     let width = segmentWidth + spaceWidth;
-    if (this.lineWidth > 0 && this.lineWidth + width > this.maxWidth) {
+    if (this.lineWidth > 0 && this.lineWidth + width > this.currentMaxWidth()) {
       this.flush();
       width = segmentWidth;
     }
 
-    if (width > this.maxWidth) {
+    if (width > this.currentMaxWidth()) {
       this.pendingSpace = false;
       this.addLongSegment(bytes, s, e, style);
       return;
@@ -1700,7 +1833,7 @@ class PdfLineComposer {
     while (i < e) {
       const next = nextUtf8Index(bytes, i, e);
       const width = measureTextSpan(bytes, i, next, style);
-      if (this.lineWidth > 0 && this.lineWidth + width > this.maxWidth) {
+      if (this.lineWidth > 0 && this.lineWidth + width > this.currentMaxWidth()) {
         this.flush();
       }
       this.line.push({
@@ -1907,21 +2040,23 @@ function collectInlineRuns(
         pushTextRun(runs, markdown, tok.s, tok.e, mergeStyle(currentStyle, {
           font: 'mono',
           size: Math.max(8, currentStyle.size * 0.9),
-          color: COLORS.quote,
+          color: documentColor(options, 'inlineCodeText'),
+          background: documentColor(options, 'inlineCodeBackground'),
+          backgroundPaddingX: Math.max(1.5, currentStyle.size * 0.22),
         }));
         break;
 
       case 'img':
         flushText();
-        pushGeneratedTextRun(runs, '[image', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        pushGeneratedTextRun(runs, '[image', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
         if (tok.altE > tok.altS) {
-          pushGeneratedTextRun(runs, ': ', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+          pushGeneratedTextRun(runs, ': ', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
           pushTextRun(runs, markdown, tok.altS, tok.altE, mergeStyle(currentStyle, {
             font: 'italic',
-            color: COLORS.muted,
+            color: documentColor(options, 'textSecondary'),
           }));
         }
-        pushGeneratedTextRun(runs, ']', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        pushGeneratedTextRun(runs, ']', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
         break;
 
       case 'link': {
@@ -1929,7 +2064,7 @@ function collectInlineRuns(
         const href = TD.decode(markdown.subarray(tok.hrefS, tok.hrefE));
         const resolvedHref = resolveUrlRelativeToBase(href, baseUrl);
         const linkStyle = urlAllowlist(resolvedHref)
-          ? mergeStyle(currentStyle, { color: COLORS.accent, underline: true })
+          ? mergeStyle(currentStyle, { color: documentColor(options, 'accent'), underline: true })
           : currentStyle;
         if (depth < 8) {
           collectInlineRuns(markdown, tok.textS, tok.textE, runs, linkStyle, options, urlAllowlist, baseUrl, depth + 1);
@@ -1942,19 +2077,19 @@ function collectInlineRuns(
       case 'autolink':
         flushText();
         pushTextRun(runs, markdown, tok.s, tok.e, mergeStyle(currentStyle, {
-          color: COLORS.accent,
+          color: documentColor(options, 'accent'),
           underline: true,
         }));
         break;
 
       case 'footnoteRef':
         flushText();
-        pushGeneratedTextRun(runs, '[', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        pushGeneratedTextRun(runs, '[', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: documentColor(options, 'accent') }));
         pushTextRun(runs, markdown, tok.idS, tok.idE, mergeStyle(currentStyle, {
           size: currentStyle.size * 0.75,
-          color: COLORS.accent,
+          color: documentColor(options, 'accent'),
         }));
-        pushGeneratedTextRun(runs, ']', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        pushGeneratedTextRun(runs, ']', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: documentColor(options, 'accent') }));
         break;
 
       case 'rawHtml':
@@ -1998,6 +2133,8 @@ class PdfBlockRenderer {
   private readonly baseFontSize: number;
   private readonly lineHeightMultiplier: number;
   private readonly contentWidth: number;
+  private readonly contentLeft: number;
+  private readonly colors: ResolvedPdfDocumentStyle;
   private readonly urlAllowlist: (url: string) => boolean;
   private readonly baseUrl: string | undefined;
   private currentPage: PdfPage;
@@ -2006,9 +2143,11 @@ class PdfBlockRenderer {
   private para: PdfLineComposer | null = null;
   private inCode = false;
   private codeLang: string | undefined;
+  private codeBuffer: CodeBlockSourceSpan[] | null = null;
   private tableBuffer: PdfTableBuffer | null = null;
   private listStack: ListFrame[] = [];
-  private infoStackDepth = 0;
+  private readonly blockquoteStack: PdfContainerFrame[] = [];
+  private readonly infoStack: PdfInfoFrame[] = [];
   private readonly options: PdfRenderOptions;
   private readonly emojiFont: PdfEmbeddedTextFont | undefined;
   private readonly images: PdfEmbeddedImage[] = [];
@@ -2022,9 +2161,12 @@ class PdfBlockRenderer {
     this.pageWidth = page.width;
     this.pageHeight = page.height;
     this.margin = Math.max(24, options.margin ?? 54);
-    this.baseFontSize = Math.max(8, options.fontSize ?? FONT_SIZE.base);
-    this.lineHeightMultiplier = Math.max(1.1, options.lineHeight ?? 1.35);
-    this.contentWidth = Math.max(120, this.pageWidth - this.margin * 2);
+    this.baseFontSize = Math.max(8, options.fontSize ?? 11.5);
+    this.lineHeightMultiplier = Math.max(1.1, options.lineHeight ?? 1.58);
+    const availableWidth = Math.max(120, this.pageWidth - this.margin * 2);
+    this.contentWidth = Math.min(availableWidth, Math.max(120, options.maxContentWidth ?? availableWidth));
+    this.contentLeft = (this.pageWidth - this.contentWidth) / 2;
+    this.colors = resolveDocumentStyle(options.documentStyle);
     this.urlAllowlist = options.urlAllowlist ?? defaultUrlAllowlist;
     this.baseUrl = options.baseUrl;
     this.currentPage = this.createPage();
@@ -2038,15 +2180,11 @@ class PdfBlockRenderer {
     for (const ev of blocks(markdown, blockParseOptions)) {
       switch (ev.type) {
         case 'bqOpen':
-          this.closeParagraph();
-          this.addVerticalSpace(this.baseFontSize * 0.35);
-          this.indent += INDENT;
+          this.openBlockquote();
           break;
 
         case 'bqClose':
-          this.closeParagraph();
-          this.indent = Math.max(0, this.indent - INDENT);
-          this.addVerticalSpace(this.baseFontSize * 0.6);
+          this.closeBlockquote();
           break;
 
         case 'hr':
@@ -2057,12 +2195,17 @@ class PdfBlockRenderer {
         case 'heading': {
           this.closeParagraph();
           const size = this.headingSize(ev.level);
-          this.addVerticalSpace(size * 0.35);
-          const style = this.style({ font: 'bold', size });
-          const line = this.createLine(size * this.lineHeightMultiplier);
+          const before = size * (ev.level <= 2 ? 0.55 : 0.4);
+          const lineHeight = size * 1.16;
+          const after = size * 0.28;
+          this.ensureSpace(before + lineHeight + after + this.baseFontSize * this.lineHeightMultiplier * 2);
+          this.addVerticalSpace(before);
+          const style = this.style({ font: 'bold', size, color: this.colors.text });
+          const line = this.createLine(lineHeight);
           renderInlineRange(markdown, ev.s, ev.e, line, style, this.options, this.urlAllowlist, this.baseUrl, imageRenderer);
           line.flush();
-          this.addVerticalSpace(size * 0.2);
+          if (ev.level === 2) this.drawHeadingRule();
+          this.addVerticalSpace(after);
           break;
         }
 
@@ -2106,23 +2249,18 @@ class PdfBlockRenderer {
           break;
 
         case 'codeOpen':
-          this.closeParagraph();
-          this.inCode = true;
-          this.codeLang = ev.info?.lang ?? ev.info?.rawLang;
-          this.addVerticalSpace(this.baseFontSize * 0.4);
+          this.openCodeBlock(ev.info?.lang ?? ev.info?.rawLang);
           break;
 
         case 'codeText':
           if (this.inCode) {
-            this.renderCodeLine(markdown, ev.s, ev.e);
+            this.codeBuffer?.push({ s: ev.s, e: ev.e });
           }
           break;
 
         case 'codeClose':
           if (this.inCode) {
-            this.inCode = false;
-            this.codeLang = undefined;
-            this.addVerticalSpace(this.baseFontSize * 0.6);
+            this.closeCodeBlock(markdown);
           }
           break;
 
@@ -2145,17 +2283,11 @@ class PdfBlockRenderer {
           break;
 
         case 'infoOpen':
-          this.closeParagraph();
-          this.infoStackDepth++;
-          this.renderInfoLabel(ev.infoType.toUpperCase());
-          this.indent += INDENT;
+          this.openInfo(ev.infoType);
           break;
 
         case 'infoClose':
-          this.closeParagraph();
-          if (this.infoStackDepth > 0) this.infoStackDepth--;
-          this.indent = Math.max(0, this.indent - INDENT);
-          this.addVerticalSpace(this.baseFontSize * 0.45);
+          this.closeInfo();
           break;
 
         case 'footnoteDef':
@@ -2178,15 +2310,11 @@ class PdfBlockRenderer {
     for (const ev of blocks(markdown, blockParseOptions)) {
       switch (ev.type) {
         case 'bqOpen':
-          this.closeParagraph();
-          this.addVerticalSpace(this.baseFontSize * 0.35);
-          this.indent += INDENT;
+          this.openBlockquote();
           break;
 
         case 'bqClose':
-          this.closeParagraph();
-          this.indent = Math.max(0, this.indent - INDENT);
-          this.addVerticalSpace(this.baseFontSize * 0.6);
+          this.closeBlockquote();
           break;
 
         case 'hr':
@@ -2197,9 +2325,13 @@ class PdfBlockRenderer {
         case 'heading': {
           this.closeParagraph();
           const size = this.headingSize(ev.level);
-          this.addVerticalSpace(size * 0.35);
-          const style = this.style({ font: 'bold', size });
-          const line = this.createLine(size * this.lineHeightMultiplier);
+          const before = size * (ev.level <= 2 ? 0.55 : 0.4);
+          const lineHeight = size * 1.16;
+          const after = size * 0.28;
+          this.ensureSpace(before + lineHeight + after + this.baseFontSize * this.lineHeightMultiplier * 2);
+          this.addVerticalSpace(before);
+          const style = this.style({ font: 'bold', size, color: this.colors.text });
+          const line = this.createLine(lineHeight);
           await renderInlineRangeAsync(
             markdown,
             ev.s,
@@ -2212,7 +2344,8 @@ class PdfBlockRenderer {
             imageRenderer,
           );
           line.flush();
-          this.addVerticalSpace(size * 0.2);
+          if (ev.level === 2) this.drawHeadingRule();
+          this.addVerticalSpace(after);
           break;
         }
 
@@ -2257,23 +2390,18 @@ class PdfBlockRenderer {
           break;
 
         case 'codeOpen':
-          this.closeParagraph();
-          this.inCode = true;
-          this.codeLang = ev.info?.lang ?? ev.info?.rawLang;
-          this.addVerticalSpace(this.baseFontSize * 0.4);
+          this.openCodeBlock(ev.info?.lang ?? ev.info?.rawLang);
           break;
 
         case 'codeText':
           if (this.inCode) {
-            this.renderCodeLine(markdown, ev.s, ev.e);
+            this.codeBuffer?.push({ s: ev.s, e: ev.e });
           }
           break;
 
         case 'codeClose':
           if (this.inCode) {
-            this.inCode = false;
-            this.codeLang = undefined;
-            this.addVerticalSpace(this.baseFontSize * 0.6);
+            this.closeCodeBlock(markdown);
           }
           break;
 
@@ -2296,17 +2424,11 @@ class PdfBlockRenderer {
           break;
 
         case 'infoOpen':
-          this.closeParagraph();
-          this.infoStackDepth++;
-          this.renderInfoLabel(ev.infoType.toUpperCase());
-          this.indent += INDENT;
+          this.openInfo(ev.infoType);
           break;
 
         case 'infoClose':
-          this.closeParagraph();
-          if (this.infoStackDepth > 0) this.infoStackDepth--;
-          this.indent = Math.max(0, this.indent - INDENT);
-          this.addVerticalSpace(this.baseFontSize * 0.45);
+          this.closeInfo();
           break;
 
         case 'footnoteDef':
@@ -2328,6 +2450,7 @@ class PdfBlockRenderer {
   drawTextLine(runs: readonly PdfTextRun[], x: number, lineHeight: number): void {
     const maxSize = runs.reduce((size, run) => Math.max(size, run.style.size), this.baseFontSize);
     this.ensureSpace(lineHeight);
+    this.decorateVerticalSlice(this.cursorY, this.cursorY - lineHeight);
     const baseline = this.cursorY - maxSize;
     this.drawTextRunsAt(runs, x, baseline);
     this.cursorY -= lineHeight;
@@ -2337,6 +2460,21 @@ class PdfBlockRenderer {
     let cursorX = x;
     const decorations: Array<{ run: PdfTextRun; x1: number; x2: number; baseline: number }> = [];
     const content = this.currentPage.content;
+
+    let backgroundX = x;
+    for (const run of runs) {
+      const backgroundPaddingX = run.style.backgroundPaddingX ?? 0;
+      if (run.style.background && run.s < run.e) {
+        this.fillRect(
+          backgroundX - backgroundPaddingX,
+          baseline - run.style.size * 0.24,
+          run.width + backgroundPaddingX * 2,
+          run.style.size * 1.22,
+          run.style.background,
+        );
+      }
+      backgroundX += run.width;
+    }
 
     for (const run of runs) {
       if (run.s >= run.e) continue;
@@ -2372,7 +2510,7 @@ class PdfBlockRenderer {
           decoration.baseline - decoration.run.style.size * 0.18,
           decoration.x2,
           decoration.baseline - decoration.run.style.size * 0.18,
-          COLORS.accent,
+          this.colors.accent,
           0.6,
         );
       }
@@ -2538,42 +2676,59 @@ class PdfBlockRenderer {
       drawHeight *= scale;
     }
 
+    const trailingGap = this.baseFontSize * 0.45;
     this.ensureSpace(drawHeight + this.baseFontSize * 0.6);
-    const x = this.margin + this.indent;
+    const x = this.contentLeft + this.indent;
     const y = this.cursorY - drawHeight;
+    this.decorateVerticalSlice(this.cursorY, y - trailingGap);
     this.currentPage.content.writeAscii(
       `q ${formatNumber(drawWidth)} 0 0 ${formatNumber(drawHeight)} ${formatNumber(x)} ${formatNumber(y)} cm /${image.name} Do Q\n`,
     );
-    this.cursorY -= drawHeight + this.baseFontSize * 0.45;
+    this.cursorY = y - trailingGap;
   }
 
   private createPage(): PdfPage {
     const page = { content: new PdfByteWriter() };
+    if (this.colors && !this.isWhite(this.colors.pageBackground)) {
+      page.content.writeAscii(
+        `q ${colorCommand(this.colors.pageBackground, 'rg')} 0 0 ${formatNumber(this.pageWidth)} ${formatNumber(this.pageHeight)} re f Q\n`,
+      );
+    }
     this.pages.push(page);
     this.cursorY = this.pageHeight - this.margin;
     return page;
   }
 
-  private ensureSpace(height: number): void {
-    if (this.cursorY - height >= this.margin) return;
+  private ensureSpace(height: number): boolean {
+    if (this.cursorY - height >= this.margin) return false;
     this.currentPage = this.createPage();
+    return true;
   }
 
   private addVerticalSpace(height: number): void {
     if (height <= 0) return;
-    this.ensureSpace(height);
+    if (this.cursorY - height < this.margin) {
+      this.cursorY = this.margin;
+      return;
+    }
+    this.decorateVerticalSlice(this.cursorY, this.cursorY - height);
     this.cursorY -= height;
   }
 
-  private createLine(lineHeight = this.baseFontSize * this.lineHeightMultiplier): PdfLineComposer {
-    const x = this.margin + this.indent;
+  private createLine(
+    lineHeight = this.baseFontSize * this.lineHeightMultiplier,
+    continuationIndent = 0,
+  ): PdfLineComposer {
+    const x = this.contentLeft + this.indent;
     const width = Math.max(80, this.contentWidth - this.indent);
-    return new PdfLineComposer(this, x, width, lineHeight);
+    return new PdfLineComposer(this, x, width, lineHeight, continuationIndent);
   }
 
   private ensureParagraph(): PdfLineComposer {
     if (!this.para) {
-      this.para = this.createLine(this.baseFontSize * this.lineHeightMultiplier);
+      const lineHeight = this.baseFontSize * this.lineHeightMultiplier;
+      this.ensureSpace(lineHeight * 2 + this.baseFontSize * 0.7);
+      this.para = this.createLine(lineHeight);
     }
     return this.para;
   }
@@ -2582,7 +2737,7 @@ class PdfBlockRenderer {
     if (!this.para) return;
     this.para.flush();
     this.para = null;
-    this.addVerticalSpace(this.baseFontSize * 0.45);
+    this.addVerticalSpace(this.baseFontSize * 0.72);
   }
 
   private style(patch: Partial<PdfTextStyle> = {}): PdfTextStyle {
@@ -2590,7 +2745,7 @@ class PdfBlockRenderer {
       {
         font: 'regular',
         size: this.baseFontSize,
-        color: this.infoStackDepth > 0 ? COLORS.quote : COLORS.text,
+        color: this.blockquoteStack.length > 0 ? this.colors.blockquoteText : this.colors.textSecondary,
         ...(this.emojiFont ? { fallbackFont: this.emojiFont } : {}),
       },
       patch,
@@ -2598,17 +2753,19 @@ class PdfBlockRenderer {
   }
 
   private headingSize(level: number): number {
-    const index = Math.max(0, Math.min(FONT_SIZE.heading.length - 1, level - 1));
-    return FONT_SIZE.heading[index];
+    const scale = [2.45, 1.72, 1.36, 1.18, 1.06, 1] as const;
+    const index = Math.max(0, Math.min(scale.length - 1, level - 1));
+    return this.baseFontSize * scale[index];
   }
 
   private drawRule(): void {
     const gap = this.baseFontSize * 0.8;
     this.ensureSpace(gap * 2);
     const y = this.cursorY - gap;
-    const x1 = this.margin + this.indent;
-    const x2 = this.pageWidth - this.margin;
-    this.drawLine(x1, y, x2, y, COLORS.rule, 1);
+    const x1 = this.contentLeft + this.indent;
+    const x2 = this.contentLeft + this.contentWidth;
+    this.decorateVerticalSlice(this.cursorY, this.cursorY - gap * 2);
+    this.drawLine(x1, y, x2, y, this.colors.border, 0.8);
     this.cursorY -= gap * 2;
   }
 
@@ -2631,8 +2788,96 @@ class PdfBlockRenderer {
     );
   }
 
+  private isWhite(color: PdfColor): boolean {
+    return color[0] >= 0.999 && color[1] >= 0.999 && color[2] >= 0.999;
+  }
+
+  private infoColors(kind: PdfInfoKind): { background: PdfColor; border: PdfColor } {
+    switch (kind) {
+      case 'warning':
+        return { background: this.colors.warningBackground, border: this.colors.warningBorder };
+      case 'error':
+        return { background: this.colors.errorBackground, border: this.colors.errorBorder };
+      case 'success':
+        return { background: this.colors.successBackground, border: this.colors.successBorder };
+      default:
+        return { background: this.colors.infoBackground, border: this.colors.infoBorder };
+    }
+  }
+
+  private decorateVerticalSlice(top: number, bottom: number): void {
+    const height = top - bottom;
+    if (height <= 0) return;
+
+    for (const frame of this.infoStack) {
+      const colors = this.infoColors(frame.kind);
+      this.fillRect(frame.x, bottom, frame.width, height, colors.background);
+      this.fillRect(frame.x, bottom, 3, height, colors.border);
+      this.drawLine(frame.x + frame.width, bottom, frame.x + frame.width, top, colors.border, 0.45);
+    }
+    for (const frame of this.blockquoteStack) {
+      this.fillRect(frame.x, bottom, 2.5, height, this.colors.blockquoteBorder);
+    }
+  }
+
+  private openBlockquote(): void {
+    this.closeParagraph();
+    this.addVerticalSpace(this.baseFontSize * 0.8);
+    this.blockquoteStack.push({
+      x: this.contentLeft + this.indent,
+      width: Math.max(80, this.contentWidth - this.indent),
+    });
+    this.indent += INDENT * 0.7;
+    this.addVerticalSpace(this.baseFontSize * 0.25);
+  }
+
+  private closeBlockquote(): void {
+    this.closeParagraph();
+    if (this.blockquoteStack.length === 0) return;
+    this.addVerticalSpace(this.baseFontSize * 0.2);
+    this.blockquoteStack.pop();
+    this.indent = Math.max(0, this.indent - INDENT * 0.7);
+    this.addVerticalSpace(this.baseFontSize * 0.75);
+  }
+
+  private openInfo(kind: PdfInfoKind): void {
+    this.closeParagraph();
+    this.addVerticalSpace(this.baseFontSize * 0.85);
+    const frame: PdfInfoFrame = {
+      kind,
+      x: this.contentLeft + this.indent,
+      width: Math.max(80, this.contentWidth - this.indent),
+    };
+    this.infoStack.push(frame);
+    const colors = this.infoColors(kind);
+    const topY = this.cursorY;
+    this.indent += INDENT * 0.72;
+    this.addVerticalSpace(this.baseFontSize * 0.72);
+    this.drawLine(frame.x, topY, frame.x + frame.width, topY, colors.border, 0.55);
+    this.renderInfoLabel(kind.toUpperCase(), colors.border);
+  }
+
+  private closeInfo(): void {
+    this.closeParagraph();
+    const frame = this.infoStack[this.infoStack.length - 1];
+    if (!frame) return;
+    this.addVerticalSpace(this.baseFontSize * 0.45);
+    const colors = this.infoColors(frame.kind);
+    this.drawLine(frame.x, this.cursorY, frame.x + frame.width, this.cursorY, colors.border, 0.55);
+    this.infoStack.pop();
+    this.indent = Math.max(0, this.indent - INDENT * 0.72);
+    this.addVerticalSpace(this.baseFontSize * 0.8);
+  }
+
+  private drawHeadingRule(): void {
+    const x1 = this.contentLeft + this.indent;
+    this.drawLine(x1, this.cursorY + 1, this.contentLeft + this.contentWidth, this.cursorY + 1, this.colors.border, 0.65);
+  }
+
   private codeColor(kind: HighlightTokenKind): PdfColor {
-    if (kind === 'text') return COLORS.text;
+    if (kind === 'text') return this.options.codeColors?.id ?? this.colors.text;
+    if (kind === 'id') return this.options.codeColors?.id ?? this.colors.text;
+    if (kind === 'com') return this.options.codeColors?.com ?? this.colors.textSecondary;
     return this.options.codeColors?.[kind] ?? CODE_COLORS[kind];
   }
 
@@ -2640,9 +2885,8 @@ class PdfBlockRenderer {
     markdown: Uint8Array,
     ev: { s: number; e: number; task?: boolean; checked?: boolean },
   ): void {
-    const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier);
     const top = this.listStack[this.listStack.length - 1];
-    let marker = '- ';
+    let marker = '• ';
     if (top?.kind === 'ol') {
       marker = `${top.counter}. `;
       top.counter += 1;
@@ -2650,7 +2894,11 @@ class PdfBlockRenderer {
     if (ev.task) {
       marker += ev.checked ? '[x] ' : '[ ] ';
     }
-    line.addGenerated(marker, this.style({ font: 'bold', color: COLORS.muted }));
+    const markerStyle = this.style({ font: 'bold', color: this.colors.accent });
+    const markerBytes = TE.encode(marker);
+    const markerWidth = measureTextSpan(markerBytes, 0, markerBytes.length, markerStyle);
+    const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier, markerWidth);
+    line.addGenerated(marker, markerStyle);
     renderInlineRange(
       markdown,
       ev.s,
@@ -2663,6 +2911,7 @@ class PdfBlockRenderer {
       (token, targetLine, style) => this.renderInlineImageSync(markdown, token, targetLine, style),
     );
     line.flush();
+    this.addVerticalSpace(this.baseFontSize * 0.18);
   }
 
   private async renderListItemAsync(
@@ -2670,9 +2919,8 @@ class PdfBlockRenderer {
     ev: { s: number; e: number; task?: boolean; checked?: boolean },
     imageRenderer: PdfInlineImageRendererAsync,
   ): Promise<void> {
-    const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier);
     const top = this.listStack[this.listStack.length - 1];
-    let marker = '- ';
+    let marker = '• ';
     if (top?.kind === 'ol') {
       marker = `${top.counter}. `;
       top.counter += 1;
@@ -2680,7 +2928,11 @@ class PdfBlockRenderer {
     if (ev.task) {
       marker += ev.checked ? '[x] ' : '[ ] ';
     }
-    line.addGenerated(marker, this.style({ font: 'bold', color: COLORS.muted }));
+    const markerStyle = this.style({ font: 'bold', color: this.colors.accent });
+    const markerBytes = TE.encode(marker);
+    const markerWidth = measureTextSpan(markerBytes, 0, markerBytes.length, markerStyle);
+    const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier, markerWidth);
+    line.addGenerated(marker, markerStyle);
     await renderInlineRangeAsync(
       markdown,
       ev.s,
@@ -2693,84 +2945,150 @@ class PdfBlockRenderer {
       imageRenderer,
     );
     line.flush();
+    this.addVerticalSpace(this.baseFontSize * 0.18);
   }
 
   private renderRawLine(markdown: Uint8Array, s: number, e: number): void {
     const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier);
-    line.addTextSpan(markdown, s, e, this.style({ color: COLORS.muted }));
+    line.addTextSpan(markdown, s, e, this.style({ color: this.colors.textSecondary }));
     line.flush();
   }
 
-  private drawCodeLineBackground(lineHeight: number, width: number): void {
-    this.ensureSpace(lineHeight);
-    const y = this.cursorY - lineHeight + 2;
-    this.fillRect(
-      this.margin + this.indent - 4,
-      y,
-      width + 8,
-      lineHeight,
-      COLORS.codeBg,
-    );
+  private openCodeBlock(lang: string | undefined): void {
+    this.closeParagraph();
+    this.addVerticalSpace(this.baseFontSize * 0.85);
+    this.inCode = true;
+    this.codeLang = lang;
+    this.codeBuffer = [];
   }
 
-  private codeRunsForLine(lineBytes: Uint8Array, codeStyle: PdfTextStyle): PdfTextRun[] {
+  private codeRunsForBlockLine(
+    bytes: Uint8Array,
+    line: Readonly<{ s: number; e: number }>,
+    tokens: readonly HighlightTokenSpan[] | null,
+    startTokenIndex: number,
+    codeStyle: PdfTextStyle,
+  ): { runs: PdfTextRun[]; tokenIndex: number } {
     const runs: PdfTextRun[] = [];
-    const tokens = tokenizeCodeBlock(lineBytes, this.codeLang);
     if (!tokens) {
-      pushTextRun(runs, lineBytes, 0, lineBytes.length, codeStyle);
-      return runs;
+      pushTextRun(runs, bytes, line.s, line.e, codeStyle);
+      return { runs, tokenIndex: startTokenIndex };
     }
 
-    let cursor = 0;
+    let tokenIndex = startTokenIndex;
+    while (tokenIndex < tokens.length && tokens[tokenIndex].e <= line.s) tokenIndex++;
+    let cursor = line.s;
     let pendingWhitespaceStart = -1;
-    for (const token of tokens) {
-      if (token.s > cursor) {
-        if (isWhitespaceSpan(lineBytes, cursor, token.s)) {
+    let index = tokenIndex;
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (token.s >= line.e) break;
+      const tokenStart = Math.max(line.s, token.s);
+      const tokenEnd = Math.min(line.e, token.e);
+
+      if (tokenStart > cursor) {
+        if (isWhitespaceSpan(bytes, cursor, tokenStart)) {
           if (pendingWhitespaceStart < 0) pendingWhitespaceStart = cursor;
         } else {
           const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : cursor;
-          pushTextRun(runs, lineBytes, runStart, token.s, codeStyle);
+          pushTextRun(runs, bytes, runStart, tokenStart, codeStyle);
           pendingWhitespaceStart = -1;
         }
       }
 
-      if (isWhitespaceSpan(lineBytes, token.s, token.e)) {
-        if (pendingWhitespaceStart < 0) pendingWhitespaceStart = token.s;
+      if (isWhitespaceSpan(bytes, tokenStart, tokenEnd)) {
+        if (pendingWhitespaceStart < 0) pendingWhitespaceStart = tokenStart;
       } else {
         const tokenStyle = mergeStyle(codeStyle, { color: this.codeColor(token.kind) });
-        const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : token.s;
-        pushTextRun(runs, lineBytes, runStart, token.e, tokenStyle);
+        const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : tokenStart;
+        pushTextRun(runs, bytes, runStart, tokenEnd, tokenStyle);
         pendingWhitespaceStart = -1;
       }
-      cursor = Math.max(cursor, token.e);
+      cursor = Math.max(cursor, tokenEnd);
+      if (token.e <= line.e) index++;
+      else break;
     }
 
-    if (cursor < lineBytes.length) {
+    if (cursor < line.e) {
       const runStart = pendingWhitespaceStart >= 0 ? pendingWhitespaceStart : cursor;
-      pushTextRun(runs, lineBytes, runStart, lineBytes.length, codeStyle);
+      pushTextRun(runs, bytes, runStart, line.e, codeStyle);
     } else if (pendingWhitespaceStart >= 0) {
-      pushTextRun(runs, lineBytes, pendingWhitespaceStart, lineBytes.length, codeStyle);
+      pushTextRun(runs, bytes, pendingWhitespaceStart, line.e, codeStyle);
     }
-    return runs;
+    return { runs, tokenIndex: index };
   }
 
-  private renderCodeLine(markdown: Uint8Array, s: number, e: number): void {
-    const lineHeight = this.baseFontSize * 1.35;
-    const x = this.margin + this.indent;
-    const width = Math.max(80, this.contentWidth - this.indent);
-    if (s >= e || isWhitespaceSpan(markdown, s, e)) {
-      this.drawCodeLineBackground(lineHeight, width);
-      this.cursorY -= lineHeight;
-      return;
+  private closeCodeBlock(markdown: Uint8Array): void {
+    const block = bufferCodeBlock(markdown, this.codeBuffer ?? []);
+    const tokens = tokenizeCodeBlock(block.bytes, this.codeLang);
+    const codeStyle = this.style({
+      font: 'mono',
+      size: Math.max(8, this.baseFontSize * 0.88),
+      color: this.options.codeColors?.id ?? this.colors.text,
+    });
+    const blockX = this.contentLeft + this.indent;
+    const blockWidth = Math.max(80, this.contentWidth - this.indent);
+    const paddingX = Math.max(9, this.baseFontSize * 0.95);
+    const paddingY = Math.max(7, this.baseFontSize * 0.72);
+    const lineHeight = codeStyle.size * 1.55;
+    const innerWidth = Math.max(24, blockWidth - paddingX * 2);
+    const rows: PdfTextRun[][] = [];
+    let tokenIndex = 0;
+
+    const logicalLines = block.lines.length > 0 ? block.lines : [{ s: 0, e: 0 }];
+    for (const line of logicalLines) {
+      if (line.s >= line.e || isWhitespaceSpan(block.bytes, line.s, line.e)) {
+        rows.push([]);
+        if (tokens) {
+          while (tokenIndex < tokens.length && tokens[tokenIndex].e <= line.e) tokenIndex++;
+        }
+        continue;
+      }
+      const result = this.codeRunsForBlockLine(block.bytes, line, tokens, tokenIndex, codeStyle);
+      tokenIndex = result.tokenIndex;
+      const wrapped = wrapCodeRuns(result.runs, innerWidth);
+      if (wrapped.length === 0) rows.push([]);
+      else rows.push(...wrapped);
     }
 
-    const codeStyle = this.style({ font: 'mono', size: this.baseFontSize * 0.9 });
-    const lineBytes = markdown.subarray(s, e);
-    const rows = wrapCodeRuns(this.codeRunsForLine(lineBytes, codeStyle), width);
-    for (const row of rows) {
-      this.drawCodeLineBackground(lineHeight, width);
-      this.drawTextLine(row, x, lineHeight);
+    const usableHeight = this.pageHeight - this.margin * 2;
+    const totalHeight = rows.length * lineHeight + paddingY * 2;
+    if (totalHeight <= usableHeight) this.ensureSpace(totalHeight);
+
+    let rowIndex = 0;
+    while (rowIndex < rows.length) {
+      const available = this.cursorY - this.margin;
+      let rowsOnPage = Math.floor((available - paddingY * 2) / lineHeight);
+      if (rowsOnPage < 1) {
+        this.currentPage = this.createPage();
+        continue;
+      }
+      rowsOnPage = Math.min(rowsOnPage, rows.length - rowIndex);
+      const segmentHeight = rowsOnPage * lineHeight + paddingY * 2;
+      const topY = this.cursorY;
+      const bottomY = topY - segmentHeight;
+      this.decorateVerticalSlice(topY, bottomY);
+      this.fillRect(blockX, bottomY, blockWidth, segmentHeight, this.colors.codeBackground);
+      this.drawLine(blockX, topY, blockX + blockWidth, topY, this.colors.codeBorder, 0.65);
+      this.drawLine(blockX, bottomY, blockX + blockWidth, bottomY, this.colors.codeBorder, 0.65);
+      this.drawLine(blockX, bottomY, blockX, topY, this.colors.codeBorder, 0.65);
+      this.drawLine(blockX + blockWidth, bottomY, blockX + blockWidth, topY, this.colors.codeBorder, 0.65);
+
+      for (let offset = 0; offset < rowsOnPage; offset++) {
+        const row = rows[rowIndex + offset];
+        if (row.length === 0) continue;
+        const baseline = topY - paddingY - offset * lineHeight - codeStyle.size;
+        this.drawTextRunsAt(row, blockX + paddingX, baseline);
+      }
+      this.cursorY = bottomY;
+      rowIndex += rowsOnPage;
+      if (rowIndex < rows.length) this.currentPage = this.createPage();
     }
+
+    this.inCode = false;
+    this.codeLang = undefined;
+    this.codeBuffer = null;
+    this.addVerticalSpace(this.baseFontSize * 0.85);
   }
 
   private beginTable(): void {
@@ -2817,7 +3135,7 @@ class PdfBlockRenderer {
 
   private renderTable(markdown: Uint8Array, table: PdfTableBuffer): void {
     const columnCount = Math.max(1, ...table.rows.map((row) => row.cells.length));
-    const tableX = this.margin + this.indent;
+    const tableX = this.contentLeft + this.indent;
     const tableWidth = Math.max(80, this.contentWidth - this.indent);
     const paddingX = Math.max(4, this.baseFontSize * 0.45);
     const paddingY = Math.max(3, this.baseFontSize * 0.3);
@@ -2835,6 +3153,7 @@ class PdfBlockRenderer {
         const style = this.style({
           font: row.header ? 'bold' : 'regular',
           size: this.baseFontSize * 0.88,
+          color: row.header ? this.colors.text : this.colors.textSecondary,
         });
         const runs = this.tableCellRuns(markdown, cell.s, cell.e, style);
         desiredWidths[index] = Math.max(desiredWidths[index], measureRuns(runs) + paddingX * 2);
@@ -2863,9 +3182,27 @@ class PdfBlockRenderer {
       };
     });
 
+    const headerRow = renderRows[0]?.header ? renderRows[0] : undefined;
+    if (headerRow && renderRows[1]) {
+      this.ensureSpace(headerRow.height + renderRows[1].height);
+    }
     for (let rowIndex = 0; rowIndex < renderRows.length; rowIndex++) {
+      const row = renderRows[rowIndex];
+      const createdPage = this.ensureSpace(row.height);
+      if (createdPage && headerRow && !row.header) {
+        this.renderTableRow(
+          headerRow,
+          0,
+          tableX,
+          tableWidth,
+          columnWidths,
+          paddingX,
+          paddingY,
+          lineHeight,
+        );
+      }
       this.renderTableRow(
-        renderRows[rowIndex],
+        row,
         rowIndex,
         tableX,
         tableWidth,
@@ -2908,11 +3245,12 @@ class PdfBlockRenderer {
     const topY = this.cursorY;
     const bottomY = topY - row.height;
     const background = row.header
-      ? COLORS.tableHeaderBg
+      ? this.colors.tableHeaderBackground
       : rowIndex % 2 === 0
         ? null
-        : COLORS.tableStripeBg;
+        : this.colors.tableStripeBackground;
 
+    this.decorateVerticalSlice(topY, bottomY);
     if (background) {
       this.fillRect(tableX, bottomY, tableWidth, row.height, background);
     }
@@ -2941,7 +3279,7 @@ class PdfBlockRenderer {
       cellX += cellWidth;
     }
 
-    this.drawTableGrid(tableX, topY, bottomY, tableWidth, columnWidths);
+    this.drawTableGrid(tableX, topY, bottomY, tableWidth);
     this.cursorY -= row.height;
   }
 
@@ -2950,26 +3288,22 @@ class PdfBlockRenderer {
     topY: number,
     bottomY: number,
     tableWidth: number,
-    columnWidths: readonly number[],
   ): void {
-    this.drawLine(tableX, topY, tableX + tableWidth, topY, COLORS.rule, 0.6);
-    this.drawLine(tableX, bottomY, tableX + tableWidth, bottomY, COLORS.rule, 0.6);
-    let x = tableX;
-    this.drawLine(x, bottomY, x, topY, COLORS.rule, 0.6);
-    for (const width of columnWidths) {
-      x += width;
-      this.drawLine(x, bottomY, x, topY, COLORS.rule, 0.6);
-    }
+    this.drawLine(tableX, topY, tableX + tableWidth, topY, this.colors.border, 0.6);
+    this.drawLine(tableX, bottomY, tableX + tableWidth, bottomY, this.colors.border, 0.6);
+    this.drawLine(tableX, bottomY, tableX, topY, this.colors.border, 0.6);
+    this.drawLine(tableX + tableWidth, bottomY, tableX + tableWidth, topY, this.colors.border, 0.6);
   }
 
-  private renderInfoLabel(label: string): void {
-    const line = this.createLine(this.baseFontSize * this.lineHeightMultiplier);
-    line.addGenerated(`${label}:`, this.style({ font: 'bold', color: COLORS.quote }));
+  private renderInfoLabel(label: string, color: PdfColor): void {
+    const size = this.baseFontSize * 0.78;
+    const line = this.createLine(this.baseFontSize * 1.18);
+    line.addGenerated(label, this.style({ font: 'bold', size, color }));
     line.flush();
   }
 
   private renderFootnote(markdown: Uint8Array, idS: number, idE: number, contentS: number, contentE: number): void {
-    const style = this.style({ size: this.baseFontSize * 0.85, color: COLORS.muted });
+    const style = this.style({ size: this.baseFontSize * 0.85, color: this.colors.textSecondary });
     const line = this.createLine(this.baseFontSize * 1.2);
     line.addGenerated('[', style);
     line.addTextSpan(markdown, idS, idE, style);
@@ -2996,7 +3330,7 @@ class PdfBlockRenderer {
     contentE: number,
     imageRenderer: PdfInlineImageRendererAsync,
   ): Promise<void> {
-    const style = this.style({ size: this.baseFontSize * 0.85, color: COLORS.muted });
+    const style = this.style({ size: this.baseFontSize * 0.85, color: this.colors.textSecondary });
     const line = this.createLine(this.baseFontSize * 1.2);
     line.addGenerated('[', style);
     line.addTextSpan(markdown, idS, idE, style);
@@ -3074,7 +3408,9 @@ function renderInlineRange(
         line.addTextSpan(markdown, tok.s, tok.e, mergeStyle(currentStyle, {
           font: 'mono',
           size: Math.max(8, currentStyle.size * 0.9),
-          color: COLORS.quote,
+          color: documentColor(options, 'inlineCodeText'),
+          background: documentColor(options, 'inlineCodeBackground'),
+          backgroundPaddingX: Math.max(1.5, currentStyle.size * 0.22),
         }), true);
         break;
 
@@ -3083,15 +3419,15 @@ function renderInlineRange(
         if (imageRenderer?.(tok, line, currentStyle)) {
           break;
         }
-        line.addGenerated('[image', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        line.addGenerated('[image', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
         if (tok.altE > tok.altS) {
-          line.addGenerated(': ', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+          line.addGenerated(': ', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
           line.addTextSpan(markdown, tok.altS, tok.altE, mergeStyle(currentStyle, {
             font: 'italic',
-            color: COLORS.muted,
+            color: documentColor(options, 'textSecondary'),
           }));
         }
-        line.addGenerated(']', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        line.addGenerated(']', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
         break;
 
       case 'link': {
@@ -3099,7 +3435,7 @@ function renderInlineRange(
         const href = TD.decode(markdown.subarray(tok.hrefS, tok.hrefE));
         const resolvedHref = resolveUrlRelativeToBase(href, baseUrl);
         const linkStyle = urlAllowlist(resolvedHref)
-          ? mergeStyle(currentStyle, { color: COLORS.accent, underline: true })
+          ? mergeStyle(currentStyle, { color: documentColor(options, 'accent'), underline: true })
           : currentStyle;
         if (depth < 8) {
           renderInlineRange(markdown, tok.textS, tok.textE, line, linkStyle, options, urlAllowlist, baseUrl, imageRenderer, depth + 1);
@@ -3112,19 +3448,19 @@ function renderInlineRange(
       case 'autolink':
         flushText();
         line.addTextSpan(markdown, tok.s, tok.e, mergeStyle(currentStyle, {
-          color: COLORS.accent,
+          color: documentColor(options, 'accent'),
           underline: true,
         }));
         break;
 
       case 'footnoteRef':
         flushText();
-        line.addGenerated('[', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        line.addGenerated('[', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: documentColor(options, 'accent') }));
         line.addTextSpan(markdown, tok.idS, tok.idE, mergeStyle(currentStyle, {
           size: currentStyle.size * 0.75,
-          color: COLORS.accent,
+          color: documentColor(options, 'accent'),
         }));
-        line.addGenerated(']', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        line.addGenerated(']', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: documentColor(options, 'accent') }));
         break;
 
       case 'rawHtml':
@@ -3218,7 +3554,9 @@ async function renderInlineRangeAsync(
         line.addTextSpan(markdown, tok.s, tok.e, mergeStyle(currentStyle, {
           font: 'mono',
           size: Math.max(8, currentStyle.size * 0.9),
-          color: COLORS.quote,
+          color: documentColor(options, 'inlineCodeText'),
+          background: documentColor(options, 'inlineCodeBackground'),
+          backgroundPaddingX: Math.max(1.5, currentStyle.size * 0.22),
         }), true);
         break;
 
@@ -3227,15 +3565,15 @@ async function renderInlineRangeAsync(
         if (await imageRenderer?.(tok, line, currentStyle)) {
           break;
         }
-        line.addGenerated('[image', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        line.addGenerated('[image', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
         if (tok.altE > tok.altS) {
-          line.addGenerated(': ', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+          line.addGenerated(': ', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
           line.addTextSpan(markdown, tok.altS, tok.altE, mergeStyle(currentStyle, {
             font: 'italic',
-            color: COLORS.muted,
+            color: documentColor(options, 'textSecondary'),
           }));
         }
-        line.addGenerated(']', mergeStyle(currentStyle, { font: 'italic', color: COLORS.muted }));
+        line.addGenerated(']', mergeStyle(currentStyle, { font: 'italic', color: documentColor(options, 'textSecondary') }));
         break;
 
       case 'link': {
@@ -3243,7 +3581,7 @@ async function renderInlineRangeAsync(
         const href = TD.decode(markdown.subarray(tok.hrefS, tok.hrefE));
         const resolvedHref = resolveUrlRelativeToBase(href, baseUrl);
         const linkStyle = urlAllowlist(resolvedHref)
-          ? mergeStyle(currentStyle, { color: COLORS.accent, underline: true })
+          ? mergeStyle(currentStyle, { color: documentColor(options, 'accent'), underline: true })
           : currentStyle;
         if (depth < 8) {
           await renderInlineRangeAsync(markdown, tok.textS, tok.textE, line, linkStyle, options, urlAllowlist, baseUrl, imageRenderer, depth + 1);
@@ -3256,19 +3594,19 @@ async function renderInlineRangeAsync(
       case 'autolink':
         flushText();
         line.addTextSpan(markdown, tok.s, tok.e, mergeStyle(currentStyle, {
-          color: COLORS.accent,
+          color: documentColor(options, 'accent'),
           underline: true,
         }));
         break;
 
       case 'footnoteRef':
         flushText();
-        line.addGenerated('[', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        line.addGenerated('[', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: documentColor(options, 'accent') }));
         line.addTextSpan(markdown, tok.idS, tok.idE, mergeStyle(currentStyle, {
           size: currentStyle.size * 0.75,
-          color: COLORS.accent,
+          color: documentColor(options, 'accent'),
         }));
-        line.addGenerated(']', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: COLORS.accent }));
+        line.addGenerated(']', mergeStyle(currentStyle, { size: currentStyle.size * 0.75, color: documentColor(options, 'accent') }));
         break;
 
       case 'rawHtml':

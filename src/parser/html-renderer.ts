@@ -8,6 +8,7 @@ import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import type { ListStackItem } from './types';
 import { highlightCodeBlock } from '../highlight';
+import { bufferCodeBlock } from './code-block-buffer';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
 
@@ -543,23 +544,7 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
       writeSourceAnchorAtLine(Math.max(1, sourceLines[0] - 1));
     }
 
-    let totalLen = 0;
-    for (const span of codeBuffer) {
-      totalLen += span.e - span.s;
-      totalLen += 1;
-    }
-
-    const codeBytes = totalLen > 0 ? new Uint8Array(totalLen) : new Uint8Array(0);
-
-    if (totalLen > 0) {
-      let offset = 0;
-      for (const span of codeBuffer) {
-        const slice = u8.subarray(span.s, span.e);
-        codeBytes.set(slice, offset);
-        offset += slice.length;
-        codeBytes[offset++] = 0x0a;
-      }
-    }
+    const { bytes: codeBytes } = bufferCodeBlock(u8, codeBuffer);
     const highlighted = await highlightCodeBlock(codeBytes, codeLang);
     writeHighlightedCode(highlighted, sourceLines);
 

@@ -360,7 +360,7 @@ ${sourceLine}
   assert.equal(extractTextRuns(pdf).filter((run) => run.value === " ").length, 0);
 });
 
-test("colors empty and whitespace-only PDF code block rows", () => {
+test("draws one code container across empty and whitespace-only rows", () => {
   const pdf = renderPDFFromBlocks(
     u8(`\`\`\`js
 const first = 1;
@@ -375,10 +375,34 @@ const second = 2;
     },
   );
   const text = decodePdf(pdf);
-  const codeBackgrounds = text.match(/q 0\.94 0\.95 0\.97 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/g) ?? [];
+  const codeBackgrounds = text.match(/q 0\.96 0\.969 0\.98 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/g) ?? [];
 
-  assert.equal(codeBackgrounds.length, 4);
+  assert.equal(codeBackgrounds.length, 1);
   assert.doesNotMatch(text, /<202020> Tj/);
+});
+
+test("keeps multiline syntax state across PDF code rows", () => {
+  const pdf = renderPDFFromBlocks(
+    u8(`\`\`\`eon
+message: """
+middle line stays highlighted
+closing line
+"""
+enabled: true
+\`\`\``),
+    {
+      codeColors: {
+        str: [0, 0.5, 0],
+      },
+    },
+  );
+  const greenText = extractColoredTextRuns(pdf)
+    .filter((run) => run.color[0] === 0 && run.color[1] === 0.5 && run.color[2] === 0)
+    .map((run) => run.value)
+    .join("");
+
+  assert.ok(greenText.includes("middle line stays highlighted"));
+  assert.ok(greenText.includes("closing line"));
 });
 
 test("renders markdown tables as bordered PDF tables", () => {
@@ -403,9 +427,43 @@ test("renders markdown tables as bordered PDF tables", () => {
   assert.ok(extracted.includes("42"));
   assert.ok(extracted.includes("Bob"));
   assert.doesNotMatch(text, /<207C20> Tj/);
-  assert.match(text, /q 0\.9 0\.93 0\.97 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/);
-  assert.match(text, /0\.72 0\.75 0\.8 RG 0\.6 w [\d.]+ [\d.]+ m [\d.]+ [\d.]+ l S Q/);
+  assert.match(text, /q 0\.94 0\.955 0\.975 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/);
+  assert.match(text, /0\.86 0\.88 0\.91 RG 0\.6 w [\d.]+ [\d.]+ m [\d.]+ [\d.]+ l S Q/);
   assert.ok(runX(runs, "7") > runX(runs, "42"));
+});
+
+test("applies document colors and vector callout surfaces", () => {
+  const pdf = renderPDFFromBlocks(u8(`::: warning
+Styled warning text.
+:::`), {
+    documentStyle: {
+      pageBackground: [0.1, 0.1, 0.12],
+      textSecondary: [0.8, 0.82, 0.86],
+      warningBackground: [0.2, 0.18, 0.1],
+      warningBorder: [1, 0.7, 0.1],
+    },
+  });
+  const text = decodePdf(pdf);
+
+  assert.match(text, /q 0\.1 0\.1 0\.12 rg 0 0 [\d.]+ [\d.]+ re f Q/);
+  assert.match(text, /q 0\.2 0\.18 0\.1 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f Q/);
+  assert.match(text, /q 1 0\.7 0\.1 rg [\d.]+ [\d.]+ 3 [\d.]+ re f Q/);
+  assert.ok(extractPdfText(pdf).includes("Styled warning text."));
+});
+
+test("repeats a table header when rows continue on a new page", () => {
+  const rows = Array.from({ length: 18 }, (_, index) => `| Row ${index + 1} | ${index + 1} |`).join("\n");
+  const pdf = renderPDFFromBlocks(u8(`| Name | Value |
+|:-----|------:|
+${rows}`), {
+    pageSize: { width: 360, height: 220 },
+    margin: 24,
+    fontSize: 11,
+  });
+  const nameRuns = extractTextRuns(pdf).filter((run) => run.value === "Name");
+
+  assert.ok(nameRuns.length > 1);
+  assert.match(decodePdf(pdf), /\/Count [2-9]/);
 });
 
 test("embeds JPEG images as DCT XObjects", async () => {

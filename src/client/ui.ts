@@ -2,6 +2,7 @@ import type { ThemeEditorHandle } from "../theme/theme-editor";
 import type {
   PdfCodeColorKey,
   PdfCodeColorOptions,
+  PdfDocumentStyleOptions,
   PdfResolvedImage,
   PdfRGB,
 } from "../parser";
@@ -42,6 +43,32 @@ const PDF_CODE_COLOR_VARS: ReadonlyArray<readonly [PdfCodeColorKey, string]> = [
   ["op", "--code-op"],
   ["punc", "--code-punc"],
   ["rx", "--code-rx"],
+];
+const PDF_DOCUMENT_COLOR_VARS: ReadonlyArray<
+  readonly [keyof PdfDocumentStyleOptions, string]
+> = [
+  ["pageBackground", "--bg-glass-strong"],
+  ["text", "--text-primary"],
+  ["textSecondary", "--text-secondary"],
+  ["accent", "--accent"],
+  ["border", "--border-glass"],
+  ["surface", "--bg-panel"],
+  ["codeBackground", "--bg-panel"],
+  ["codeBorder", "--border-glass"],
+  ["inlineCodeBackground", "--bg-panel"],
+  ["inlineCodeText", "--accent"],
+  ["tableHeaderBackground", "--bg-panel"],
+  ["tableStripeBackground", "--bg-glass"],
+  ["blockquoteBorder", "--blockquote-border"],
+  ["blockquoteText", "--blockquote-text"],
+  ["infoBorder", "--info-border"],
+  ["infoBackground", "--info-bg"],
+  ["warningBorder", "--warning-border"],
+  ["warningBackground", "--warning-bg"],
+  ["errorBorder", "--error-border"],
+  ["errorBackground", "--error-bg"],
+  ["successBorder", "--success-border"],
+  ["successBackground", "--success-bg"],
 ];
 const MENU_ICON_PATH =
   "M12 4a1 1 0 0 1 1 1v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5a1 1 0 0 1 1-1Z";
@@ -99,7 +126,31 @@ function parseCssNumberChannel(value: string): number | null {
   return Number.isFinite(channel) ? clampPdfColorChannel(channel / 255) : null;
 }
 
-export function parseCssColorToPdfRGB(value: string): PdfRGB | null {
+function compositePdfColor(foreground: PdfRGB, alpha: number, background: PdfRGB): PdfRGB {
+  const opacity = clampPdfColorChannel(alpha);
+  return [
+    foreground[0] * opacity + background[0] * (1 - opacity),
+    foreground[1] * opacity + background[1] * (1 - opacity),
+    foreground[2] * opacity + background[2] * (1 - opacity),
+  ];
+}
+
+function parseCssAlpha(value: string | undefined): number | null {
+  if (value === undefined) return 1;
+  const trimmed = value.trim();
+  if (!trimmed) return 1;
+  if (trimmed.endsWith("%")) {
+    const percent = Number.parseFloat(trimmed.slice(0, -1));
+    return Number.isFinite(percent) ? clampPdfColorChannel(percent / 100) : null;
+  }
+  const alpha = Number.parseFloat(trimmed);
+  return Number.isFinite(alpha) ? clampPdfColorChannel(alpha) : null;
+}
+
+export function parseCssColorToPdfRGB(
+  value: string,
+  background: PdfRGB = [1, 1, 1],
+): PdfRGB | null {
   const color = value.trim().toLowerCase();
   if (!color || color === "transparent" || color === "currentcolor") {
     return null;
@@ -125,18 +176,49 @@ export function parseCssColorToPdfRGB(value: string): PdfRGB | null {
     ];
   }
 
+  const alphaHex = /^#([0-9a-f]{4}|[0-9a-f]{8})$/i.exec(color);
+  if (alphaHex) {
+    const hex = alphaHex[1].length === 4
+      ? Array.from(alphaHex[1], (digit) => digit + digit).join("")
+      : alphaHex[1];
+    const foreground: PdfRGB = [
+      Number.parseInt(hex.slice(0, 2), 16) / 255,
+      Number.parseInt(hex.slice(2, 4), 16) / 255,
+      Number.parseInt(hex.slice(4, 6), 16) / 255,
+    ];
+    return compositePdfColor(foreground, Number.parseInt(hex.slice(6, 8), 16) / 255, background);
+  }
+
   const functional = /^(?:rgb|rgba)\((.*)\)$/i.exec(color);
   if (functional) {
-    const channels = functional[1].trim().split(/\s*,\s*|\s+/).filter((part) => part !== "/" && part.length > 0);
+    const channels = functional[1]
+      .trim()
+      .replace(/\s*\/\s*/g, " ")
+      .split(/\s*,\s*|\s+/)
+      .filter((part) => part.length > 0);
     if (channels.length < 3) return null;
     const red = parseCssNumberChannel(channels[0]);
     const green = parseCssNumberChannel(channels[1]);
     const blue = parseCssNumberChannel(channels[2]);
-    if (red === null || green === null || blue === null) return null;
-    return [red, green, blue];
+    const alpha = parseCssAlpha(channels[3]);
+    if (red === null || green === null || blue === null || alpha === null) return null;
+    return compositePdfColor([red, green, blue], alpha, background);
   }
 
   return null;
+}
+
+export function resolvePdfDocumentStyleFromStyle(
+  style: Pick<CSSStyleDeclaration, "getPropertyValue">,
+): PdfDocumentStyleOptions {
+  const pageBackground = parseCssColorToPdfRGB(style.getPropertyValue("--bg-glass-strong")) ?? [1, 1, 1];
+  const documentStyle: PdfDocumentStyleOptions = { pageBackground };
+  for (const [key, varName] of PDF_DOCUMENT_COLOR_VARS) {
+    if (key === "pageBackground") continue;
+    const parsed = parseCssColorToPdfRGB(style.getPropertyValue(varName), pageBackground);
+    if (parsed) documentStyle[key] = parsed;
+  }
+  return documentStyle;
 }
 
 export function resolvePdfCodeColorsFromStyle(style: Pick<CSSStyleDeclaration, "getPropertyValue">): PdfCodeColorOptions {
@@ -158,6 +240,35 @@ function resolvePdfCodeColors(): PdfCodeColorOptions | undefined {
     window.getComputedStyle(document.documentElement),
   );
   return Object.keys(colors).length > 0 ? colors : undefined;
+}
+
+function resolvePdfDocumentStyle(): PdfDocumentStyleOptions | undefined {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return undefined;
+  }
+  return resolvePdfDocumentStyleFromStyle(
+    window.getComputedStyle(document.documentElement),
+  );
+}
+
+function resolvePdfTypography(): { fontSize?: number; lineHeight?: number } {
+  if (typeof window === "undefined" || typeof document === "undefined") return {};
+  const target = typeof document.querySelector === "function"
+    ? document.querySelector<HTMLElement>(".markdown-viewer") ?? document.documentElement
+    : document.documentElement;
+  const style = window.getComputedStyle(target);
+  const fontSizePx = Number.parseFloat(style.fontSize);
+  const lineHeightPx = Number.parseFloat(style.lineHeight);
+  const fontSize = Number.isFinite(fontSizePx)
+    ? Math.max(8, Math.min(14, fontSizePx * 0.75))
+    : undefined;
+  const lineHeight = Number.isFinite(lineHeightPx) && Number.isFinite(fontSizePx) && fontSizePx > 0
+    ? Math.max(1.2, Math.min(2.1, lineHeightPx / fontSizePx))
+    : undefined;
+  return {
+    ...(fontSize !== undefined ? { fontSize } : {}),
+    ...(lineHeight !== undefined ? { lineHeight } : {}),
+  };
 }
 
 function readInlineRootDeclarations(): string[] {
@@ -492,11 +603,16 @@ export async function buildPdfExportBlob(source: PdfExportSource): Promise<Blob>
     typeof source.markdown === "string" ? u8(source.markdown) : source.markdown;
   const parser = new MDParser();
   const codeColors = resolvePdfCodeColors();
+  const documentStyle = resolvePdfDocumentStyle();
+  const typography = resolvePdfTypography();
   const emojiFont = await loadPdfEmojiFont();
   const pdf = await parser.renderToPDF(markdown, {
     ...(source.baseUrl !== undefined ? { baseUrl: source.baseUrl } : {}),
     ...(source.allowRawHtml ? { allowRawHtml: true } : {}),
     ...(codeColors ? { codeColors } : {}),
+    ...(documentStyle ? { documentStyle } : {}),
+    ...typography,
+    maxContentWidth: 468,
     ...(emojiFont ? { emojiFont } : {}),
     imageResolver: fetchPdfImage,
   });

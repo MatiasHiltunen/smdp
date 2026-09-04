@@ -6,10 +6,14 @@ import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import { COLOR, FONT_SIZE, INDENT, LINE_HEIGHT_MULTIPLIER, MARGIN, TD, INFO_COLORS } from './constants';
 import type { CanvasListItem, DrawResult, TextSpan, TextStyle } from './types';
-import { getLanguageSpec } from '../highlight';
-import { TokenType, GenericTokenizer } from '../highlight/language-core';
+import {
+  tokenizeCodeBlock,
+  type HighlightTokenKind,
+  type HighlightTokenSpan,
+} from '../highlight';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
+import { bufferCodeBlock, type BufferedCodeBlock } from './code-block-buffer';
 
 // Font stacks with comprehensive Unicode support
 const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
@@ -589,20 +593,19 @@ function getThemeColors(): CanvasThemeColors {
 /**
  * Get token colors for syntax highlighting (theme-aware)
  */
-function getTokenColors() {
+function getTokenColors(): Record<HighlightTokenKind, string> {
   const colors = getThemeColors();
   return {
-    [TokenType.Keyword]: colors.codeKw,
-    [TokenType.Identifier]: colors.codeId,
-    [TokenType.LiteralNum]: colors.codeNum,
-    [TokenType.LiteralStr]: colors.codeStr,
-    [TokenType.LiteralTpl]: colors.codeTpl,
-    [TokenType.Comment]: colors.codeCom,
-    [TokenType.Regex]: colors.codeRx,
-    [TokenType.Operator]: colors.codeOp,
-    [TokenType.Punct]: colors.codePunc,
-    [TokenType.Whitespace]: colors.text,
-    [TokenType.Newline]: colors.text,
+    kw: colors.codeKw,
+    id: colors.codeId,
+    num: colors.codeNum,
+    str: colors.codeStr,
+    tpl: colors.codeTpl,
+    com: colors.codeCom,
+    rx: colors.codeRx,
+    op: colors.codeOp,
+    punc: colors.codePunc,
+    text: colors.text,
   };
 }
 
@@ -1025,74 +1028,62 @@ function shouldUseWorkerRenderer(canvas: HTMLCanvasElement, hasCustomAllowlist: 
  * Render syntax-highlighted code to canvas
  */
 function renderHighlightedCode(
-  codeBytes: Uint8Array,
-  lang: string | undefined,
+  block: BufferedCodeBlock,
+  tokens: readonly HighlightTokenSpan[] | null,
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   isMeasure: boolean,
 ): { width: number; height: number; y: number } {
-  const TE = new TextEncoder();
-  
-  // Try to get language spec for tokenization
-  const spec = lang ? getLanguageSpec(lang) : undefined;
-  
+  const { bytes: codeBytes } = block;
   let maxWidth = 0;
   let currentY = y;
   const lineHeight = FONT_SIZE.code * LINE_HEIGHT_MULTIPLIER;
-  
-  // Cache font string
   const font = getFontString(false, false, FONT_SIZE.code, true);
-  
-  // Get theme-aware colors
   const tokenColors = getTokenColors();
   const themeColors = getThemeColors();
+  const lines = block.lines.length > 0 ? block.lines : [{ s: 0, e: 0 }];
+  let tokenIndex = 0;
 
-  if (spec) {
-    // Tokenize and render with colors
-    const tokenizer = new GenericTokenizer(spec);
-    const lines = TD.decode(codeBytes).split('\n');
+  const renderSpan = (s: number, e: number, color: string, currentX: number): number => {
+    if (s >= e) return currentX;
+    const text = TD.decode(codeBytes.subarray(s, e));
+    if (!isMeasure) {
+      ctx.fillStyle = color;
+      ctx.fillText(text, currentX, currentY);
+    }
+    return currentX + measureWidth(ctx, text, font);
+  };
 
-    for (const line of lines) {
-      const lineBytes = TE.encode(line);
-      let currentX = x;
+  ctx.font = font;
+  for (const line of lines) {
+    let currentX = x;
+    let cursor = line.s;
 
-      ctx.font = font;
-
-      tokenizer.tokenize(lineBytes, (type, s, e) => {
-        const tokenText = TD.decode(lineBytes.subarray(s, e));
-        const color = tokenColors[type] || themeColors.text;
-
-        if (!isMeasure) {
-          ctx.fillStyle = color;
-          ctx.fillText(tokenText, currentX, currentY);
+    if (tokens) {
+      while (tokenIndex < tokens.length && tokens[tokenIndex].e <= line.s) tokenIndex++;
+      let index = tokenIndex;
+      while (index < tokens.length) {
+        const token = tokens[index];
+        if (token.s >= line.e) break;
+        const start = Math.max(cursor, token.s, line.s);
+        const end = Math.min(token.e, line.e);
+        if (start > cursor) {
+          currentX = renderSpan(cursor, start, themeColors.text, currentX);
         }
-
-        currentX += measureWidth(ctx, tokenText, font);
-      });
-
-      if (currentX - x > maxWidth) {
-        maxWidth = currentX - x;
+        currentX = renderSpan(start, end, tokenColors[token.kind], currentX);
+        cursor = Math.max(cursor, end);
+        if (token.e <= line.e) index++;
+        else break;
       }
-
-      currentY += lineHeight;
+      tokenIndex = index;
     }
-  } else {
-    // Fall back to plain rendering without highlighting
-    const lines = TD.decode(codeBytes).split('\n');
-    ctx.font = font;
 
-    for (const line of lines) {
-      const w = measureWidth(ctx, line, font);
-      if (w > maxWidth) maxWidth = w;
-
-      if (!isMeasure) {
-        ctx.fillStyle = themeColors.text;
-        ctx.fillText(line, x, currentY);
-      }
-
-      currentY += lineHeight;
+    if (cursor < line.e) {
+      currentX = renderSpan(cursor, line.e, themeColors.text, currentX);
     }
+    maxWidth = Math.max(maxWidth, currentX - x);
+    currentY += lineHeight;
   }
   
   return { width: maxWidth, height: currentY - y, y: currentY };
@@ -1640,6 +1631,14 @@ type RenderCanvasOptions = {
   parserOptions?: ParserOptions;
   dpr?: number;
   themeColors?: CanvasThemeColors;
+  codeHighlightCache?: CanvasHighlightedCodeBlock[];
+  reuseCodeHighlightCache?: boolean;
+};
+
+type CanvasHighlightedCodeBlock = {
+  block: BufferedCodeBlock;
+  lang: string | undefined;
+  tokens: HighlightTokenSpan[] | null;
 };
 
 export function renderCanvasToContext(
@@ -1702,6 +1701,7 @@ function renderCanvas(
   let codeHeight = 0;
   let codeWidth = 0;
   let codeBuffer: Array<{ s: number; e: number }> | null = null;
+  let codeBlockIndex = 0;
   let codeLang: string | undefined = undefined;
   const codeBlocks: { x: number; y: number; width: number; height: number }[] = [];
   const blockquotes: { x: number; y: number; width: number; height: number }[] = [];
@@ -2061,7 +2061,7 @@ function renderCanvas(
         closeListsAll();
         inCode = true;
         codeBuffer = [];
-        codeLang = ev.info?.lang;
+        codeLang = ev.info?.lang ?? ev.info?.rawLang;
         y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.5;
         codeY = y;
         codeWidth = 0;
@@ -2078,32 +2078,31 @@ function renderCanvas(
         if (inCode && codeBuffer) {
           inCode = false;
           
-          // Concatenate all code lines with newlines
-          let totalLen = 0;
-          for (const span of codeBuffer) {
-            totalLen += span.e - span.s;
-            totalLen += 1; // newline
+          const cached = opts.reuseCodeHighlightCache
+            ? opts.codeHighlightCache?.[codeBlockIndex]
+            : undefined;
+          const highlightedBlock = cached && cached.lang === codeLang
+            ? cached
+            : (() => {
+                const block = bufferCodeBlock(u8, codeBuffer);
+                return {
+                  block,
+                  lang: codeLang,
+                  tokens: tokenizeCodeBlock(block.bytes, codeLang),
+                } satisfies CanvasHighlightedCodeBlock;
+              })();
+          if (!opts.reuseCodeHighlightCache && opts.codeHighlightCache) {
+            opts.codeHighlightCache.push(highlightedBlock);
           }
-          
-          const codeBytes = totalLen > 0 ? new Uint8Array(totalLen) : new Uint8Array(0);
-          
-          if (totalLen > 0) {
-            let offset = 0;
-            for (const span of codeBuffer) {
-              const slice = u8.subarray(span.s, span.e);
-              codeBytes.set(slice, offset);
-              offset += slice.length;
-              codeBytes[offset++] = 0x0a; // newline
-            }
-          }
+          codeBlockIndex++;
           
           // Render highlighted code
           const codePaddingX = 12;
           const codePaddingY = 10;
           
           const result = renderHighlightedCode(
-            codeBytes,
-            codeLang,
+            highlightedBlock.block,
+            highlightedBlock.tokens,
             ctx,
             contentLeft + indent + codePaddingX,
             y,
@@ -2525,10 +2524,12 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
   }
   
   measureCtx.scale(dpr, dpr);
+  const codeHighlightCache: CanvasHighlightedCodeBlock[] = [];
   const totalHeight = renderCanvas(u8, measureCtx, true, {
     onImageLoad: rerender,
     parserOptions: options,
     dpr,
+    codeHighlightCache,
   }) + MARGIN * 2;
   const minRenderHeight = scrollEl ? scrollEl.clientHeight : 0;
   const renderHeight = Math.max(totalHeight, minRenderHeight);
@@ -2562,6 +2563,8 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
       onImageLoad: rerender,
       parserOptions: options,
       dpr,
+      codeHighlightCache,
+      reuseCodeHighlightCache: true,
     });
     canvas.dataset.virtualized = 'false';
     canvas.dataset.renderReady = 'ready';
@@ -2599,6 +2602,8 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
     onImageLoad: rerender,
     parserOptions: options,
     dpr,
+    codeHighlightCache,
+    reuseCodeHighlightCache: true,
   });
 
   canvas.width = styleWidth * dpr;

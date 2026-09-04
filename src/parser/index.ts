@@ -128,6 +128,7 @@ export type {
 export type {
   PdfCodeColorKey,
   PdfCodeColorOptions,
+  PdfDocumentStyleOptions,
   PdfImageResolver,
   PdfImageResolverContext,
   PdfPageSize,

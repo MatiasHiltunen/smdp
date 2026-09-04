@@ -29,5 +29,6 @@ export interface WasmLanguageProfile {
   readonly numberFlags: number;
   readonly regexEnabled: boolean;
   readonly templateEnabled: boolean;
+  readonly templateStart?: number | null;
   readonly defaultIdentifier: boolean;
 }

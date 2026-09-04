@@ -14,6 +14,7 @@ import {
   setWasmCoreEnabled,
   tokenizeWithWasm,
 } from '../src/wasm/core.ts';
+import { SMDP_CORE_WASM_BASE64 } from '../src/wasm/smdp-core-binary.ts';
 
 const encoder = new TextEncoder();
 
@@ -49,6 +50,15 @@ test('loads the checked-in SIMD WebAssembly ABI', () => {
   assert.equal(status.available, true, status.failure);
   assert.equal(status.abiVersion, 1);
   assert.equal(status.usesSimd, true);
+});
+
+test('ships the SIMD core with a compact growable initial memory', () => {
+  const module = new WebAssembly.Module(Buffer.from(SMDP_CORE_WASM_BASE64, 'base64'));
+  const instance = new WebAssembly.Instance(module);
+  const memory = instance.exports.memory;
+
+  assert.ok(memory instanceof WebAssembly.Memory);
+  assert.equal(memory.buffer.byteLength, 2 * 64 * 1024);
 });
 
 test('SIMD line scanner matches scalar CR, LF, CRLF, and batched output', () => {
@@ -143,11 +153,17 @@ test('WebAssembly tokenizer resumes across a full event buffer', () => {
   assert.deepEqual(actual, scalarTokens(spec, source));
 });
 
-test('template languages retain the scalar tokenizer path', () => {
+test('template languages use WASM only when the template delimiter is absent', () => {
   const spec = getLanguageSpec('javascript');
   assert.ok(spec);
-  const used = tokenizeWithWasm(encoder.encode('const value = `x${1}`;'), spec.getWasmProfile(), () => {});
-  assert.equal(used, false);
+  const plainSource = encoder.encode('const value = 1; return /value+/g;');
+  assert.deepEqual(wasmTokens(spec, plainSource), scalarTokens(spec, plainSource));
+  const templateUsed = tokenizeWithWasm(
+    encoder.encode('const value = `x${1}`;'),
+    spec.getWasmProfile(),
+    () => {},
+  );
+  assert.equal(templateUsed, false);
 });
 
 test('disabled WebAssembly core cleanly falls back to scalar APIs', () => {
