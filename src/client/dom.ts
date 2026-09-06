@@ -16,11 +16,68 @@ const BLOCKED_HTML_TAGS = new Set([
   "object",
   "script",
   "style",
-  "svg",
   "template",
 ]);
 const URL_ATTR_NAMES = new Set(["href", "src", "xlink:href"]);
 const TARGET_VALUES = new Set(["_blank", "_parent", "_self", "_top"]);
+const SAFE_SVG_TAGS = new Set([
+  "svg",
+  "title",
+  "desc",
+  "defs",
+  "marker",
+  "path",
+  "rect",
+  "line",
+  "polyline",
+  "polygon",
+  "ellipse",
+  "text",
+]);
+const SAFE_SVG_ATTRS = new Set([
+  "class",
+  "xmlns",
+  "viewbox",
+  "width",
+  "height",
+  "role",
+  "aria-labelledby",
+  "preserveaspectratio",
+  "id",
+  "x",
+  "y",
+  "x1",
+  "y1",
+  "x2",
+  "y2",
+  "cx",
+  "cy",
+  "rx",
+  "ry",
+  "fill",
+  "stroke",
+  "stroke-width",
+  "stroke-dasharray",
+  "opacity",
+  "vector-effect",
+  "marker-end",
+  "markerwidth",
+  "markerheight",
+  "refx",
+  "refy",
+  "orient",
+  "markerunits",
+  "points",
+  "d",
+  "text-anchor",
+  "font-size",
+  "font-weight",
+  "font-style",
+]);
+const SAFE_SVG_NUMBER = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/i;
+const SAFE_SVG_NUMBER_LIST = /^[-+\d.e,\s]+$/i;
+const SAFE_SVG_COLOR = /^(?:none|context-stroke|#[0-9a-f]{3,8}|[a-z]+|var\(--diagram-[a-z0-9-]+,\s*#[0-9a-f]{3,8}\))$/i;
+const SAFE_SVG_PATH = /^[MmLlHhVvCcZz0-9+\-.,\s]+$/;
 
 export const createElement = <T extends keyof HTMLElementTagNameMap>(tag: T) =>
   document.createElement(tag) as HTMLElementTagNameMap[T];
@@ -95,8 +152,61 @@ function enforceAnchorSafety(element: Element): void {
   element.setAttribute("rel", Array.from(relTokens).join(" "));
 }
 
+function isSafeSvgAttribute(name: string, value: string): boolean {
+  if (!SAFE_SVG_ATTRS.has(name)) return false;
+  const trimmed = value.trim();
+  if (name === "fill" || name === "stroke") return SAFE_SVG_COLOR.test(trimmed);
+  if (name === "marker-end") return trimmed === "url(#arrow)";
+  if (name === "d") return trimmed.length <= 100_000 && SAFE_SVG_PATH.test(trimmed);
+  if (name === "points" || name === "stroke-dasharray" || name === "viewbox") {
+    return trimmed.length <= 100_000 && SAFE_SVG_NUMBER_LIST.test(trimmed);
+  }
+  if (
+    name === "x" || name === "y" || name === "x1" || name === "y1" ||
+    name === "x2" || name === "y2" || name === "cx" || name === "cy" ||
+    name === "rx" || name === "ry" || name === "width" || name === "height" ||
+    name === "stroke-width" || name === "opacity" || name === "markerwidth" ||
+    name === "markerheight" || name === "refx" || name === "refy" ||
+    name === "font-size" || name === "font-weight"
+  ) {
+    return SAFE_SVG_NUMBER.test(trimmed);
+  }
+  if (name === "id" || name === "class" || name === "aria-labelledby") {
+    return /^[a-zA-Z0-9_\-\s]+$/.test(trimmed);
+  }
+  if (name === "font-style") return trimmed === "italic" || trimmed === "normal";
+  if (name === "text-anchor") return trimmed === "start" || trimmed === "middle" || trimmed === "end";
+  if (name === "role") return trimmed === "img";
+  if (name === "orient") return trimmed === "auto" || trimmed === "auto-start-reverse";
+  if (name === "markerunits") return trimmed === "strokeWidth" || trimmed === "userSpaceOnUse";
+  if (name === "vector-effect") return trimmed === "non-scaling-stroke";
+  if (name === "preserveaspectratio") return /^[xX](?:Min|Mid|Max)Y(?:Min|Mid|Max)\s+(?:meet|slice)$/.test(trimmed);
+  if (name === "xmlns") return trimmed === SVG_NS;
+  return false;
+}
+
+function sanitizeSvgTree(element: Element): void {
+  const tagName = element.tagName.toLowerCase();
+  if (!SAFE_SVG_TAGS.has(tagName)) {
+    element.remove();
+    return;
+  }
+  for (const attr of Array.from(element.attributes)) {
+    const name = attr.name.toLowerCase();
+    if (!isSafeSvgAttribute(name, attr.value)) element.removeAttribute(attr.name);
+  }
+  for (const child of Array.from(element.children)) {
+    if (child.namespaceURI !== SVG_NS) child.remove();
+    else sanitizeSvgTree(child);
+  }
+}
+
 function sanitizeElementTree(element: Element, baseUrl?: string): void {
   const tagName = element.tagName.toLowerCase();
+  if (element.namespaceURI === SVG_NS) {
+    sanitizeSvgTree(element);
+    return;
+  }
   if (BLOCKED_HTML_TAGS.has(tagName)) {
     element.remove();
     return;

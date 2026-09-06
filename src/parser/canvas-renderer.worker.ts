@@ -2,14 +2,18 @@
 
 import { MARGIN } from './constants';
 import type { ParserOptions } from './index';
-import type { CanvasThemeColors } from './canvas-renderer';
+import type {
+  CanvasDiagramBlock,
+  CanvasHighlightedCodeBlock,
+  CanvasThemeColors,
+} from './canvas-renderer';
 import {
   renderCanvasToContext,
   setCanvasImageLoadHook,
   setCanvasThemeColorsOverride,
 } from './canvas-renderer';
 
-type WorkerRenderParserOptions = Pick<ParserOptions, 'allowRawHtml' | 'baseUrl'>;
+type WorkerRenderParserOptions = Pick<ParserOptions, 'allowRawHtml' | 'baseUrl' | 'diagram'>;
 
 type InitMessage = {
   type: 'init';
@@ -142,11 +146,15 @@ async function performRender(request: ActiveRender): Promise<void> {
 
     measureCtx.setTransform(1, 0, 0, 1, 0, 0);
     measureCtx.scale(request.dpr, request.dpr);
+    const codeHighlightCache: CanvasHighlightedCodeBlock[] = [];
+    const diagramCache: Array<CanvasDiagramBlock | undefined> = [];
     const totalHeight = renderCanvasToContext(request.bytes, measureCtx as unknown as CanvasRenderingContext2D, true, {
       parserOptions: request.parserOptions,
       onImageLoad: scheduleImageRerender,
       dpr: request.dpr,
       themeColors: request.themeColors,
+      codeHighlightCache,
+      diagramCache,
     }) + MARGIN * 2;
     const renderHeight = Math.max(totalHeight, request.minHeight);
 
@@ -176,6 +184,10 @@ async function performRender(request: ActiveRender): Promise<void> {
       onImageLoad: scheduleImageRerender,
       dpr: request.dpr,
       themeColors: request.themeColors,
+      codeHighlightCache,
+      reuseCodeHighlightCache: true,
+      diagramCache,
+      reuseDiagramCache: true,
     });
 
     scope.postMessage({

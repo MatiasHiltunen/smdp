@@ -12,6 +12,7 @@ import { TE } from './constants';
 import { renderHTMLFromBlocks } from './html-renderer';
 import { renderToCanvasFromBlocks } from './canvas-renderer';
 import type { PdfRenderOptions } from './pdf-renderer';
+import type { DiagramRenderOptions } from '../diagram/types';
 import { defaultUrlAllowlist } from './utils';
 
 export interface ParserOptions {
@@ -31,6 +32,11 @@ export interface ParserOptions {
    * Emit source-line anchors for editor-to-preview synchronization.
    */
   sourceLineAttributes?: boolean;
+  /**
+   * Configure native Mermaid-compatible diagrams, or set false to keep
+   * `mermaid` fences as highlighted source code.
+   */
+  diagram?: false | DiagramRenderOptions;
 }
 
 type ResolvedParserOptions = {
@@ -38,6 +44,7 @@ type ResolvedParserOptions = {
   urlAllowlist: (url: string) => boolean;
   baseUrl?: string;
   sourceLineAttributes: boolean;
+  diagram: false | DiagramRenderOptions;
 };
 
 
@@ -52,6 +59,7 @@ export class MDParser {
       allowRawHtml: options.allowRawHtml ?? false,
       urlAllowlist: options.urlAllowlist ?? defaultUrlAllowlist,
       sourceLineAttributes: options.sourceLineAttributes ?? false,
+      diagram: options.diagram ?? {},
       ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
     };
   }
@@ -66,6 +74,7 @@ export class MDParser {
       urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
       sourceLineAttributes:
         overrides.sourceLineAttributes ?? this.options.sourceLineAttributes,
+      diagram: overrides.diagram ?? this.options.diagram,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
     };
     return renderHTMLFromBlocks(u8arr, effective);
@@ -81,6 +90,7 @@ export class MDParser {
       urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
       sourceLineAttributes:
         overrides.sourceLineAttributes ?? this.options.sourceLineAttributes,
+      diagram: overrides.diagram ?? this.options.diagram,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
     };
     renderToCanvasFromBlocks(u8arr, canvas, effective);
@@ -95,6 +105,7 @@ export class MDParser {
       ...overrides,
       allowRawHtml: overrides.allowRawHtml ?? this.options.allowRawHtml,
       urlAllowlist: overrides.urlAllowlist ?? this.options.urlAllowlist,
+      diagram: overrides.diagram ?? this.options.diagram,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
     };
     const { renderPDFFromBlocksAsync } = await import('./pdf-renderer');
@@ -136,6 +147,7 @@ export type {
   PdfRenderOptions,
   PdfResolvedImage,
 } from './pdf-renderer';
+export type { DiagramRenderOptions } from '../diagram/types';
 export { HtmlArena } from './arena';
 export { lineSpans } from './line-parser';
 export { inlineTokens } from './inline-parser';

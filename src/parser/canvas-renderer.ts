@@ -14,6 +14,7 @@ import {
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
 import { bufferCodeBlock, type BufferedCodeBlock } from './code-block-buffer';
+import type { DiagramRenderResult, DiagramScene, DiagramTheme } from '../diagram/types';
 
 // Font stacks with comprehensive Unicode support
 const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
@@ -1633,13 +1634,65 @@ type RenderCanvasOptions = {
   themeColors?: CanvasThemeColors;
   codeHighlightCache?: CanvasHighlightedCodeBlock[];
   reuseCodeHighlightCache?: boolean;
+  diagramCache?: Array<CanvasDiagramBlock | undefined>;
+  reuseDiagramCache?: boolean;
 };
 
-type CanvasHighlightedCodeBlock = {
+export type CanvasHighlightedCodeBlock = {
   block: BufferedCodeBlock;
   lang: string | undefined;
   tokens: HighlightTokenSpan[] | null;
 };
+
+export type CanvasDiagramBlock = {
+  block: BufferedCodeBlock;
+  scene: DiagramScene;
+};
+
+type CanvasDiagramModule = {
+  renderDiagram: (source: Uint8Array, options?: {
+    width?: number;
+    theme?: Partial<DiagramTheme>;
+    measureText?: (text: string, size: number, weight: 400 | 500 | 600 | 700) => number;
+  }) => DiagramRenderResult;
+  drawDiagramSceneToCanvas: (
+    scene: DiagramScene,
+    context: CanvasRenderingContext2D,
+    options?: { x?: number; y?: number; maxWidth?: number; theme?: Partial<DiagramTheme> },
+  ) => number;
+};
+
+let canvasDiagramModule: CanvasDiagramModule | null = null;
+let canvasDiagramLoad: Promise<void> | null = null;
+const canvasDiagramReadyCallbacks = new Set<() => void>();
+
+function requestCanvasDiagramModule(onReady: (() => void) | undefined): CanvasDiagramModule | null {
+  if (canvasDiagramModule) return canvasDiagramModule;
+  if (onReady) canvasDiagramReadyCallbacks.add(onReady);
+  if (!canvasDiagramLoad) {
+    canvasDiagramLoad = import('../diagram/index').then((module) => {
+      canvasDiagramModule = module;
+      for (const callback of canvasDiagramReadyCallbacks) callback();
+      canvasDiagramReadyCallbacks.clear();
+    }).catch(() => {
+      canvasDiagramReadyCallbacks.clear();
+    });
+  }
+  return null;
+}
+
+function canvasDiagramTheme(colors: CanvasThemeColors): Partial<DiagramTheme> {
+  return {
+    background: colors.bg,
+    surface: colors.codeBg,
+    surfaceAlt: colors.bgSecondary,
+    text: colors.text,
+    muted: colors.textSecondary,
+    accent: colors.accent,
+    border: colors.border,
+    palette: [colors.accent, colors.codeStr, colors.codeNum, colors.codeRx, colors.codeOp, colors.codeKw],
+  };
+}
 
 export function renderCanvasToContext(
   u8: Uint8Array,
@@ -2077,6 +2130,63 @@ function renderCanvas(
       case 'codeClose':
         if (inCode && codeBuffer) {
           inCode = false;
+
+          if (codeLang?.trim().toLowerCase() === 'mermaid' && parserOptions.diagram !== false) {
+            const diagramModule = requestCanvasDiagramModule(opts.onImageLoad);
+            if (diagramModule) {
+              const cachedDiagram = opts.reuseDiagramCache
+                ? opts.diagramCache?.[codeBlockIndex]
+                : undefined;
+              const block = cachedDiagram?.block ?? bufferCodeBlock(u8, codeBuffer);
+              const theme = canvasDiagramTheme(themeColors);
+              const previousFont = ctx.font;
+              const configured = parserOptions.diagram ?? {};
+              const result = cachedDiagram
+                ? { scene: cachedDiagram.scene, diagnostics: cachedDiagram.scene.diagnostics }
+                : diagramModule.renderDiagram(block.bytes, {
+                    ...configured,
+                    width: Math.max(280, maxWidth - indent),
+                    theme: { ...theme, ...configured.theme },
+                    measureText: (text, size, weight) => {
+                      ctx.font = `${weight} ${size}px ${FONT_STACK}`;
+                      const width = measureWidth(ctx, text, ctx.font);
+                      ctx.font = previousFont;
+                      return width;
+                    },
+                  });
+              ctx.font = previousFont;
+              if (result.scene) {
+                if (!cachedDiagram && opts.diagramCache) {
+                  opts.diagramCache[codeBlockIndex] = { block, scene: result.scene };
+                }
+                const diagramHeight = result.scene.height * Math.min(1, Math.max(280, maxWidth - indent) / result.scene.width);
+                if (!isMeasure) {
+                  diagramModule.drawDiagramSceneToCanvas(result.scene, ctx, {
+                    x: contentLeft + indent,
+                    y,
+                    maxWidth: Math.max(280, maxWidth - indent),
+                    theme: { ...theme, ...configured.theme },
+                  });
+                }
+                y += diagramHeight;
+                codeBlockIndex++;
+                codeBuffer = null;
+                codeLang = undefined;
+                y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER * 1.5;
+                break;
+              }
+              if (!isMeasure) {
+                ctx.fillStyle = themeColors.codeOp;
+                ctx.font = getFontString(true, false, FONT_SIZE.base, false);
+                ctx.fillText(
+                  `Diagram error: ${result.diagnostics[0]?.message ?? 'rendering failed'}`,
+                  contentLeft + indent,
+                  y,
+                );
+              }
+              y += FONT_SIZE.base * LINE_HEIGHT_MULTIPLIER;
+            }
+          }
           
           const cached = opts.reuseCodeHighlightCache
             ? opts.codeHighlightCache?.[codeBlockIndex]
@@ -2525,11 +2635,13 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
   
   measureCtx.scale(dpr, dpr);
   const codeHighlightCache: CanvasHighlightedCodeBlock[] = [];
+  const diagramCache: Array<CanvasDiagramBlock | undefined> = [];
   const totalHeight = renderCanvas(u8, measureCtx, true, {
     onImageLoad: rerender,
     parserOptions: options,
     dpr,
     codeHighlightCache,
+    diagramCache,
   }) + MARGIN * 2;
   const minRenderHeight = scrollEl ? scrollEl.clientHeight : 0;
   const renderHeight = Math.max(totalHeight, minRenderHeight);
@@ -2565,6 +2677,8 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
       dpr,
       codeHighlightCache,
       reuseCodeHighlightCache: true,
+      diagramCache,
+      reuseDiagramCache: true,
     });
     canvas.dataset.virtualized = 'false';
     canvas.dataset.renderReady = 'ready';
@@ -2604,6 +2718,8 @@ function renderToCanvasFromBlocksMainThread(u8: Uint8Array, canvas: HTMLCanvasEl
     dpr,
     codeHighlightCache,
     reuseCodeHighlightCache: true,
+    diagramCache,
+    reuseDiagramCache: true,
   });
 
   canvas.width = styleWidth * dpr;
@@ -2695,7 +2811,7 @@ function htmlCanvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-type WorkerRenderParserOptions = Pick<ParserOptions, 'allowRawHtml' | 'baseUrl'>;
+type WorkerRenderParserOptions = Pick<ParserOptions, 'allowRawHtml' | 'baseUrl' | 'diagram'>;
 
 type WorkerInitMessage = {
   type: 'init';
@@ -2933,6 +3049,20 @@ function renderToCanvasFromWorker(u8: Uint8Array, canvas: HTMLCanvasElement, opt
   const parserOptions: WorkerRenderParserOptions = {
     ...(options.allowRawHtml !== undefined ? { allowRawHtml: options.allowRawHtml } : {}),
     ...(options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {}),
+    ...(options.diagram === false
+      ? { diagram: false as const }
+      : options.diagram
+        ? {
+            diagram: {
+              ...(options.diagram.width !== undefined ? { width: options.diagram.width } : {}),
+              ...(options.diagram.theme !== undefined ? { theme: options.diagram.theme } : {}),
+              ...(options.diagram.maxSourceBytes !== undefined ? { maxSourceBytes: options.diagram.maxSourceBytes } : {}),
+              ...(options.diagram.maxLines !== undefined ? { maxLines: options.diagram.maxLines } : {}),
+              ...(options.diagram.maxCommands !== undefined ? { maxCommands: options.diagram.maxCommands } : {}),
+              ...(options.diagram.seed !== undefined ? { seed: options.diagram.seed } : {}),
+            },
+          }
+        : {}),
   };
 
   const themeColors = getThemeColors();

@@ -545,6 +545,76 @@ body.mode-editor .editor-pane-host {
   tab-size: 2;
 }
 
+.markdown-viewer .mermaid-diagram {
+  --diagram-background: var(--bg-base);
+  --diagram-surface: var(--bg-panel);
+  --diagram-surface-alt: var(--bg-glass-strong);
+  --diagram-text: var(--text-primary);
+  --diagram-muted: var(--text-secondary);
+  --diagram-accent: var(--accent);
+  --diagram-border: var(--border-glass);
+  --diagram-success: var(--success-border);
+  --diagram-warning: var(--warning-border);
+  --diagram-danger: var(--error-border);
+  width: 100%;
+  max-width: 100%;
+  margin: clamp(1.5rem, 3vw, 2rem) 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  color: var(--text-primary);
+  scrollbar-width: thin;
+}
+
+.markdown-viewer .mermaid-diagram__svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+  overflow: visible;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+@media (max-width: 640px) {
+  .markdown-viewer .mermaid-diagram__svg {
+    width: 38rem;
+    min-width: 38rem;
+    max-width: none;
+  }
+}
+
+.markdown-viewer .mermaid-diagram__diagnostics {
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--warning-bg);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.markdown-viewer .mermaid-diagram__diagnostics summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.markdown-viewer .mermaid-diagram__diagnostics ul {
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.markdown-viewer .mermaid-diagram__error {
+  padding: 0.75rem 0.9rem;
+  border-left: 3px solid var(--error-border);
+  background: var(--error-bg);
+  color: var(--text-primary);
+}
+
+.markdown-viewer .mermaid-diagram--error pre {
+  margin-top: 0.75rem;
+}
+
 .markdown-viewer .tok-kw {
   color: var(--code-kw);
   font-weight: 600;

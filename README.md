@@ -58,6 +58,31 @@ The intent of this repository is not to compete with broad Markdown frameworks b
 - **Autolinks**: Automatic linking of `http://`, `https://`, and `www.` URLs
 - **Tables**: optional outer pipes and alignment delimiters (`:--` left, `:--:` center, `--:` right)
 - **Info Blocks**: `::: info`, `::: warning`, `::: error`, `::: success`
+- **Native Mermaid-compatible diagrams (experimental)**: fenced `mermaid` blocks render as accessible SVG, Canvas commands, and searchable vector PDF output
+
+### Native diagrams (experimental)
+
+Mermaid fences are rendered locally without the Mermaid package, a layout
+library, CDN assets, or runtime dependencies:
+
+````markdown
+```mermaid
+flowchart LR
+  Source[Markdown bytes] --> Parser{SIMD scan}
+  Parser --> Output[Native scene]
+```
+````
+
+HTML receives accessible inline SVG, Canvas executes the same typed scene, and
+PDF uses native vector and text operators rather than a screenshot. Invalid or
+unsafe diagram input shows a source-located error and retains the original code
+fence. Set `diagram: false` in `ParserOptions` to keep Mermaid fences as normal
+highlighted code.
+
+The compatibility target is Mermaid 11.17.2. All family declarations have a
+bounded native rendering path, but exact construct-level conformance is still
+in progress; see the [compatibility ledger](docs/mermaid-compatibility-11.17.2.md)
+and [implementation plan](docs/mermaid-wasm-plan.md) for the precise status.
 
 ## Syntax Highlighting
 
@@ -244,6 +269,8 @@ The parser is split into logical modules:
 - **`html-renderer.ts`**: HTML output renderer
 - **`canvas-renderer.ts`**: Canvas output renderer
 - **`pdf-renderer.ts`**: Native text/vector PDF renderer with document-style options
+- **`diagram/`**: Mermaid-compatible parsing, renderer-neutral scene generation, and SVG/Canvas adapters
+- **`wasm/smdp-diagram-core.wat`**: Separate no-import SIMD diagram source scanner and versioned ABI
 - **`index.ts`**: Main MDParser class and public API
 
 ### Parser Pipeline
@@ -338,6 +365,7 @@ for (const ev of blocks(u8)) {
 - **Extensibility hooks**: Callbacks for custom block/inline tokens could be surfaced. Today, extensions require forking the parser.
 - **Canvas accessibility**: The Canvas renderer focuses on presentation. To serve assistive technologies, a hybrid mode that emits both Canvas and hidden HTML (or ARIA descriptions) would close the accessibility gap.
 - **More grammars**: The highlighting pipeline accepts additional grammars, but coverage remains limited to the precompiled set. Expanding that library or providing an easier authoring path is on the roadmap.
+- **Native diagram conformance**: The [Mermaid-compatible WASM plan](docs/mermaid-wasm-plan.md) and [11.17.2 ledger](docs/mermaid-compatibility-11.17.2.md) track the remaining grammar, layout, accessibility, and ABI work.
 
 ## API Reference
 

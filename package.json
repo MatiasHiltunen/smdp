@@ -25,6 +25,10 @@
       "types": "./src/highlight/index.ts",
       "import": "./src/highlight/index.ts"
     },
+    "./diagram": {
+      "types": "./src/diagram/index.ts",
+      "import": "./src/diagram/index.ts"
+    },
     "./parser": {
       "types": "./src/parser/index.ts",
       "import": "./src/parser/index.ts"

@@ -545,6 +545,28 @@ export async function renderHTMLFromBlocks(u8: Uint8Array, options: ParserOption
     }
 
     const { bytes: codeBytes } = bufferCodeBlock(u8, codeBuffer);
+    if (codeLang?.trim().toLowerCase() === 'mermaid' && options.diagram !== false) {
+      try {
+        const { renderDiagramToSvg } = await import('../diagram/svg-renderer');
+        const diagramOptions = options.diagram ?? {};
+        out.writeUtf8(renderDiagramToSvg(codeBytes, {
+          ...diagramOptions,
+          width: diagramOptions.width ?? 760,
+        }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Diagram rendering failed';
+        const messageBytes = TE.encode(message);
+        out.writeAscii('<figure class="mermaid-diagram mermaid-diagram--error"><div class="mermaid-diagram__error" role="alert">Diagram error: ');
+        out.writeEscaped(messageBytes, 0, messageBytes.length);
+        out.writeAscii('</div>');
+        const highlighted = await highlightCodeBlock(codeBytes, codeLang);
+        writeHighlightedCode(highlighted, sourceLines);
+        out.writeAscii('</figure>');
+      }
+      codeBuffer = null;
+      codeLang = undefined;
+      return;
+    }
     const highlighted = await highlightCodeBlock(codeBytes, codeLang);
     writeHighlightedCode(highlighted, sourceLines);
 

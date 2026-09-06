@@ -1,7 +1,7 @@
 import { blocks } from './block-parser';
 import { inlineTokens } from './inline-parser';
 import { INDENT, TD, TE } from './constants';
-import type { InlineToken } from './types';
+import type { BlockEvent, InlineToken } from './types';
 import type { ParserOptions } from './index';
 import { defaultUrlAllowlist, resolveUrlRelativeToBase } from './utils';
 import {
@@ -10,6 +10,11 @@ import {
   type HighlightTokenSpan,
 } from '../highlight';
 import { bufferCodeBlock, type CodeBlockSourceSpan } from './code-block-buffer';
+import { renderDiagram } from '../diagram/svg-renderer';
+import type {
+  DiagramPaint,
+  DiagramScene,
+} from '../diagram/types';
 
 export type PdfPageSize =
   | 'letter'
@@ -2177,7 +2182,12 @@ class PdfBlockRenderer {
     const imageRenderer: PdfInlineImageRenderer = (token, line, style) =>
       this.renderInlineImageSync(markdown, token, line, style);
 
-    for (const ev of blocks(markdown, blockParseOptions)) {
+    const events = blocks(markdown, blockParseOptions);
+    let current = events.next();
+    while (!current.done) {
+      const ev = current.value;
+      const following = events.next();
+      const nextEvent = following.done ? undefined : following.value;
       switch (ev.type) {
         case 'bqOpen':
           this.openBlockquote();
@@ -2198,7 +2208,7 @@ class PdfBlockRenderer {
           const before = size * (ev.level <= 2 ? 0.55 : 0.4);
           const lineHeight = size * 1.16;
           const after = size * 0.28;
-          this.ensureSpace(before + lineHeight + after + this.baseFontSize * this.lineHeightMultiplier * 2);
+          this.ensureSpace(before + lineHeight + after + this.headingKeepWithNext(ev.level, nextEvent));
           this.addVerticalSpace(before);
           const style = this.style({ font: 'bold', size, color: this.colors.text });
           const line = this.createLine(lineHeight);
@@ -2295,6 +2305,7 @@ class PdfBlockRenderer {
           this.renderFootnote(markdown, ev.idS, ev.idE, ev.contentS, ev.contentE);
           break;
       }
+      current = following;
     }
 
     this.finishTable(markdown);
@@ -2307,7 +2318,12 @@ class PdfBlockRenderer {
     const imageRenderer: PdfInlineImageRendererAsync = async (token, line, style) =>
       await this.renderInlineImageAsync(markdown, token, line, style);
 
-    for (const ev of blocks(markdown, blockParseOptions)) {
+    const events = blocks(markdown, blockParseOptions);
+    let current = events.next();
+    while (!current.done) {
+      const ev = current.value;
+      const following = events.next();
+      const nextEvent = following.done ? undefined : following.value;
       switch (ev.type) {
         case 'bqOpen':
           this.openBlockquote();
@@ -2328,7 +2344,7 @@ class PdfBlockRenderer {
           const before = size * (ev.level <= 2 ? 0.55 : 0.4);
           const lineHeight = size * 1.16;
           const after = size * 0.28;
-          this.ensureSpace(before + lineHeight + after + this.baseFontSize * this.lineHeightMultiplier * 2);
+          this.ensureSpace(before + lineHeight + after + this.headingKeepWithNext(ev.level, nextEvent));
           this.addVerticalSpace(before);
           const style = this.style({ font: 'bold', size, color: this.colors.text });
           const line = this.createLine(lineHeight);
@@ -2436,6 +2452,7 @@ class PdfBlockRenderer {
           await this.renderFootnoteAsync(markdown, ev.idS, ev.idE, ev.contentS, ev.contentE, imageRenderer);
           break;
       }
+      current = following;
     }
 
     this.finishTable(markdown);
@@ -2758,6 +2775,19 @@ class PdfBlockRenderer {
     return this.baseFontSize * scale[index];
   }
 
+  private headingKeepWithNext(level: number, nextEvent: BlockEvent | undefined): number {
+    const nextLanguage = nextEvent?.type === 'codeOpen'
+      ? nextEvent.info?.lang ?? nextEvent.info?.rawLang
+      : undefined;
+    if (this.options.diagram === false || nextLanguage?.trim().toLowerCase() !== 'mermaid') {
+      return this.baseFontSize * this.lineHeightMultiplier * 2;
+    }
+    const usableHeight = this.pageHeight - this.margin * 2;
+    if (level <= 2) return Math.min(usableHeight * 0.44, 340);
+    if (level === 3) return Math.min(usableHeight * 0.24, 180);
+    return this.baseFontSize * this.lineHeightMultiplier * 3;
+  }
+
   private drawRule(): void {
     const gap = this.baseFontSize * 0.8;
     this.ensureSpace(gap * 2);
@@ -2780,6 +2810,236 @@ class PdfBlockRenderer {
     this.currentPage.content.writeAscii(
       `q ${colorCommand(color, 'RG')} ${formatNumber(width)} w ${formatNumber(x1)} ${formatNumber(y1)} m ${formatNumber(x2)} ${formatNumber(y2)} l S Q\n`,
     );
+  }
+
+  private diagramColor(paint: DiagramPaint | undefined, opacity = 1): PdfColor | null {
+    if (!paint || paint === 'none') return null;
+    let color: PdfColor;
+    switch (paint) {
+      case 'background': color = this.colors.pageBackground; break;
+      case 'surface': color = this.colors.surface; break;
+      case 'surfaceAlt': color = this.colors.codeBackground; break;
+      case 'text': color = this.colors.text; break;
+      case 'muted': color = this.colors.textSecondary; break;
+      case 'accent': color = this.colors.accent; break;
+      case 'border': color = this.colors.border; break;
+      case 'success': color = this.colors.successBorder; break;
+      case 'warning': color = this.colors.warningBorder; break;
+      case 'danger': color = this.colors.errorBorder; break;
+      case 'palette0': color = this.colors.accent; break;
+      case 'palette1': color = this.colors.successBorder; break;
+      case 'palette2': color = this.colors.warningBorder; break;
+      case 'palette3': color = this.colors.errorBorder; break;
+      case 'palette4': color = [0.43, 0.34, 0.79] as const; break;
+      case 'palette5': color = [0.22, 0.52, 0.72] as const; break;
+    }
+    const alpha = Math.max(0, Math.min(1, opacity));
+    if (alpha >= 0.999) return color;
+    const background = this.colors.pageBackground;
+    return [
+      color[0] * alpha + background[0] * (1 - alpha),
+      color[1] * alpha + background[1] * (1 - alpha),
+      color[2] * alpha + background[2] * (1 - alpha),
+    ] as const;
+  }
+
+  private drawDiagramPath(
+    points: readonly { x: number; y: number }[],
+    close: boolean,
+    fill: PdfColor | null,
+    stroke: PdfColor | null,
+    width: number,
+    dash: readonly number[] | undefined,
+  ): void {
+    const first = points[0];
+    if (!first || (!fill && !stroke)) return;
+    const out = this.currentPage.content;
+    out.writeAscii('q\n');
+    if (fill) out.writeAscii(`${colorCommand(fill, 'rg')}\n`);
+    if (stroke) {
+      out.writeAscii(`${colorCommand(stroke, 'RG')}\n${formatNumber(width)} w\n`);
+      if (dash && dash.length > 0) {
+        out.writeAscii(`[${dash.map(formatNumber).join(' ')}] 0 d\n`);
+      }
+    }
+    out.writeAscii(`${formatNumber(first.x)} ${formatNumber(first.y)} m\n`);
+    for (let index = 1; index < points.length; index++) {
+      out.writeAscii(`${formatNumber(points[index].x)} ${formatNumber(points[index].y)} l\n`);
+    }
+    if (close) out.writeAscii('h\n');
+    out.writeAscii(fill && stroke ? 'B\n' : fill ? 'f\n' : 'S\n');
+    out.writeAscii('Q\n');
+  }
+
+  private drawDiagramArrow(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    color: PdfColor,
+    scale: number,
+  ): void {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const size = Math.max(3.5, 7 * scale);
+    const points = [
+      { x: x2, y: y2 },
+      { x: x2 - Math.cos(angle - Math.PI / 6) * size, y: y2 - Math.sin(angle - Math.PI / 6) * size },
+      { x: x2 - Math.cos(angle + Math.PI / 6) * size, y: y2 - Math.sin(angle + Math.PI / 6) * size },
+    ];
+    this.drawDiagramPath(points, true, color, null, 0, undefined);
+  }
+
+  private drawDiagramEllipse(
+    cx: number,
+    cy: number,
+    rx: number,
+    ry: number,
+    fill: PdfColor | null,
+    stroke: PdfColor | null,
+    width: number,
+  ): void {
+    if (rx <= 0 || ry <= 0 || (!fill && !stroke)) return;
+    const out = this.currentPage.content;
+    const k = 0.5522847498;
+    out.writeAscii('q\n');
+    if (fill) out.writeAscii(`${colorCommand(fill, 'rg')}\n`);
+    if (stroke) out.writeAscii(`${colorCommand(stroke, 'RG')}\n${formatNumber(width)} w\n`);
+    out.writeAscii(`${formatNumber(cx + rx)} ${formatNumber(cy)} m\n`);
+    out.writeAscii(`${formatNumber(cx + rx)} ${formatNumber(cy + ry * k)} ${formatNumber(cx + rx * k)} ${formatNumber(cy + ry)} ${formatNumber(cx)} ${formatNumber(cy + ry)} c\n`);
+    out.writeAscii(`${formatNumber(cx - rx * k)} ${formatNumber(cy + ry)} ${formatNumber(cx - rx)} ${formatNumber(cy + ry * k)} ${formatNumber(cx - rx)} ${formatNumber(cy)} c\n`);
+    out.writeAscii(`${formatNumber(cx - rx)} ${formatNumber(cy - ry * k)} ${formatNumber(cx - rx * k)} ${formatNumber(cy - ry)} ${formatNumber(cx)} ${formatNumber(cy - ry)} c\n`);
+    out.writeAscii(`${formatNumber(cx + rx * k)} ${formatNumber(cy - ry)} ${formatNumber(cx + rx)} ${formatNumber(cy - ry * k)} ${formatNumber(cx + rx)} ${formatNumber(cy)} c h\n`);
+    out.writeAscii(fill && stroke ? 'B\n' : fill ? 'f\n' : 'S\n');
+    out.writeAscii('Q\n');
+  }
+
+  private drawDiagramRect(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radius: number,
+    fill: PdfColor | null,
+    stroke: PdfColor | null,
+    strokeWidth: number,
+  ): void {
+    if (width <= 0 || height <= 0 || (!fill && !stroke)) return;
+    const corner = Math.max(0, Math.min(radius, width / 2, height / 2));
+    if (corner === 0) {
+      if (fill) this.fillRect(x, y, width, height, fill);
+      if (stroke) {
+        this.drawDiagramPath([
+          { x, y },
+          { x: x + width, y },
+          { x: x + width, y: y + height },
+          { x, y: y + height },
+        ], true, null, stroke, strokeWidth, undefined);
+      }
+      return;
+    }
+
+    const right = x + width;
+    const top = y + height;
+    const control = corner * 0.5522847498;
+    const out = this.currentPage.content;
+    out.writeAscii('q\n');
+    if (fill) out.writeAscii(`${colorCommand(fill, 'rg')}\n`);
+    if (stroke) out.writeAscii(`${colorCommand(stroke, 'RG')}\n${formatNumber(strokeWidth)} w\n`);
+    out.writeAscii(`${formatNumber(x + corner)} ${formatNumber(y)} m\n`);
+    out.writeAscii(`${formatNumber(right - corner)} ${formatNumber(y)} l\n`);
+    out.writeAscii(`${formatNumber(right - corner + control)} ${formatNumber(y)} ${formatNumber(right)} ${formatNumber(y + corner - control)} ${formatNumber(right)} ${formatNumber(y + corner)} c\n`);
+    out.writeAscii(`${formatNumber(right)} ${formatNumber(top - corner)} l\n`);
+    out.writeAscii(`${formatNumber(right)} ${formatNumber(top - corner + control)} ${formatNumber(right - corner + control)} ${formatNumber(top)} ${formatNumber(right - corner)} ${formatNumber(top)} c\n`);
+    out.writeAscii(`${formatNumber(x + corner)} ${formatNumber(top)} l\n`);
+    out.writeAscii(`${formatNumber(x + corner - control)} ${formatNumber(top)} ${formatNumber(x)} ${formatNumber(top - corner + control)} ${formatNumber(x)} ${formatNumber(top - corner)} c\n`);
+    out.writeAscii(`${formatNumber(x)} ${formatNumber(y + corner)} l\n`);
+    out.writeAscii(`${formatNumber(x)} ${formatNumber(y + corner - control)} ${formatNumber(x + corner - control)} ${formatNumber(y)} ${formatNumber(x + corner)} ${formatNumber(y)} c h\n`);
+    out.writeAscii(fill && stroke ? 'B\n' : fill ? 'f\n' : 'S\n');
+    out.writeAscii('Q\n');
+  }
+
+  private renderDiagramScene(scene: DiagramScene): void {
+    const availableWidth = Math.max(80, this.contentWidth - this.indent);
+    const usableHeight = this.pageHeight - this.margin * 2;
+    const scale = Math.min(1, availableWidth / scene.width, usableHeight / scene.height);
+    const drawWidth = scene.width * scale;
+    const drawHeight = scene.height * scale;
+    const trailingGap = this.baseFontSize * 0.7;
+    this.ensureSpace(drawHeight + trailingGap);
+    const originX = this.contentLeft + this.indent + Math.max(0, (availableWidth - drawWidth) / 2);
+    const originY = this.cursorY;
+    this.decorateVerticalSlice(originY, originY - drawHeight - trailingGap);
+
+    const point = (x: number, y: number): { x: number; y: number } => ({
+      x: originX + x * scale,
+      y: originY - y * scale,
+    });
+
+    for (const command of scene.commands) {
+      if (command.type === 'text') {
+        const size = Math.max(5.5, command.size * scale);
+        const font: PdfFont = (command.weight ?? 400) >= 600 ? 'bold' : command.italic ? 'italic' : 'regular';
+        const style = this.style({ font, size, color: this.diagramColor(command.color) ?? this.colors.text });
+        const bytes = TE.encode(command.text);
+        const run: PdfTextRun = {
+          bytes,
+          s: 0,
+          e: bytes.length,
+          style,
+          width: measureTextSpan(bytes, 0, bytes.length, style),
+        };
+        const target = point(command.x, command.y);
+        const x = command.anchor === 'middle'
+          ? target.x - run.width / 2
+          : command.anchor === 'end'
+            ? target.x - run.width
+            : target.x;
+        this.drawTextRunsAt([run], x, target.y);
+        continue;
+      }
+
+      const fill = this.diagramColor(command.fill, command.opacity);
+      const stroke = this.diagramColor(command.stroke, command.opacity);
+      const strokeWidth = (command.strokeWidth ?? 1) * scale;
+      if (command.type === 'rect') {
+        const topLeft = point(command.x, command.y);
+        const width = command.width * scale;
+        const height = command.height * scale;
+        const bottom = topLeft.y - height;
+        this.drawDiagramRect(
+          topLeft.x,
+          bottom,
+          width,
+          height,
+          (command.radius ?? 0) * scale,
+          fill,
+          stroke,
+          strokeWidth,
+        );
+        continue;
+      }
+      if (command.type === 'ellipse') {
+        const center = point(command.cx, command.cy);
+        this.drawDiagramEllipse(center.x, center.y, command.rx * scale, command.ry * scale, fill, stroke, strokeWidth);
+        continue;
+      }
+      if (command.type === 'line') {
+        const from = point(command.x1, command.y1);
+        const to = point(command.x2, command.y2);
+        this.drawDiagramPath([from, to], false, null, stroke, strokeWidth, command.dash?.map((value) => value * scale));
+        if (command.markerEnd && stroke) this.drawDiagramArrow(from.x, from.y, to.x, to.y, stroke, scale);
+        continue;
+      }
+      const points = command.points.map((item) => point(item.x, item.y));
+      this.drawDiagramPath(points, command.type === 'polygon', fill, stroke, strokeWidth, command.dash?.map((value) => value * scale));
+      if (command.markerEnd && stroke && points.length >= 2) {
+        const from = points[points.length - 2];
+        const to = points[points.length - 1];
+        this.drawDiagramArrow(from.x, from.y, to.x, to.y, stroke, scale);
+      }
+    }
+
+    this.cursorY -= drawHeight + trailingGap;
   }
 
   private fillRect(x: number, y: number, width: number, height: number, color: PdfColor): void {
@@ -3020,6 +3280,41 @@ class PdfBlockRenderer {
 
   private closeCodeBlock(markdown: Uint8Array): void {
     const block = bufferCodeBlock(markdown, this.codeBuffer ?? []);
+    if (this.codeLang?.trim().toLowerCase() === 'mermaid' && this.options.diagram !== false) {
+      const blockWidth = Math.max(80, this.contentWidth - this.indent);
+      const diagramOptions = this.options.diagram ?? {};
+      const result = renderDiagram(block.bytes, {
+        ...diagramOptions,
+        width: blockWidth,
+        measureText: (text, size, weight) => {
+          const bytes = TE.encode(text);
+          const style = this.style({
+            font: weight >= 600 ? 'bold' : 'regular',
+            size,
+            color: this.colors.text,
+          });
+          return measureTextSpan(bytes, 0, bytes.length, style);
+        },
+      });
+      if (result.scene) {
+        this.renderDiagramScene(result.scene);
+        this.inCode = false;
+        this.codeLang = undefined;
+        this.codeBuffer = null;
+        this.addVerticalSpace(this.baseFontSize * 0.45);
+        return;
+      }
+      const diagnostic = result.diagnostics[0];
+      if (diagnostic) {
+        const line = this.createLine(this.baseFontSize * 1.25);
+        line.addGenerated(
+          `Diagram error on line ${diagnostic.line}: ${diagnostic.message}`,
+          this.style({ font: 'bold', size: this.baseFontSize * 0.86, color: this.colors.errorBorder }),
+        );
+        line.flush();
+        this.addVerticalSpace(this.baseFontSize * 0.3);
+      }
+    }
     const tokens = tokenizeCodeBlock(block.bytes, this.codeLang);
     const codeStyle = this.style({
       font: 'mono',

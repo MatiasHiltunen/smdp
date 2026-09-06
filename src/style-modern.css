@@ -29,10 +29,14 @@
 
 html {
   background: var(--surface-canvas);
+  /* Hidden fixed panels must never create a horizontally scrollable page. */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body,
 body.background-mode-soft:not(.mode-canvas):not(.mode-editor) {
+  min-width: 0;
   align-items: flex-start;
   padding: var(--workspace-gutter);
   background: var(--surface-canvas);
@@ -63,6 +67,8 @@ body.has-docked-editor.editor-dock-bottom {
 
 .app-shell {
   width: min(100%, 1120px);
+  min-width: 0;
+  max-width: 100%;
   gap: 0;
   padding: 0;
   overflow: visible;
@@ -74,6 +80,8 @@ body.has-docked-editor.editor-dock-bottom {
 
 .viewer-pane,
 .canvas-pane {
+  min-width: 0;
+  max-width: 100%;
   padding-block: var(--viewer-padding-block, clamp(2.5rem, 7vw, 5.5rem));
   padding-inline: var(--viewer-padding-inline, clamp(1.25rem, 5vw, 4rem));
   overflow: visible;
@@ -111,6 +119,7 @@ body.frame-mode-none .app-shell.mode-html .viewer-pane {
 /* Reader */
 
 .markdown-viewer {
+  min-width: 0;
   max-width: min(var(--reader-measure), 100%);
   font-size: clamp(1rem, 1.5vw, 1.0625rem);
   line-height: 1.72;
@@ -253,6 +262,25 @@ body.frame-mode-none .app-shell.mode-html .viewer-pane {
 
 .markdown-viewer img {
   border-radius: var(--radius-sm);
+}
+
+.markdown-viewer .mermaid-diagram {
+  --diagram-background: var(--surface-reader);
+  --diagram-surface: var(--surface-muted);
+  --diagram-surface-alt: var(--surface-raised);
+  --diagram-text: var(--text-primary);
+  --diagram-muted: var(--text-secondary);
+  --diagram-accent: var(--accent);
+  --diagram-border: var(--border-subtle);
+  margin: 2rem 0;
+  padding: clamp(0.4rem, 1.5vw, 0.9rem);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-reader);
+}
+
+.markdown-viewer .mermaid-diagram__svg {
+  min-width: 38rem;
 }
 
 /* Labeled document actions */
@@ -632,6 +660,8 @@ body.has-docked-editor.editor-dock-top .fab-menu {
 /* Theme inspector */
 
 .theme-editor-wrapper {
+  overflow: hidden;
+  overscroll-behavior: contain;
   transition: opacity var(--motion-fast) ease;
 }
 
@@ -850,8 +880,53 @@ button:focus-visible,
 }
 
 @media (max-width: 959px) {
+  /*
+   * A docked editor can be persisted while a foldable switches from its wide
+   * display to the cover display. The compact editor is an overlay, so no
+   * desktop dock inset may survive at this breakpoint.
+   */
+  body.has-docked-editor.editor-dock-left,
+  body.has-docked-editor.editor-dock-right,
+  body.has-docked-editor.editor-dock-top,
+  body.has-docked-editor.editor-dock-bottom {
+    padding: var(--workspace-gutter);
+  }
+
+  body.frame-mode-none.has-docked-editor.editor-dock-left,
+  body.frame-mode-none.has-docked-editor.editor-dock-right,
+  body.frame-mode-none.has-docked-editor.editor-dock-top,
+  body.frame-mode-none.has-docked-editor.editor-dock-bottom,
+  body.mode-canvas.has-docked-editor,
+  body.mode-editor.has-docked-editor {
+    padding: 0;
+  }
+
+  body.has-docked-editor.editor-dock-right .fab-menu {
+    right: max(1rem, env(safe-area-inset-right, 0px));
+  }
+
+  body.has-docked-editor.editor-dock-top .fab-menu {
+    top: max(1rem, env(safe-area-inset-top, 0px));
+  }
+
+  body.has-docked-editor.editor-dock-left .book-topics-menu {
+    left: max(1rem, env(safe-area-inset-left, 0px));
+  }
+
+  body.has-docked-editor.editor-dock-top .book-topics-menu {
+    top: max(1rem, env(safe-area-inset-top, 0px));
+  }
+
+  .editor-pane-host {
+    overflow: hidden;
+  }
+
   .editor-window {
     inset: 0;
+    min-width: 0;
+    min-height: 0;
+    max-width: none;
+    max-height: none;
     border: 0;
     border-radius: 0;
   }
@@ -898,13 +973,18 @@ button:focus-visible,
   .app-shell,
   .viewer-pane {
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     border-radius: 0;
   }
 
   .viewer-pane,
   body.frame-mode-none .app-shell.mode-html .viewer-pane {
     min-height: 100dvh;
-    padding: clamp(4.5rem, 14vw, 5.5rem) 1.25rem 3rem;
+    padding-top: max(clamp(4.5rem, 14vw, 5.5rem), env(safe-area-inset-top, 0px));
+    padding-right: max(1.25rem, env(safe-area-inset-right, 0px));
+    padding-bottom: max(3rem, env(safe-area-inset-bottom, 0px));
+    padding-left: max(1.25rem, env(safe-area-inset-left, 0px));
     border-width: 0;
     background: var(--surface-reader);
     box-shadow: none;
@@ -918,6 +998,10 @@ button:focus-visible,
   .markdown-viewer h1 {
     max-width: 14ch;
     font-size: clamp(2rem, 10vw, 2.65rem);
+  }
+
+  .markdown-viewer {
+    overflow-wrap: anywhere;
   }
 
   .markdown-viewer h2 {
@@ -942,8 +1026,8 @@ button:focus-visible,
   .fab-menu,
   body.has-docked-editor.editor-dock-right .fab-menu,
   body.has-docked-editor.editor-dock-top .fab-menu {
-    top: 0.75rem;
-    right: 0.75rem;
+    top: max(0.75rem, env(safe-area-inset-top, 0px));
+    right: max(0.75rem, env(safe-area-inset-right, 0px));
   }
 
   .fab-main {
@@ -954,11 +1038,21 @@ button:focus-visible,
 
   .fab-actions {
     position: fixed;
-    inset: auto 0.75rem 0.75rem;
+    inset: auto max(0.75rem, env(safe-area-inset-right, 0px))
+      max(0.75rem, env(safe-area-inset-bottom, 0px))
+      max(0.75rem, env(safe-area-inset-left, 0px));
     width: auto;
-    max-height: min(72dvh, 36rem);
+    max-height: min(
+      72dvh,
+      calc(100dvh - 5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)),
+      36rem
+    );
     padding: 0.55rem;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
     border-radius: var(--radius-lg);
     transform: translateY(1rem) scale(0.985);
     transform-origin: bottom center;
